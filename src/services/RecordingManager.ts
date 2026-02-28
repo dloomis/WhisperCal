@@ -1,7 +1,7 @@
 import type {App} from "obsidian";
 import {Notice, normalizePath} from "obsidian";
 import {AudioRecorder} from "./AudioRecorder";
-import type {RecordingSession, RecordingSessionState} from "./RecordingTypes";
+import type {RecordingSession, RecordingSessionState, RecordingSavedCallback} from "./RecordingTypes";
 import {sanitizeFilename} from "../utils/sanitize";
 
 export interface RecordingConfig {
@@ -15,6 +15,7 @@ export class RecordingManager {
 	private recorder: AudioRecorder | null = null;
 	private state: RecordingSessionState = {status: "idle"};
 	private listeners: Array<(state: RecordingSessionState) => void> = [];
+	private savedListeners: Array<RecordingSavedCallback> = [];
 
 	constructor(app: App, config: RecordingConfig) {
 		this.app = app;
@@ -33,6 +34,13 @@ export class RecordingManager {
 		this.listeners.push(listener);
 		return () => {
 			this.listeners = this.listeners.filter(l => l !== listener);
+		};
+	}
+
+	onRecordingSaved(listener: RecordingSavedCallback): () => void {
+		this.savedListeners.push(listener);
+		return () => {
+			this.savedListeners = this.savedListeners.filter(l => l !== listener);
 		};
 	}
 
@@ -104,9 +112,12 @@ export class RecordingManager {
 		try {
 			const buffer = await this.recorder.stop();
 			this.recorder = null;
-			await this.saveRecording(buffer, session, ext);
+			const savedPath = await this.saveRecording(buffer, session, ext);
 			this.setState({status: "idle"});
 			new Notice("Recording saved");
+			for (const listener of this.savedListeners) {
+				listener(session, savedPath);
+			}
 		} catch (e) {
 			this.recorder?.dispose();
 			this.recorder = null;
@@ -128,6 +139,7 @@ export class RecordingManager {
 		}
 		this.setState({status: "idle"});
 		this.listeners = [];
+		this.savedListeners = [];
 	}
 
 	private setState(state: RecordingSessionState): void {
@@ -137,7 +149,7 @@ export class RecordingManager {
 		}
 	}
 
-	private async saveRecording(buffer: ArrayBuffer, session: RecordingSession, ext: string): Promise<void> {
+	private async saveRecording(buffer: ArrayBuffer, session: RecordingSession, ext: string): Promise<string> {
 		const folder = this.config.recordingFolderPath || "Recordings";
 		await this.ensureFolder(folder);
 
@@ -145,6 +157,7 @@ export class RecordingManager {
 		const filePath = await this.uniquePath(folder, baseName, ext);
 
 		await this.app.vault.createBinary(filePath, buffer);
+		return filePath;
 	}
 
 	private async uniquePath(folder: string, baseName: string, ext: string): Promise<string> {

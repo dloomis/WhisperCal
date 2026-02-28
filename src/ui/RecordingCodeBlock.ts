@@ -1,7 +1,5 @@
 import type {Plugin} from "obsidian";
-import type {RecordingManager} from "../services/RecordingManager";
 import type {RecordingSession} from "../services/RecordingTypes";
-import {renderRecordingControls} from "./RecordingControls";
 
 function parseCodeBlockContent(source: string): RecordingSession | null {
 	const lines = source.trim().split("\n");
@@ -22,13 +20,18 @@ function parseCodeBlockContent(source: string): RecordingSession | null {
 	return {eventId, subject, date};
 }
 
+/**
+ * Registers the whisper-recording code block processor.
+ * The code block stores session metadata (eventId, subject, date) used by
+ * NoteRecordingAction to show the mic icon. It renders nothing visible —
+ * recording status is shown in the status bar instead.
+ */
 export function registerRecordingCodeBlock(
 	plugin: Plugin,
-	recordingManager: RecordingManager,
 ): void {
 	plugin.registerMarkdownCodeBlockProcessor(
 		"whisper-recording",
-		(source, el, _ctx) => {
+		(source, el) => {
 			const session = parseCodeBlockContent(source);
 			if (!session) {
 				el.createDiv({
@@ -38,19 +41,8 @@ export function registerRecordingCodeBlock(
 				return;
 			}
 
-			const handle = renderRecordingControls(el, recordingManager, session);
-
-			// Clean up when the element is removed from DOM
-			const observer = new MutationObserver(() => {
-				if (!el.isConnected) {
-					handle.destroy();
-					observer.disconnect();
-				}
-			});
-			// Observe the parent — when el is removed, we get notified
-			if (el.parentElement) {
-				observer.observe(el.parentElement, {childList: true});
-			}
+			// Hidden block — metadata only, no visible UI
+			el.addClass("whisper-cal-recording-block");
 		},
 	);
 }

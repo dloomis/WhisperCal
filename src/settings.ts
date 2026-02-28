@@ -1,4 +1,4 @@
-import {App, DropdownComponent, PluginSettingTab, Setting} from "obsidian";
+import {App, DropdownComponent, Notice, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -18,6 +18,11 @@ export interface WhisperCalSettings {
 	peopleFolderPath: string;
 	recordingFolderPath: string;
 	systemAudioDeviceId: string;
+	transcriptionFolderPath: string;
+	transcriptionServerUrl: string;
+	transcriptionModel: string;
+	transcriptionLanguage: string;
+	autoTranscribe: boolean;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -32,6 +37,11 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleFolderPath: "",
 	recordingFolderPath: "Recordings",
 	systemAudioDeviceId: "",
+	transcriptionFolderPath: "Transcriptions",
+	transcriptionServerUrl: "http://localhost:8000",
+	transcriptionModel: "large-v3-turbo",
+	transcriptionLanguage: "",
+	autoTranscribe: false,
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -178,6 +188,81 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				void this.populateAudioDevices(dropdown);
 			});
 
+		// Transcription section
+		new Setting(containerEl)
+			.setName("Transcription")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Transcriptions folder")
+			.setDesc("Vault folder where transcript files are saved")
+			.addText(text => {
+				text.setPlaceholder("Transcriptions")
+					.setValue(this.plugin.settings.transcriptionFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.transcriptionFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Server URL")
+			.setDesc("URL of an OpenAI-compatible Whisper server with diarization (e.g. http://localhost:8000)")
+			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("http://localhost:8000")
+				.setValue(this.plugin.settings.transcriptionServerUrl)
+				.onChange(async (value) => {
+					this.plugin.settings.transcriptionServerUrl = value;
+					await this.plugin.saveSettings();
+				}));
+
+		let modelDropdown: DropdownComponent;
+		new Setting(containerEl)
+			.setName("Model")
+			.setDesc("Whisper model name to use for transcription")
+			.addDropdown(dropdown => {
+				modelDropdown = dropdown;
+				const current = this.plugin.settings.transcriptionModel || "large-v3-turbo";
+				dropdown.addOption(current, current);
+				dropdown.setValue(current);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.transcriptionModel = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		const testConnectionSetting = new Setting(containerEl)
+			.setName("Test connection")
+			.setDesc("Verify the server is reachable and fetch available models")
+			.addButton(button => button
+				.setButtonText("Test connection")
+				.onClick(async () => {
+					await this.testTranscriptionServer(modelDropdown, testConnectionSetting);
+				}));
+
+		new Setting(containerEl)
+			.setName("Language")
+			.setDesc("Language code for transcription (leave empty for auto-detect)")
+			.addText(text => text
+				.setPlaceholder("Auto-detect")
+				.setValue(this.plugin.settings.transcriptionLanguage)
+				.onChange(async (value) => {
+					this.plugin.settings.transcriptionLanguage = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Auto-transcribe")
+			.setDesc("Automatically transcribe recordings when they finish saving")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoTranscribe)
+				.onChange(async (value) => {
+					this.plugin.settings.autoTranscribe = value;
+					await this.plugin.saveSettings();
+				}));
+
 		// Microsoft account section
 		new Setting(containerEl)
 			.setName("Microsoft account")
@@ -237,6 +322,63 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+	}
+
+	private async testTranscriptionServer(
+		modelDropdown: DropdownComponent,
+		setting: Setting,
+	): Promise<void> {
+		const serverUrl = this.plugin.settings.transcriptionServerUrl.replace(/\/+$/, "");
+		if (!serverUrl) {
+			new Notice("Server URL is empty");
+			return;
+		}
+
+		setting.setDesc("Testing connection...");
+
+		try {
+			const response = await requestUrl({
+				url: `${serverUrl}/v1/models`,
+				method: "GET",
+			});
+
+			const data = response.json as {data?: Array<{id: string}>};
+			const models = data.data;
+
+			if (!Array.isArray(models) || models.length === 0) {
+				setting.setDesc("Connected but no models returned");
+				new Notice("Server reachable but returned no models");
+				return;
+			}
+
+			const modelIds = models.map(m => m.id);
+
+			// Rebuild dropdown with server models
+			const selectEl = modelDropdown.selectEl;
+			selectEl.empty();
+			for (const id of modelIds) {
+				modelDropdown.addOption(id, id);
+			}
+
+			// Preserve current selection if it's in the list, otherwise pick first
+			const current = this.plugin.settings.transcriptionModel;
+			if (modelIds.includes(current)) {
+				modelDropdown.setValue(current);
+			} else {
+				const first = modelIds[0] as string;
+				modelDropdown.setValue(first);
+				this.plugin.settings.transcriptionModel = first;
+				await this.plugin.saveSettings();
+			}
+
+			const modelList = modelIds.join(", ");
+			setting.setDesc(`Connected — ${models.length} model(s): ${modelList}`);
+			new Notice(`Transcription server OK — ${models.length} model(s) available`);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Connection failed";
+			setting.setDesc(`Connection failed: ${message}`);
+			new Notice(`Transcription server connection failed: ${message}`);
+		}
 	}
 
 	private async populateAudioDevices(dropdown: DropdownComponent): Promise<void> {

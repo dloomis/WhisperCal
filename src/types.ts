@@ -9,6 +9,7 @@ export interface CalendarEvent {
 	body: string;
 	isAllDay: boolean;
 	isOnlineMeeting: boolean;
+	onlineMeetingUrl: string;
 	startTime: Date;
 	endTime: Date;
 	location: string;
@@ -47,12 +48,18 @@ export interface GraphBody {
 	content: string;
 }
 
+export interface GraphOnlineMeeting {
+	joinUrl: string;
+}
+
 export interface GraphEvent {
 	id: string;
 	subject: string;
 	body: GraphBody;
 	isAllDay: boolean;
 	isOnlineMeeting: boolean;
+	onlineMeetingUrl: string | null;
+	onlineMeeting: GraphOnlineMeeting | null;
 	start: GraphDateTimeZone;
 	end: GraphDateTimeZone;
 	location: GraphLocation;

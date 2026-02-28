@@ -17,6 +17,8 @@ meeting_location: "{{location}}"
 invitees:
 {{invitees}}
 organizer: "{{organizer}}"
+recording: ""
+transcript: ""
 tags: [meeting]
 ---
 
@@ -92,6 +94,7 @@ export function buildVariableMap(
 		attendeeList,
 		invitees,
 		isOnlineMeeting: String(event.isOnlineMeeting),
+		onlineMeetingUrl: event.onlineMeetingUrl || "",
 		isAllDay: String(event.isAllDay),
 		description: event.body,
 	};

@@ -5,10 +5,16 @@ import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
 import {MsalAuth} from "./services/MsalAuth";
 import {RecordingManager} from "./services/RecordingManager";
+import {TranscriptionManager} from "./services/TranscriptionManager";
 import {registerRecordingCodeBlock} from "./ui/RecordingCodeBlock";
+import {StatusBarRecording} from "./ui/StatusBarRecording";
+import {NoteRecordingAction} from "./ui/NoteRecordingAction";
+import {NoteTranscriptionAction} from "./ui/NoteTranscriptionAction";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
 import type {CalendarProvider} from "./types";
+import {sanitizeFilename} from "./utils/sanitize";
+import {updateFrontmatter} from "./utils/frontmatter";
 
 interface PluginData extends WhisperCalSettings {
 	tokenCache?: TokenCache | null;
@@ -19,6 +25,10 @@ export default class WhisperCalPlugin extends Plugin {
 	auth: MsalAuth;
 	private provider: CalendarProvider;
 	private recordingManager: RecordingManager;
+	private transcriptionManager: TranscriptionManager;
+	private statusBarRecording: StatusBarRecording | null = null;
+	private noteRecordingAction: NoteRecordingAction | null = null;
+	private noteTranscriptionAction: NoteTranscriptionAction | null = null;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 
 	async onload() {
@@ -45,11 +55,39 @@ export default class WhisperCalPlugin extends Plugin {
 			systemAudioDeviceId: this.settings.systemAudioDeviceId,
 		});
 
+		this.transcriptionManager = new TranscriptionManager(this.app, {
+			transcriptionFolderPath: this.settings.transcriptionFolderPath,
+			transcriptionServerUrl: this.settings.transcriptionServerUrl,
+			transcriptionModel: this.settings.transcriptionModel,
+			transcriptionLanguage: this.settings.transcriptionLanguage,
+		});
+
+		this.recordingManager.onRecordingSaved((session, recordingPath) => {
+			void this.linkRecordingToNote(session, recordingPath);
+
+			if (this.settings.autoTranscribe && this.settings.transcriptionServerUrl) {
+				void this.transcriptionManager.transcribe({
+					recordingPath,
+					session: {eventId: session.eventId, subject: session.subject, date: session.date},
+				});
+			}
+		});
+
+		this.transcriptionManager.onTranscriptionSaved((request, transcriptPath) => {
+			void this.linkTranscriptToNote(request.session, transcriptPath);
+		});
+
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
 			new CalendarView(leaf, this.settings, this.provider, this.recordingManager)
 		);
 
-		registerRecordingCodeBlock(this, this.recordingManager);
+		registerRecordingCodeBlock(this);
+
+		const statusBarEl = this.addStatusBarItem();
+		this.statusBarRecording = new StatusBarRecording(statusBarEl, this.recordingManager, this.transcriptionManager);
+
+		this.noteRecordingAction = new NoteRecordingAction(this.app, this.recordingManager);
+		this.noteTranscriptionAction = new NoteTranscriptionAction(this.app, this.transcriptionManager);
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
 			void this.activateView();
@@ -67,7 +105,11 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.noteTranscriptionAction?.destroy();
+		this.noteRecordingAction?.destroy();
+		this.statusBarRecording?.destroy();
 		this.auth.cancelSignIn();
+		this.transcriptionManager.dispose();
 		this.recordingManager.dispose();
 	}
 
@@ -92,6 +134,13 @@ export default class WhisperCalPlugin extends Plugin {
 		this.recordingManager.updateConfig({
 			recordingFolderPath: this.settings.recordingFolderPath,
 			systemAudioDeviceId: this.settings.systemAudioDeviceId,
+		});
+		// Update transcription manager config
+		this.transcriptionManager.updateConfig({
+			transcriptionFolderPath: this.settings.transcriptionFolderPath,
+			transcriptionServerUrl: this.settings.transcriptionServerUrl,
+			transcriptionModel: this.settings.transcriptionModel,
+			transcriptionLanguage: this.settings.transcriptionLanguage,
 		});
 		// Update existing views with new settings
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
@@ -125,6 +174,38 @@ export default class WhisperCalPlugin extends Plugin {
 	private async saveTokenCache(cache: TokenCache | null): Promise<void> {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		await this.saveData({...data, ...this.settings, tokenCache: cache});
+	}
+
+	private async linkRecordingToNote(
+		session: {date: string; subject: string},
+		recordingPath: string,
+	): Promise<void> {
+		const filename = this.settings.noteFilenameTemplate
+			.replace("{{date}}", session.date)
+			.replace("{{subject}}", sanitizeFilename(session.subject));
+		const notePath = `${this.settings.noteFolderPath}/${filename}.md`;
+
+		if (!this.app.vault.getAbstractFileByPath(notePath)) return;
+
+		const recordingFilename = recordingPath.split("/").pop() ?? recordingPath;
+		await updateFrontmatter(this.app, notePath, "recording", `[[${recordingFilename}]]`);
+	}
+
+	private async linkTranscriptToNote(
+		session: {date: string; subject: string},
+		transcriptPath: string,
+	): Promise<void> {
+		const filename = this.settings.noteFilenameTemplate
+			.replace("{{date}}", session.date)
+			.replace("{{subject}}", sanitizeFilename(session.subject));
+		const notePath = `${this.settings.noteFolderPath}/${filename}.md`;
+
+		if (!this.app.vault.getAbstractFileByPath(notePath)) return;
+
+		// Link without extension for markdown files
+		const transcriptFilename = transcriptPath.split("/").pop() ?? transcriptPath;
+		const nameWithoutExt = transcriptFilename.replace(/\.md$/, "");
+		await updateFrontmatter(this.app, notePath, "transcript", `[[${nameWithoutExt}]]`);
 	}
 
 	private async activateView(): Promise<void> {

@@ -20,7 +20,7 @@ export class GraphApiProvider implements CalendarProvider {
 		const endDateTime = getDayEndUTC(date, timezone);
 
 		const graphBase = this.auth.getGraphBaseUrl();
-		const url = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,type`;
+		const url = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type`;
 
 		const response = await requestUrl({
 			url,
@@ -50,6 +50,7 @@ function parseGraphEvent(event: GraphEvent): CalendarEvent {
 		body,
 		isAllDay: event.isAllDay ?? false,
 		isOnlineMeeting: event.isOnlineMeeting ?? false,
+		onlineMeetingUrl: event.onlineMeeting?.joinUrl ?? event.onlineMeetingUrl ?? "",
 		startTime: new Date(event.start.dateTime + "Z"),
 		endTime: new Date(event.end.dateTime + "Z"),
 		location: event.location?.displayName ?? "",

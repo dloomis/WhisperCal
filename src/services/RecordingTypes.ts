@@ -10,3 +10,5 @@ export type RecordingSessionState =
 	| { status: "paused"; session: RecordingSession; startedAt: number; pausedDuration: number; pausedAt: number }
 	| { status: "saving"; session: RecordingSession }
 	| { status: "error"; message: string };
+
+export type RecordingSavedCallback = (session: RecordingSession, recordingPath: string) => void;

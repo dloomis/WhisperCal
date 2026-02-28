@@ -5,10 +5,7 @@ import type {WhisperCalSettings} from "../settings";
 import type {RecordingManager} from "../services/RecordingManager";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
-import {UnscheduledNoteModal} from "./UnscheduledNoteModal";
-import {formatDate, formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
-import type {RecordingControlsHandle} from "./RecordingControls";
-import {renderRecordingControls} from "./RecordingControls";
+import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
@@ -25,7 +22,6 @@ export class CalendarView extends ItemView {
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
 	private cardCleanups: Array<() => void> = [];
-	private headerRecordingHandle: RecordingControlsHandle | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -86,23 +82,6 @@ export class CalendarView extends ItemView {
 		this.registerDomEvent(this.todayBtn, "click", () => this.navigateToToday());
 		this.updateTodayButtonVisibility();
 
-		// Header actions
-		const actions = header.createDiv({cls: "whisper-cal-header-actions"});
-		const createNoteBtn = actions.createEl("button", {
-			cls: "whisper-cal-btn whisper-cal-btn-secondary",
-			text: "Create note",
-		});
-		this.registerDomEvent(createNoteBtn, "click", () => {
-			void this.createUnscheduledNote();
-		});
-
-		// Header recording controls (for unscheduled recordings)
-		this.headerRecordingHandle = renderRecordingControls(actions, this.recordingManager, {
-			eventId: "unscheduled",
-			subject: "Recording",
-			date: formatDate(this.selectedDate, this.settings.timezone),
-		});
-
 		// Refresh action button in view header
 		this.addAction("refresh-cw", "Refresh calendar", () => {
 			void this.refresh();
@@ -119,8 +98,6 @@ export class CalendarView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
-		this.headerRecordingHandle?.destroy();
-		this.headerRecordingHandle = null;
 		this.destroyCards();
 		this.stopAutoRefresh();
 	}
@@ -224,6 +201,29 @@ export class CalendarView extends ItemView {
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 		const activeEventId = isToday ? this.findActiveEventId(events) : null;
 
+		// Unscheduled card — always at the top
+		const unscheduledEvent: CalendarEvent = {
+			id: "unscheduled",
+			subject: "Recording",
+			body: "",
+			isAllDay: false,
+			isOnlineMeeting: false,
+			onlineMeetingUrl: "",
+			startTime: this.selectedDate,
+			endTime: this.selectedDate,
+			location: "",
+			attendeeCount: 0,
+			attendees: [],
+			organizerName: "",
+			organizerEmail: "",
+		};
+		const unscheduledHandle = renderMeetingCard(
+			this.contentContainer, unscheduledEvent,
+			this.settings.timezone, this.noteCreator, this.recordingManager,
+			false,
+		);
+		this.cardCleanups.push(unscheduledHandle.destroy);
+
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
 				cls: "whisper-cal-empty",
@@ -304,37 +304,6 @@ export class CalendarView extends ItemView {
 		this.lastRefreshTime = 0;
 		this.updateHeader();
 		void this.refresh();
-	}
-
-	private async createUnscheduledNote(): Promise<void> {
-		const modal = new UnscheduledNoteModal(this.app);
-		const subject = await modal.prompt();
-		if (!subject) return;
-
-		const now = new Date(
-			this.selectedDate.getFullYear(),
-			this.selectedDate.getMonth(),
-			this.selectedDate.getDate(),
-			new Date().getHours(),
-			new Date().getMinutes(),
-		);
-
-		const event: CalendarEvent = {
-			id: `unscheduled-${Date.now()}`,
-			subject,
-			body: "",
-			isAllDay: false,
-			isOnlineMeeting: false,
-			startTime: now,
-			endTime: now,
-			location: "",
-			attendeeCount: 0,
-			attendees: [],
-			organizerName: "",
-			organizerEmail: "",
-		};
-
-		await this.noteCreator.createNote(event);
 	}
 
 	private updateHeader(): void {
