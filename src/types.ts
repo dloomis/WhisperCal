@@ -6,6 +6,7 @@ export interface EventAttendee {
 export interface CalendarEvent {
 	id: string;
 	subject: string;
+	body: string;
 	isAllDay: boolean;
 	isOnlineMeeting: boolean;
 	startTime: Date;
@@ -41,9 +42,15 @@ export interface GraphLocation {
 	displayName: string;
 }
 
+export interface GraphBody {
+	contentType: string;
+	content: string;
+}
+
 export interface GraphEvent {
 	id: string;
 	subject: string;
+	body: GraphBody;
 	isAllDay: boolean;
 	isOnlineMeeting: boolean;
 	start: GraphDateTimeZone;

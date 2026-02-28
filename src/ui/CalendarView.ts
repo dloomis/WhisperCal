@@ -256,6 +256,7 @@ export class CalendarView extends ItemView {
 		const event: CalendarEvent = {
 			id: `unscheduled-${Date.now()}`,
 			subject,
+			body: "",
 			isAllDay: false,
 			isOnlineMeeting: false,
 			startTime: now,

@@ -14,7 +14,8 @@ meeting_date: {{date}}
 meeting_start: "{{startTime}}"
 meeting_end: "{{endTime}}"
 meeting_location: "{{location}}"
-attendees: [{{attendees}}]
+invitees:
+{{invitees}}
 organizer: "{{organizer}}"
 tags: [meeting]
 ---
@@ -24,11 +25,7 @@ tags: [meeting]
 
 # {{subject}}
 
-**Date:** {{date}} {{startTime}} - {{endTime}}
-**Location:** {{location}}
-**Attendees:** {{attendeeCount}}
-
----
+{{description}}
 
 ## Notes
 `;
@@ -75,6 +72,7 @@ export function buildVariableMap(
 	const resolvedNames = event.attendees.map(a => resolveName(a.name, a.email));
 	const attendees = resolvedNames.map(n => `"[[${n}]]"`).join(", ");
 	const attendeeList = resolvedNames.map(n => `- [[${n}]]`).join("\n");
+	const invitees = resolvedNames.map(n => `  - "[[${n}]]"`).join("\n");
 
 	return {
 		subject: event.subject,
@@ -88,8 +86,10 @@ export function buildVariableMap(
 		attendeeCount: String(event.attendeeCount),
 		attendees,
 		attendeeList,
+		invitees,
 		isOnlineMeeting: String(event.isOnlineMeeting),
 		isAllDay: String(event.isAllDay),
+		description: event.body,
 	};
 }
 
