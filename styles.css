@@ -6,11 +6,45 @@
 	margin-bottom: 16px;
 }
 
+.whisper-cal-nav {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.whisper-cal-nav-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-s);
+	flex-shrink: 0;
+}
+
 .whisper-cal-date {
+	flex: 1;
+	text-align: center;
 	font-size: var(--font-ui-large);
 	font-weight: var(--font-semibold);
 	color: var(--text-normal);
 	margin: 0;
+}
+
+.whisper-cal-today-btn {
+	text-align: center;
+	color: var(--interactive-accent);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+	padding: 2px 0;
+}
+
+.whisper-cal-today-btn:hover {
+	text-decoration: underline;
+}
+
+.whisper-cal-hidden {
+	display: none;
 }
 
 .whisper-cal-section-title {
@@ -112,4 +146,61 @@
 	text-align: center;
 	color: var(--text-muted);
 	padding: 32px 16px;
+}
+
+/* Auth settings UI */
+.whisper-cal-auth-status {
+	margin-top: 8px;
+}
+
+.whisper-cal-auth-section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.whisper-cal-auth-label {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.whisper-cal-auth-success {
+	color: var(--text-success);
+}
+
+.whisper-cal-auth-error {
+	color: var(--text-error);
+}
+
+.whisper-cal-device-code {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-bold);
+	color: var(--text-normal);
+	background: var(--background-secondary);
+	border-radius: var(--radius-s);
+	padding: 8px 12px;
+	text-align: center;
+	letter-spacing: 0.1em;
+	user-select: all;
+}
+
+.whisper-cal-auth-link {
+	font-size: var(--font-ui-small);
+	color: var(--interactive-accent);
+	text-align: center;
+}
+
+.whisper-cal-auth-hint {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
+.whisper-cal-btn-secondary {
+	background: var(--background-modifier-border);
+	color: var(--text-normal);
+}
+
+.whisper-cal-btn-secondary:hover {
+	background: var(--background-modifier-border-hover);
 }

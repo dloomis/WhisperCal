@@ -1,12 +1,16 @@
 import {App, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
+import type {AuthState, CloudInstance} from "./services/AuthTypes";
+import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
 
 export interface WhisperCalSettings {
 	timezone: string;
 	refreshIntervalMinutes: number;
 	noteFolderPath: string;
 	noteFilenameTemplate: string;
-	m365CliPath: string;
+	tenantId: string;
+	clientId: string;
+	cloudInstance: CloudInstance;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -14,11 +18,15 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	refreshIntervalMinutes: 5,
 	noteFolderPath: "Meetings",
 	noteFilenameTemplate: "{{date}} - {{subject}}",
-	m365CliPath: "m365",
+	tenantId: "",
+	clientId: "",
+	cloudInstance: "Public",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
+	private authStatusEl: HTMLElement | null = null;
+	private authUnsubscribe: (() => void) | null = null;
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
 		super(app, plugin);
@@ -81,17 +89,146 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		// Microsoft account section
 		new Setting(containerEl)
+			.setName("Microsoft account")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Tenant ID")
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setName("m365 CLI path")
-			.setDesc("Path to the m365 CLI executable")
+			.setDesc("Directory (tenant) ID from your Azure AD app registration")
 			.addText(text => text
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("m365")
-				.setValue(this.plugin.settings.m365CliPath)
+				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+				.setValue(this.plugin.settings.tenantId)
 				.onChange(async (value) => {
-					this.plugin.settings.m365CliPath = value;
+					this.plugin.settings.tenantId = value;
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName("Client ID")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Application (client) ID from your Azure AD app registration")
+			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+				.setValue(this.plugin.settings.clientId)
+				.onChange(async (value) => {
+					this.plugin.settings.clientId = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Cloud instance")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Microsoft cloud environment (Public, USGov, USGovHigh, USGovDoD, China)")
+			.addDropdown(dropdown => {
+				for (const option of CLOUD_INSTANCE_OPTIONS) {
+					dropdown.addOption(option, option);
+				}
+				dropdown.setValue(this.plugin.settings.cloudInstance);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.cloudInstance = value as CloudInstance;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		// Auth status + actions
+		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
+		this.renderAuthStatus(this.plugin.auth.getState());
+
+		// Subscribe to auth state changes
+		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
+			this.renderAuthStatus(state);
+		});
+	}
+
+	hide(): void {
+		this.authUnsubscribe?.();
+		this.authUnsubscribe = null;
+	}
+
+	private renderAuthStatus(state: AuthState): void {
+		if (!this.authStatusEl) return;
+		this.authStatusEl.empty();
+
+		const statusContainer = this.authStatusEl.createDiv({cls: "whisper-cal-auth-section"});
+
+		switch (state.status) {
+		case "signed-out": {
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-label",
+				text: "Not signed in",
+			});
+			/* eslint-disable obsidianmd/ui/sentence-case */
+			const btn = statusContainer.createEl("button", {
+				cls: "whisper-cal-btn",
+				text: "Sign in with Microsoft",
+			});
+			/* eslint-enable obsidianmd/ui/sentence-case */
+			btn.addEventListener("click", () => {
+				void this.plugin.auth.startDeviceCodeFlow();
+			});
+			break;
+		}
+		case "signing-in": {
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-label",
+				text: "Sign in: enter this code in your browser",
+			});
+			const codeEl = statusContainer.createDiv({cls: "whisper-cal-device-code"});
+			codeEl.setText(state.userCode);
+			const linkEl = statusContainer.createEl("a", {
+				cls: "whisper-cal-auth-link",
+				text: state.verificationUri,
+				href: state.verificationUri,
+			});
+			linkEl.setAttr("target", "_blank");
+			linkEl.setAttr("rel", "noopener");
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-hint",
+				text: "Waiting for authorization...",
+			});
+			const cancelBtn = statusContainer.createEl("button", {
+				cls: "whisper-cal-btn whisper-cal-btn-secondary",
+				text: "Cancel",
+			});
+			cancelBtn.addEventListener("click", () => {
+				this.plugin.auth.cancelSignIn();
+				this.renderAuthStatus({status: "signed-out"});
+			});
+			break;
+		}
+		case "signed-in": {
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-label whisper-cal-auth-success",
+				text: "Signed in",
+			});
+			const btn = statusContainer.createEl("button", {
+				cls: "whisper-cal-btn whisper-cal-btn-secondary",
+				text: "Sign out",
+			});
+			btn.addEventListener("click", () => {
+				void this.plugin.auth.signOut();
+			});
+			break;
+		}
+		case "error": {
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-label whisper-cal-auth-error",
+				text: state.message,
+			});
+			const btn = statusContainer.createEl("button", {
+				cls: "whisper-cal-btn",
+				text: "Try again",
+			});
+			btn.addEventListener("click", () => {
+				void this.plugin.auth.startDeviceCodeFlow();
+			});
+			break;
+		}
+		}
 	}
 }

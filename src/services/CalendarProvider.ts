@@ -1,6 +1,7 @@
 import type {CalendarProvider} from "../types";
-import {M365CliProvider} from "./M365CliProvider";
+import type {MsalAuth} from "./MsalAuth";
+import {GraphApiProvider} from "./GraphApiProvider";
 
-export function createCalendarProvider(m365CliPath: string): CalendarProvider {
-	return new M365CliProvider(m365CliPath);
+export function createCalendarProvider(auth: MsalAuth): CalendarProvider {
+	return new GraphApiProvider(auth);
 }

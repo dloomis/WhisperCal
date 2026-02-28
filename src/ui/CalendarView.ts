@@ -1,11 +1,11 @@
-import {ItemView, WorkspaceLeaf} from "obsidian";
+import {ItemView, WorkspaceLeaf, setIcon} from "obsidian";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
-import {formatDisplayDate, getTodayString} from "../utils/time";
-import {M365CliError} from "../services/M365CliProvider";
+import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
+import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
 	private settings: WhisperCalSettings;
@@ -16,6 +16,9 @@ export class CalendarView extends ItemView {
 	private refreshTimerId: number | null = null;
 	private lastRefreshTime = 0;
 	private static readonly DEBOUNCE_MS = 2000;
+	private selectedDate: Date;
+	private dateEl: HTMLElement | null = null;
+	private todayBtn: HTMLElement | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -27,6 +30,7 @@ export class CalendarView extends ItemView {
 		this.provider = provider;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.currentDateString = getTodayString(settings.timezone);
+		this.selectedDate = new Date();
 	}
 
 	getViewType(): string {
@@ -51,10 +55,27 @@ export class CalendarView extends ItemView {
 
 		// Header
 		const header = root.createDiv({cls: "whisper-cal-header"});
-		header.createEl("h3", {
+
+		// Navigation row: [<] date [>]
+		const nav = header.createDiv({cls: "whisper-cal-nav"});
+
+		const prevBtn = nav.createDiv({cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Previous day"}});
+		setIcon(prevBtn, "chevron-left");
+		this.registerDomEvent(prevBtn, "click", () => this.navigateDay(-1));
+
+		this.dateEl = nav.createDiv({
 			cls: "whisper-cal-date",
-			text: formatDisplayDate(new Date(), this.settings.timezone),
+			text: formatDisplayDate(this.selectedDate, this.settings.timezone),
 		});
+
+		const nextBtn = nav.createDiv({cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Next day"}});
+		setIcon(nextBtn, "chevron-right");
+		this.registerDomEvent(nextBtn, "click", () => this.navigateDay(1));
+
+		// Today button (hidden when already viewing today)
+		this.todayBtn = header.createDiv({cls: "whisper-cal-today-btn", text: "Today"});
+		this.registerDomEvent(this.todayBtn, "click", () => this.navigateToToday());
+		this.updateTodayButtonVisibility();
 
 		// Refresh action button in view header
 		this.addAction("refresh-cw", "Refresh calendar", () => {
@@ -84,35 +105,47 @@ export class CalendarView extends ItemView {
 
 		if (!this.contentContainer) return;
 
-		// Check for midnight rollover
+		// Check for midnight rollover — auto-advance only if viewing the old "today"
 		const todayString = getTodayString(this.settings.timezone);
 		if (todayString !== this.currentDateString) {
+			const wasViewingToday = this.currentDateString ===
+				new Intl.DateTimeFormat("en-CA", {
+					timeZone: this.settings.timezone,
+					year: "numeric",
+					month: "2-digit",
+					day: "2-digit",
+				}).format(this.selectedDate);
 			this.currentDateString = todayString;
-			// Update the header date
-			const header = this.containerEl.querySelector(".whisper-cal-date");
-			if (header) {
-				header.textContent = formatDisplayDate(new Date(), this.settings.timezone);
+			if (wasViewingToday) {
+				this.selectedDate = new Date();
+				this.updateHeader();
 			}
 		}
 
 		this.renderLoading();
+		console.debug("[WhisperCal] refresh — selectedDate:", this.selectedDate.toISOString());
 
 		try {
 			const available = await this.provider.isAvailable();
+			console.debug("[WhisperCal] isAvailable:", available);
 			if (!available) {
-				this.renderError("Not signed in. Run `m365 login` in your terminal first.");
+				this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
 				return;
 			}
 
-			const events = await this.provider.fetchEvents(new Date());
+			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
+			console.debug("[WhisperCal] fetchEvents returned", events.length, "events");
 			this.renderEvents(events);
 		} catch (e) {
-			if (e instanceof M365CliError) {
+			console.error("[WhisperCal] refresh error:", e);
+			if (e instanceof AuthError) {
 				this.renderError(e.message);
 			} else {
 				this.renderError("Failed to fetch calendar events.");
 			}
 		}
+
+		this.updateTodayButtonVisibility();
 	}
 
 	updateSettings(settings: WhisperCalSettings, provider: CalendarProvider): void {
@@ -144,10 +177,12 @@ export class CalendarView extends ItemView {
 		if (!this.contentContainer) return;
 		this.contentContainer.empty();
 
+		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
+
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
 				cls: "whisper-cal-empty",
-				text: "No meetings today",
+				text: isToday ? "No meetings today" : "No meetings",
 			});
 			return;
 		}
@@ -168,12 +203,43 @@ export class CalendarView extends ItemView {
 		if (timed.length > 0) {
 			this.contentContainer.createDiv({
 				cls: "whisper-cal-section-title",
-				text: "Today",
+				text: isToday ? "Today" : "Scheduled",
 			});
 			for (const event of timed) {
 				renderMeetingCard(this.contentContainer, event, this.settings.timezone, this.noteCreator);
 			}
 		}
+	}
+
+	private navigateDay(offset: number): void {
+		this.selectedDate = new Date(
+			this.selectedDate.getFullYear(),
+			this.selectedDate.getMonth(),
+			this.selectedDate.getDate() + offset,
+		);
+		this.lastRefreshTime = 0; // reset debounce
+		this.updateHeader();
+		void this.refresh();
+	}
+
+	private navigateToToday(): void {
+		this.selectedDate = new Date();
+		this.lastRefreshTime = 0;
+		this.updateHeader();
+		void this.refresh();
+	}
+
+	private updateHeader(): void {
+		if (this.dateEl) {
+			this.dateEl.textContent = formatDisplayDate(this.selectedDate, this.settings.timezone);
+		}
+		this.updateTodayButtonVisibility();
+	}
+
+	private updateTodayButtonVisibility(): void {
+		if (!this.todayBtn) return;
+		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
+		this.todayBtn.toggleClass("whisper-cal-hidden", isToday);
 	}
 
 	startAutoRefresh(): void {

@@ -1,39 +1,49 @@
 /**
- * Get the start of a day in a given timezone as a UTC ISO string.
- * Used to build Graph API calendarView date range params.
+ * Get midnight in a given timezone as a UTC Date.
+ * Uses Intl to find the local date parts, then binary-searches for the
+ * UTC instant where that timezone shows 00:00 on that calendar day.
  */
-export function getDayStartUTC(date: Date, timezone: string): string {
-	const formatter = new Intl.DateTimeFormat("en-CA", {
+function midnightInTimezone(date: Date, timezone: string): Date {
+	// Get the calendar date in the target timezone
+	const localDate = formatDate(date, timezone); // "YYYY-MM-DD"
+	// Start with a rough guess: interpret as UTC midnight, then adjust
+	const guess = new Date(`${localDate}T00:00:00Z`);
+	// Get the UTC offset at that guess by comparing formatted parts
+	const parts = new Intl.DateTimeFormat("en-US", {
 		timeZone: timezone,
 		year: "numeric",
 		month: "2-digit",
 		day: "2-digit",
-	});
-	const localDate = formatter.format(date); // "YYYY-MM-DD"
-	return `${localDate}T00:00:00.000Z`;
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	}).formatToParts(guess);
+	const get = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
+	const localH = get("hour") === 24 ? 0 : get("hour");
+	const localM = get("minute");
+	// The offset in ms: if the timezone shows 19:00 when UTC is 00:00,
+	// midnight local is 5 hours after UTC midnight (offset = +5h).
+	const shownMs = (localH * 60 + localM) * 60_000;
+	// Midnight local = guess - shownMs (if shown > 12h, we wrapped a day)
+	const offsetMs = shownMs <= 12 * 3600_000 ? -shownMs : (24 * 3600_000 - shownMs);
+	return new Date(guess.getTime() + offsetMs);
+}
+
+/**
+ * Get the start of a day in a given timezone as a UTC ISO string.
+ * Used to build Graph API calendarView date range params.
+ */
+export function getDayStartUTC(date: Date, timezone: string): string {
+	return midnightInTimezone(date, timezone).toISOString();
 }
 
 /**
  * Get the end of a day (start of next day) in a given timezone as a UTC ISO string.
  */
 export function getDayEndUTC(date: Date, timezone: string): string {
-	const formatter = new Intl.DateTimeFormat("en-CA", {
-		timeZone: timezone,
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-	});
-	const localDate = formatter.format(date); // "YYYY-MM-DD"
-	const nextDay = new Date(`${localDate}T00:00:00Z`);
-	nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-	const nextFormatter = new Intl.DateTimeFormat("en-CA", {
-		timeZone: "UTC",
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-	});
-	const nextDate = nextFormatter.format(nextDay);
-	return `${nextDate}T00:00:00.000Z`;
+	const midnight = midnightInTimezone(date, timezone);
+	return new Date(midnight.getTime() + 24 * 3600_000).toISOString();
 }
 
 /**
@@ -78,4 +88,11 @@ export function formatDisplayDate(date: Date, timezone: string): string {
  */
 export function getTodayString(timezone: string): string {
 	return formatDate(new Date(), timezone);
+}
+
+/**
+ * Check whether two Dates fall on the same calendar day in the given timezone.
+ */
+export function isSameDay(a: Date, b: Date, timezone: string): boolean {
+	return formatDate(a, timezone) === formatDate(b, timezone);
 }

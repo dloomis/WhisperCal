@@ -13,7 +13,7 @@ export interface CalendarEvent {
 }
 
 export interface CalendarProvider {
-	fetchEvents(date: Date): Promise<CalendarEvent[]>;
+	fetchEvents(date: Date, timezone: string): Promise<CalendarEvent[]>;
 	isAvailable(): Promise<boolean>;
 }
 
