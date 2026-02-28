@@ -1,3 +1,8 @@
+export interface EventAttendee {
+	name: string;
+	email: string;
+}
+
 export interface CalendarEvent {
 	id: string;
 	subject: string;
@@ -7,7 +12,7 @@ export interface CalendarEvent {
 	endTime: Date;
 	location: string;
 	attendeeCount: number;
-	attendees: string[];
+	attendees: EventAttendee[];
 	organizerName: string;
 	organizerEmail: string;
 }

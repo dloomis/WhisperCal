@@ -61,6 +61,7 @@
 	border-radius: var(--radius-m);
 	padding: 12px;
 	margin-bottom: 8px;
+	border-left: 3px solid var(--interactive-accent);
 }
 
 .whisper-cal-card-time {

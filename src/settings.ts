@@ -2,15 +2,20 @@ import {App, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
+import {FileSuggest} from "./ui/FileSuggest";
+import {FolderSuggest} from "./ui/FolderSuggest";
+import {createDefaultTemplateFile} from "./services/TemplateEngine";
 
 export interface WhisperCalSettings {
 	timezone: string;
 	refreshIntervalMinutes: number;
 	noteFolderPath: string;
 	noteFilenameTemplate: string;
+	noteTemplatePath: string;
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
+	peopleFolderPath: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -18,9 +23,11 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	refreshIntervalMinutes: 5,
 	noteFolderPath: "Meetings",
 	noteFilenameTemplate: "{{date}} - {{subject}}",
+	noteTemplatePath: "",
 	tenantId: "",
 	clientId: "",
 	cloudInstance: "Public",
+	peopleFolderPath: "",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -88,6 +95,52 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.plugin.settings.noteFilenameTemplate = value;
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName("Note template")
+			.setDesc("Vault file used as a template for meeting note content. Leave empty to use the default template.")
+			.addText(text => {
+				text.setPlaceholder("Templates/WhisperCal Meeting.md")
+					.setValue(this.plugin.settings.noteTemplatePath)
+					.onChange(async (value) => {
+						this.plugin.settings.noteTemplatePath = value;
+						await this.plugin.saveSettings();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Create default template")
+			.setDesc("Write the default meeting note template to a file in your vault for customization")
+			.addButton(button => button
+				.setButtonText("Create template file")
+				.onClick(async () => {
+					const path = this.plugin.settings.noteTemplatePath
+						|| "Templates/WhisperCal Meeting.md";
+					await createDefaultTemplateFile(this.app, path);
+					if (!this.plugin.settings.noteTemplatePath) {
+						this.plugin.settings.noteTemplatePath = path;
+						await this.plugin.saveSettings();
+						this.display();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("People notes")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("People folder")
+			.setDesc("Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.")
+			.addText(text => {
+				text.setPlaceholder("People")
+					.setValue(this.plugin.settings.peopleFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.peopleFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
 
 		// Microsoft account section
 		new Setting(containerEl)

@@ -1,8 +1,10 @@
 import {App, TFile, TFolder} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {WhisperCalSettings} from "../settings";
-import {formatDate, formatTime} from "../utils/time";
+import {formatDate} from "../utils/time";
 import {sanitizeFilename} from "../utils/sanitize";
+import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
+import {PeopleMatchService} from "../services/PeopleMatchService";
 
 export class NoteCreator {
 	private app: App;
@@ -48,7 +50,7 @@ export class NoteCreator {
 		// Ensure folder exists
 		await this.ensureFolder(this.settings.noteFolderPath);
 
-		const content = this.buildNoteContent(event);
+		const content = await this.buildNoteContent(event);
 		const file = await this.app.vault.create(path, content);
 		await this.app.workspace.getLeaf("tab").openFile(file);
 	}
@@ -65,45 +67,12 @@ export class NoteCreator {
 		}
 	}
 
-	private buildNoteContent(event: CalendarEvent): string {
-		const tz = this.settings.timezone;
-		const date = formatDate(event.startTime, tz);
-		const startTime = formatTime(event.startTime, tz);
-		const endTime = formatTime(event.endTime, tz);
-		const location = event.location || "N/A";
-		const organizer = event.organizerName
-			? `${event.organizerName} <${event.organizerEmail}>`
-			: event.organizerEmail;
-
-		const attendeeList = event.attendees.length > 0
-			? event.attendees.map(a => `"${a}"`).join(", ")
-			: "";
-
-		return [
-			"---",
-			`meeting_subject: "${event.subject}"`,
-			`meeting_date: ${date}`,
-			`meeting_start: "${startTime}"`,
-			`meeting_end: "${endTime}"`,
-			`meeting_location: "${location}"`,
-			`attendees: [${attendeeList}]`,
-			`organizer: "${organizer}"`,
-			"tags: [meeting]",
-			"---",
-			"",
-			"> [!info] Record",
-			"> Recording functionality coming soon",
-			"",
-			`# ${event.subject}`,
-			"",
-			`**Date:** ${date} ${startTime} - ${endTime}`,
-			`**Location:** ${location}`,
-			`**Attendees:** ${event.attendeeCount}`,
-			"",
-			"---",
-			"",
-			"## Notes",
-			"",
-		].join("\n");
+	private async buildNoteContent(event: CalendarEvent): Promise<string> {
+		const template = await loadTemplate(this.app, this.settings.noteTemplatePath);
+		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+		const peopleMatch = peopleSvc.matchAttendees(event.attendees);
+		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
+		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath);
+		return applyTemplate(template, variables);
 	}
 }

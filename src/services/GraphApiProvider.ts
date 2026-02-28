@@ -35,7 +35,10 @@ export class GraphApiProvider implements CalendarProvider {
 }
 
 function parseGraphEvent(event: GraphEvent): CalendarEvent {
-	const attendees = event.attendees?.map(a => a.emailAddress.name) ?? [];
+	const attendees = event.attendees?.map(a => ({
+		name: a.emailAddress.name ?? "",
+		email: a.emailAddress.address ?? "",
+	})) ?? [];
 	return {
 		id: event.id,
 		subject: event.subject ?? "(No subject)",
