@@ -37,6 +37,7 @@ There are no automated tests. Manual testing: copy `main.js`, `manifest.json`, `
 - **No `v` prefix** on version tags for releases.
 - **`main.js` is gitignored** — never commit build output.
 
-## AGENTS.md
+## References
 
-This repo includes `AGENTS.md` with detailed Obsidian plugin development guidelines covering file organization, security/privacy policies, UX conventions, performance, and common task patterns. Refer to it for Obsidian-specific coding patterns (adding commands, persisting settings, registering listeners, multi-file organization).
+- **Obsidian Plugin API docs:** https://docs.obsidian.md/Home (client-rendered — use WebSearch to find specific API topics)
+- **`AGENTS.md`** in this repo has detailed Obsidian plugin development guidelines covering file organization, security/privacy policies, UX conventions, performance, and common task patterns.

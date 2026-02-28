@@ -1,99 +1,70 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import {Plugin, WorkspaceLeaf} from "obsidian";
+import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR} from "./constants";
+import {CalendarView} from "./ui/CalendarView";
+import {createCalendarProvider} from "./services/CalendarProvider";
+import type {CalendarProvider} from "./types";
 
-// Remember to rename these classes and interfaces!
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class WhisperCalPlugin extends Plugin {
+	settings: WhisperCalSettings;
+	private provider: CalendarProvider;
 
 	async onload() {
 		await this.loadSettings();
+		this.provider = createCalendarProvider(this.settings.m365CliPath);
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
+			new CalendarView(leaf, this.settings, this.provider)
+		);
+
+		this.addRibbonIcon("calendar", "Open calendar view", () => {
+			void this.activateView();
 		});
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
+			id: COMMAND_OPEN_CALENDAR,
+			name: "Open calendar view",
 			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
+				void this.activateView();
+			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
 	onunload() {
+		// View cleanup is handled by Obsidian when detaching leaves
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<WhisperCalSettings>);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+		// Update provider if CLI path changed
+		this.provider = createCalendarProvider(this.settings.m365CliPath);
+		// Update existing views with new settings
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+			const view = leaf.view;
+			if (view instanceof CalendarView) {
+				view.updateSettings(this.settings, this.provider);
+			}
+		}
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	private async activateView(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR);
+		if (existing.length > 0) {
+			const leaf = existing[0] as WorkspaceLeaf;
+			await this.app.workspace.revealLeaf(leaf);
+			return;
+		}
+
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (leaf) {
+			await leaf.setViewState({type: VIEW_TYPE_CALENDAR, active: true});
+			await this.app.workspace.revealLeaf(leaf);
+		}
 	}
 }

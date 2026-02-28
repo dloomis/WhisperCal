@@ -1,8 +1,115 @@
-/*
+.whisper-cal-container {
+	padding: 12px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.whisper-cal-header {
+	margin-bottom: 16px;
+}
 
-If your plugin does not need CSS, delete this file.
+.whisper-cal-date {
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+	margin: 0;
+}
 
-*/
+.whisper-cal-section-title {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin: 16px 0 8px 0;
+}
+
+.whisper-cal-card {
+	background: var(--background-secondary);
+	border-radius: var(--radius-m);
+	padding: 12px;
+	margin-bottom: 8px;
+}
+
+.whisper-cal-card-time {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-bottom: 4px;
+}
+
+.whisper-cal-card-subject {
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+	margin-bottom: 8px;
+}
+
+.whisper-cal-card-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.whisper-cal-card-meta-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.whisper-cal-card-icon {
+	display: inline-flex;
+	align-items: center;
+}
+
+.whisper-cal-card-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.whisper-cal-card-actions {
+	margin-top: 8px;
+}
+
+.whisper-cal-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 12px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+}
+
+.whisper-cal-btn:hover {
+	background: var(--interactive-accent-hover);
+}
+
+.whisper-cal-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.whisper-cal-empty {
+	text-align: center;
+	color: var(--text-muted);
+	padding: 32px 16px;
+	font-size: var(--font-ui-medium);
+}
+
+.whisper-cal-error {
+	background: var(--background-modifier-error);
+	color: var(--text-error);
+	border-radius: var(--radius-m);
+	padding: 12px;
+	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-loading {
+	text-align: center;
+	color: var(--text-muted);
+	padding: 32px 16px;
+}

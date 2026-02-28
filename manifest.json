@@ -3,8 +3,8 @@
 	"name": "WhisperCal",
 	"version": "0.1.0",
 	"minAppVersion": "0.15.0",
-	"description": "",
+	"description": "Daily calendar view with Outlook integration via m365 CLI. Create meeting notes with one click.",
 	"author": "Dan Loomis",
 	"authorUrl": "",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }
