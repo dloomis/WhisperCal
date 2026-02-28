@@ -65,15 +65,15 @@ export class AudioRecorder {
 		let recordingStream: MediaStream;
 
 		if (systemStream && micStream) {
-			// Merge system + mic via Web Audio API
+			// Mix system + mic into both channels via a GainNode sum
 			this.audioContext = new AudioContext();
 			const sysSrc = this.audioContext.createMediaStreamSource(systemStream);
 			const micSrc = this.audioContext.createMediaStreamSource(micStream);
-			const merger = this.audioContext.createChannelMerger(2);
-			sysSrc.connect(merger, 0, 0);
-			micSrc.connect(merger, 0, 1);
+			const mixer = this.audioContext.createGain();
+			sysSrc.connect(mixer);
+			micSrc.connect(mixer);
 			const dest = this.audioContext.createMediaStreamDestination();
-			merger.connect(dest);
+			mixer.connect(dest);
 			recordingStream = dest.stream;
 		} else {
 			recordingStream = micStream;
