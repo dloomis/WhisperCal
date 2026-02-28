@@ -43,6 +43,19 @@
 	text-decoration: underline;
 }
 
+.whisper-cal-header-actions {
+	display: flex;
+	justify-content: center;
+	margin-top: 8px;
+}
+
+.whisper-cal-modal-input {
+	width: 100%;
+	padding: 8px 10px;
+	margin-bottom: 12px;
+	font-size: var(--font-ui-medium);
+}
+
 .whisper-cal-hidden {
 	display: none;
 }

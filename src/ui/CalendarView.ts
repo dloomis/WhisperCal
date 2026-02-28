@@ -4,6 +4,7 @@ import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
+import {UnscheduledNoteModal} from "./UnscheduledNoteModal";
 import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
@@ -76,6 +77,16 @@ export class CalendarView extends ItemView {
 		this.todayBtn = header.createDiv({cls: "whisper-cal-today-btn", text: "Today"});
 		this.registerDomEvent(this.todayBtn, "click", () => this.navigateToToday());
 		this.updateTodayButtonVisibility();
+
+		// Header actions
+		const actions = header.createDiv({cls: "whisper-cal-header-actions"});
+		const createNoteBtn = actions.createEl("button", {
+			cls: "whisper-cal-btn whisper-cal-btn-secondary",
+			text: "Create note",
+		});
+		this.registerDomEvent(createNoteBtn, "click", () => {
+			void this.createUnscheduledNote();
+		});
 
 		// Refresh action button in view header
 		this.addAction("refresh-cw", "Refresh calendar", () => {
@@ -227,6 +238,36 @@ export class CalendarView extends ItemView {
 		this.lastRefreshTime = 0;
 		this.updateHeader();
 		void this.refresh();
+	}
+
+	private async createUnscheduledNote(): Promise<void> {
+		const modal = new UnscheduledNoteModal(this.app);
+		const subject = await modal.prompt();
+		if (!subject) return;
+
+		const now = new Date(
+			this.selectedDate.getFullYear(),
+			this.selectedDate.getMonth(),
+			this.selectedDate.getDate(),
+			new Date().getHours(),
+			new Date().getMinutes(),
+		);
+
+		const event: CalendarEvent = {
+			id: `unscheduled-${Date.now()}`,
+			subject,
+			isAllDay: false,
+			isOnlineMeeting: false,
+			startTime: now,
+			endTime: now,
+			location: "",
+			attendeeCount: 0,
+			attendees: [],
+			organizerName: "",
+			organizerEmail: "",
+		};
+
+		await this.noteCreator.createNote(event);
 	}
 
 	private updateHeader(): void {
