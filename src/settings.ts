@@ -1,4 +1,4 @@
-import {App, PluginSettingTab, Setting} from "obsidian";
+import {App, DropdownComponent, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -16,6 +16,8 @@ export interface WhisperCalSettings {
 	clientId: string;
 	cloudInstance: CloudInstance;
 	peopleFolderPath: string;
+	recordingFolderPath: string;
+	systemAudioDeviceId: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -28,6 +30,8 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	clientId: "",
 	cloudInstance: "Public",
 	peopleFolderPath: "",
+	recordingFolderPath: "Recordings",
+	systemAudioDeviceId: "",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -142,6 +146,38 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				new FolderSuggest(this.app, text.inputEl);
 			});
 
+		// Recording section
+		new Setting(containerEl)
+			.setName("Recording")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Recordings folder")
+			.setDesc("Vault folder where meeting recordings are saved")
+			.addText(text => {
+				text.setPlaceholder("Recordings")
+					.setValue(this.plugin.settings.recordingFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.recordingFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("System audio device")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Virtual audio device (e.g. BlackHole) to capture system audio alongside your microphone. Leave as \"None\" for mic-only recording.")
+			.addDropdown(dropdown => {
+				dropdown.addOption("", "None (microphone only)");
+				dropdown.setValue(this.plugin.settings.systemAudioDeviceId);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.systemAudioDeviceId = value;
+					await this.plugin.saveSettings();
+				});
+				void this.populateAudioDevices(dropdown);
+			});
+
 		// Microsoft account section
 		new Setting(containerEl)
 			.setName("Microsoft account")
@@ -201,6 +237,21 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+	}
+
+	private async populateAudioDevices(dropdown: DropdownComponent): Promise<void> {
+		try {
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			const audioInputs = devices.filter(d => d.kind === "audioinput");
+			for (const device of audioInputs) {
+				const label = device.label || `Audio input (${device.deviceId.substring(0, 8)})`;
+				dropdown.addOption(device.deviceId, label);
+			}
+			// Re-set value so saved selection is shown after async load
+			dropdown.setValue(this.plugin.settings.systemAudioDeviceId);
+		} catch {
+			// Device enumeration unavailable
+		}
 	}
 
 	private renderAuthStatus(state: AuthState): void {

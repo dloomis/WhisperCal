@@ -45,7 +45,10 @@
 
 .whisper-cal-header-actions {
 	display: flex;
+	align-items: flex-start;
 	justify-content: center;
+	flex-wrap: wrap;
+	gap: 6px;
 	margin-top: 8px;
 }
 
@@ -75,6 +78,12 @@
 	padding: 12px;
 	margin-bottom: 8px;
 	border-left: 3px solid var(--interactive-accent);
+}
+
+.whisper-cal-card-active {
+	background: var(--background-primary-alt);
+	border-left-width: 4px;
+	box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 
 .whisper-cal-card-time {
@@ -116,6 +125,10 @@
 }
 
 .whisper-cal-card-actions {
+	display: flex;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	gap: 6px;
 	margin-top: 8px;
 }
 
@@ -217,4 +230,87 @@
 
 .whisper-cal-btn-secondary:hover {
 	background: var(--background-modifier-border-hover);
+}
+
+/* Recording controls */
+.whisper-cal-recording-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.whisper-cal-recording-timer {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.whisper-cal-recording-dot-live span {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--text-error);
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-recording-dot-paused span {
+	animation: none;
+	opacity: 0.4;
+}
+
+@keyframes whisper-cal-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.3; }
+}
+
+.whisper-cal-recording-time {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+}
+
+.whisper-cal-recording-buttons {
+	display: flex;
+	gap: 6px;
+}
+
+.whisper-cal-btn-small {
+	padding: 2px 8px;
+	font-size: var(--font-ui-smaller);
+}
+
+.whisper-cal-btn-record {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.whisper-cal-record-dot span {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+.whisper-cal-btn-stop {
+	background: var(--text-error);
+	color: var(--text-on-accent);
+}
+
+.whisper-cal-btn-stop:hover {
+	opacity: 0.9;
+}
+
+.whisper-cal-recording-error {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-error);
+	margin-top: 4px;
+}
+
+.whisper-cal-recording-status {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	font-style: italic;
 }

@@ -20,8 +20,11 @@ organizer: "{{organizer}}"
 tags: [meeting]
 ---
 
-> [!info] Record
-> Recording functionality coming soon
+\`\`\`whisper-recording
+eventId: {{eventId}}
+subject: {{subject}}
+date: {{date}}
+\`\`\`
 
 # {{subject}}
 
@@ -75,6 +78,7 @@ export function buildVariableMap(
 	const invitees = resolvedNames.map(n => `  - "[[${n}]]"`).join("\n");
 
 	return {
+		eventId: event.id,
 		subject: event.subject,
 		date,
 		startTime,

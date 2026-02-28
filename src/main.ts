@@ -4,6 +4,8 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
 import {MsalAuth} from "./services/MsalAuth";
+import {RecordingManager} from "./services/RecordingManager";
+import {registerRecordingCodeBlock} from "./ui/RecordingCodeBlock";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
 import type {CalendarProvider} from "./types";
@@ -16,6 +18,7 @@ export default class WhisperCalPlugin extends Plugin {
 	settings: WhisperCalSettings;
 	auth: MsalAuth;
 	private provider: CalendarProvider;
+	private recordingManager: RecordingManager;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 
 	async onload() {
@@ -37,9 +40,16 @@ export default class WhisperCalPlugin extends Plugin {
 
 		this.provider = createCalendarProvider(this.auth);
 
+		this.recordingManager = new RecordingManager(this.app, {
+			recordingFolderPath: this.settings.recordingFolderPath,
+			systemAudioDeviceId: this.settings.systemAudioDeviceId,
+		});
+
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider)
+			new CalendarView(leaf, this.settings, this.provider, this.recordingManager)
 		);
+
+		registerRecordingCodeBlock(this, this.recordingManager);
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
 			void this.activateView();
@@ -58,6 +68,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	onunload() {
 		this.auth.cancelSignIn();
+		this.recordingManager.dispose();
 	}
 
 	async loadSettings() {
@@ -77,11 +88,16 @@ export default class WhisperCalPlugin extends Plugin {
 			clientId: this.settings.clientId,
 			cloudInstance: this.settings.cloudInstance,
 		});
+		// Update recording manager config
+		this.recordingManager.updateConfig({
+			recordingFolderPath: this.settings.recordingFolderPath,
+			systemAudioDeviceId: this.settings.systemAudioDeviceId,
+		});
 		// Update existing views with new settings
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider);
+				view.updateSettings(this.settings, this.provider, this.recordingManager);
 			}
 		}
 	}

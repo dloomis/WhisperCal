@@ -2,15 +2,19 @@ import {ItemView, WorkspaceLeaf, setIcon} from "obsidian";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
+import type {RecordingManager} from "../services/RecordingManager";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
 import {UnscheduledNoteModal} from "./UnscheduledNoteModal";
-import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
+import {formatDate, formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
+import type {RecordingControlsHandle} from "./RecordingControls";
+import {renderRecordingControls} from "./RecordingControls";
 import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
 	private settings: WhisperCalSettings;
 	private provider: CalendarProvider;
+	private recordingManager: RecordingManager;
 	private noteCreator: NoteCreator;
 	private contentContainer: HTMLElement | null = null;
 	private currentDateString: string;
@@ -20,15 +24,19 @@ export class CalendarView extends ItemView {
 	private selectedDate: Date;
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
+	private cardCleanups: Array<() => void> = [];
+	private headerRecordingHandle: RecordingControlsHandle | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
+		recordingManager: RecordingManager,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.provider = provider;
+		this.recordingManager = recordingManager;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
@@ -88,6 +96,13 @@ export class CalendarView extends ItemView {
 			void this.createUnscheduledNote();
 		});
 
+		// Header recording controls (for unscheduled recordings)
+		this.headerRecordingHandle = renderRecordingControls(actions, this.recordingManager, {
+			eventId: "unscheduled",
+			subject: "Recording",
+			date: formatDate(this.selectedDate, this.settings.timezone),
+		});
+
 		// Refresh action button in view header
 		this.addAction("refresh-cw", "Refresh calendar", () => {
 			void this.refresh();
@@ -104,6 +119,9 @@ export class CalendarView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.headerRecordingHandle?.destroy();
+		this.headerRecordingHandle = null;
+		this.destroyCards();
 		this.stopAutoRefresh();
 	}
 
@@ -159,15 +177,28 @@ export class CalendarView extends ItemView {
 		this.updateTodayButtonVisibility();
 	}
 
-	updateSettings(settings: WhisperCalSettings, provider: CalendarProvider): void {
+	updateSettings(
+		settings: WhisperCalSettings,
+		provider: CalendarProvider,
+		recordingManager: RecordingManager,
+	): void {
 		this.settings = settings;
 		this.provider = provider;
+		this.recordingManager = recordingManager;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
 	}
 
+	private destroyCards(): void {
+		for (const cleanup of this.cardCleanups) {
+			cleanup();
+		}
+		this.cardCleanups = [];
+	}
+
 	private renderLoading(): void {
 		if (!this.contentContainer) return;
+		this.destroyCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-loading",
@@ -177,6 +208,7 @@ export class CalendarView extends ItemView {
 
 	private renderError(message: string): void {
 		if (!this.contentContainer) return;
+		this.destroyCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-error",
@@ -186,9 +218,11 @@ export class CalendarView extends ItemView {
 
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
+		this.destroyCards();
 		this.contentContainer.empty();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
+		const activeEventId = isToday ? this.findActiveEventId(events) : null;
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
@@ -207,7 +241,12 @@ export class CalendarView extends ItemView {
 				text: "All day",
 			});
 			for (const event of allDay) {
-				renderMeetingCard(this.contentContainer, event, this.settings.timezone, this.noteCreator);
+				const handle = renderMeetingCard(
+					this.contentContainer, event, this.settings.timezone,
+					this.noteCreator, this.recordingManager,
+					event.id === activeEventId,
+				);
+				this.cardCleanups.push(handle.destroy);
 			}
 		}
 
@@ -217,9 +256,36 @@ export class CalendarView extends ItemView {
 				text: isToday ? "Today" : "Scheduled",
 			});
 			for (const event of timed) {
-				renderMeetingCard(this.contentContainer, event, this.settings.timezone, this.noteCreator);
+				const handle = renderMeetingCard(
+					this.contentContainer, event, this.settings.timezone,
+					this.noteCreator, this.recordingManager,
+					event.id === activeEventId,
+				);
+				this.cardCleanups.push(handle.destroy);
 			}
 		}
+	}
+
+	private findActiveEventId(events: CalendarEvent[]): string | null {
+		const now = new Date();
+		const timed = events.filter(e => !e.isAllDay);
+
+		// Prefer an ongoing meeting (startTime <= now < endTime)
+		const ongoing = timed.filter(e => e.startTime <= now && e.endTime > now);
+		if (ongoing.length > 0) {
+			// If multiple overlap, pick the one that started most recently
+			ongoing.sort((a, b) => b.startTime.getTime() - a.startTime.getTime());
+			return ongoing[0]!.id;
+		}
+
+		// Otherwise highlight the next upcoming meeting
+		const upcoming = timed.filter(e => e.startTime > now);
+		if (upcoming.length > 0) {
+			upcoming.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+			return upcoming[0]!.id;
+		}
+
+		return null;
 	}
 
 	private navigateDay(offset: number): void {

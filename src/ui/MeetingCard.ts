@@ -1,15 +1,26 @@
 import {setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
-import {formatTime} from "../utils/time";
+import type {RecordingManager} from "../services/RecordingManager";
+import {renderRecordingControls} from "./RecordingControls";
+import {formatTime, formatDate} from "../utils/time";
+
+export interface MeetingCardHandle {
+	el: HTMLElement;
+	destroy: () => void;
+}
 
 export function renderMeetingCard(
 	container: HTMLElement,
 	event: CalendarEvent,
 	timezone: string,
 	noteCreator: NoteCreator,
-): HTMLElement {
-	const card = container.createDiv({cls: "whisper-cal-card"});
+	recordingManager: RecordingManager,
+	isActive = false,
+): MeetingCardHandle {
+	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
+	const card = container.createDiv({cls});
+	const destroyFns: Array<() => void> = [];
 
 	// Time range
 	const timeEl = card.createDiv({cls: "whisper-cal-card-time"});
@@ -84,5 +95,21 @@ export function renderMeetingCard(
 		void handleClick();
 	});
 
-	return card;
+	// Recording controls
+	const recordingSession = {
+		eventId: event.id,
+		subject: event.subject,
+		date: formatDate(event.startTime, timezone),
+	};
+	const recordingHandle = renderRecordingControls(btnContainer, recordingManager, recordingSession);
+	destroyFns.push(recordingHandle.destroy);
+
+	return {
+		el: card,
+		destroy: () => {
+			for (const fn of destroyFns) {
+				fn();
+			}
+		},
+	};
 }
