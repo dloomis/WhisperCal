@@ -16,7 +16,6 @@ export interface WhisperCalSettings {
 	clientId: string;
 	cloudInstance: CloudInstance;
 	peopleFolderPath: string;
-	macWhisperShortcutName: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -29,7 +28,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	clientId: "",
 	cloudInstance: "Public",
 	peopleFolderPath: "",
-	macWhisperShortcutName: "",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -115,20 +113,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						this.display();
 					}
-				}));
-
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		new Setting(containerEl)
-			.setName("MacWhisper shortcut")
-			.setDesc("Name of the macOS Shortcut that opens MacWhisper. Create a Shortcut in the Shortcuts app, then enter its name here. The mic button in meeting cards will trigger this shortcut.")
-		/* eslint-enable obsidianmd/ui/sentence-case */
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("Start MacWhisper")
-				.setValue(this.plugin.settings.macWhisperShortcutName)
-				.onChange(async (value) => {
-					this.plugin.settings.macWhisperShortcutName = value;
-					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)

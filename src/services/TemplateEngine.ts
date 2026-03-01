@@ -20,6 +20,7 @@ organizer: "{{organizer}}"
 whisper_event_id: "{{eventId}}"
 whisper_subject: "{{subject}}"
 whisper_date: "{{date}}"
+macwhisper_session_id: ""
 tags: [meeting]
 ---
 

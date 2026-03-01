@@ -201,7 +201,7 @@ export class CalendarView extends ItemView {
 		};
 		renderMeetingCard(
 			this.contentContainer, unscheduledEvent,
-			this.settings.timezone, this.noteCreator, this.settings.macWhisperShortcutName,
+			this.settings.timezone, this.noteCreator, this.app,
 			false,
 		);
 
@@ -224,7 +224,7 @@ export class CalendarView extends ItemView {
 			for (const event of allDay) {
 				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.settings.macWhisperShortcutName,
+					this.noteCreator, this.app,
 					activeEventIds.has(event.id),
 				);
 			}
@@ -238,7 +238,7 @@ export class CalendarView extends ItemView {
 			for (const event of timed) {
 				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.settings.macWhisperShortcutName,
+					this.noteCreator, this.app,
 					activeEventIds.has(event.id),
 				);
 			}

@@ -1,7 +1,11 @@
-import {Notice, setIcon} from "obsidian";
+import {App, Notice, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
-import {formatTime} from "../utils/time";
+import {formatTime, formatDate} from "../utils/time";
+import {findRecordingsNear, setSessionTitle} from "../services/MacWhisperDb";
+import {RecordingSuggestModal} from "./RecordingSuggestModal";
+import {updateFrontmatter} from "../utils/frontmatter";
+import type {MacWhisperRecording} from "../services/MacWhisperDb";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
@@ -12,7 +16,7 @@ export function renderMeetingCard(
 	event: CalendarEvent,
 	timezone: string,
 	noteCreator: NoteCreator,
-	macWhisperShortcutName: string,
+	app: App,
 	isActive = false,
 ): MeetingCardHandle {
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
@@ -99,22 +103,71 @@ export function renderMeetingCard(
 		void handleClick();
 	});
 
-	// Mic icon — launch MacWhisper via macOS Shortcut
+	// Mic icon — link MacWhisper recording to note
 	const micBtn = meta.createEl("button", {
 		cls: "whisper-cal-card-rec-trigger clickable-icon",
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		attr: {"aria-label": "Open MacWhisper"},
+		attr: {"aria-label": "Link MacWhisper recording"},
 	});
 	setIcon(micBtn, "mic");
 
 	micBtn.addEventListener("click", () => {
-		if (macWhisperShortcutName) {
-			window.open(`shortcuts://run-shortcut?name=${encodeURIComponent(macWhisperShortcutName)}`);
-		} else {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("Configure a MacWhisper shortcut name in WhisperCal settings");
-		}
+		micBtn.disabled = true;
+		const handleMic = async () => {
+			try {
+				await linkRecording(app, event, noteCreator, timezone, micBtn);
+			} finally {
+				micBtn.disabled = false;
+			}
+		};
+		void handleMic();
 	});
 
 	return {el: card};
+}
+
+async function linkRecording(
+	app: App,
+	event: CalendarEvent,
+	noteCreator: NoteCreator,
+	timezone: string,
+	micBtn: HTMLButtonElement,
+): Promise<void> {
+	if (!noteCreator.noteExists(event)) {
+		new Notice("Create a note first");
+		return;
+	}
+
+	const recordings = findRecordingsNear(event.startTime);
+
+	if (recordings.length === 0) {
+		new Notice("No matching recording found");
+		return;
+	}
+
+	let selected: MacWhisperRecording | null;
+	if (recordings.length === 1) {
+		selected = recordings[0]!;
+	} else {
+		const modal = new RecordingSuggestModal(app, recordings);
+		selected = await modal.prompt();
+	}
+
+	if (!selected) return;
+
+	// Set title in MacWhisper DB: "YYYY-MM-DD Subject"
+	const date = formatDate(event.startTime, timezone);
+	const title = `${date} ${event.subject}`;
+	setSessionTitle(selected.sessionId, title);
+
+	// Write session ID to note frontmatter
+	const notePath = noteCreator.getNotePath(event);
+	await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
+
+	// Update icon to show linked state
+	setIcon(micBtn, "check");
+	// eslint-disable-next-line obsidianmd/ui/sentence-case
+	micBtn.ariaLabel = "MacWhisper recording linked";
+
+	new Notice("Recording linked to note");
 }
