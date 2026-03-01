@@ -1,11 +1,8 @@
-import {App, Notice, setIcon} from "obsidian";
+import {App, MarkdownView, Notice, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
-import {formatTime, formatDate} from "../utils/time";
-import {findRecordingsNear, setSessionTitle} from "../services/MacWhisperDb";
-import {RecordingSuggestModal} from "./RecordingSuggestModal";
-import {updateFrontmatter} from "../utils/frontmatter";
-import type {MacWhisperRecording} from "../services/MacWhisperDb";
+import {formatTime} from "../utils/time";
+import {linkRecording} from "../services/LinkRecording";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
@@ -18,6 +15,7 @@ export function renderMeetingCard(
 	noteCreator: NoteCreator,
 	app: App,
 	isActive = false,
+	transcriptFolderPath = "Transcripts",
 ): MeetingCardHandle {
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
 	const card = container.createDiv({cls});
@@ -115,7 +113,37 @@ export function renderMeetingCard(
 		micBtn.disabled = true;
 		const handleMic = async () => {
 			try {
-				await linkRecording(app, event, noteCreator, timezone, micBtn);
+				// Use computed path if the note exists, otherwise fall back
+				// to the most recent editor file (handles renamed notes).
+				let notePath = noteCreator.getNotePath(event);
+				if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
+					const leaf = app.workspace.getMostRecentLeaf();
+					const file = leaf?.view instanceof MarkdownView
+						? leaf.view.file
+						: null;
+					if (file) {
+						console.debug("[WhisperCal] note path fallback:", notePath, "→", file.path);
+						notePath = file.path;
+					} else {
+						new Notice("Open the meeting note first, then link the recording");
+						return;
+					}
+				}
+				const isUnscheduled = event.id === "unscheduled";
+				const linked = await linkRecording({
+					app,
+					meetingStart: event.startTime,
+					notePath,
+					subject: event.subject,
+					timezone,
+					transcriptFolderPath,
+					windowMinutes: isUnscheduled ? 720 : undefined,
+				});
+				if (linked) {
+					setIcon(micBtn, "check");
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
+					micBtn.ariaLabel = "MacWhisper recording linked";
+				}
 			} finally {
 				micBtn.disabled = false;
 			}
@@ -124,50 +152,4 @@ export function renderMeetingCard(
 	});
 
 	return {el: card};
-}
-
-async function linkRecording(
-	app: App,
-	event: CalendarEvent,
-	noteCreator: NoteCreator,
-	timezone: string,
-	micBtn: HTMLButtonElement,
-): Promise<void> {
-	if (!noteCreator.noteExists(event)) {
-		new Notice("Create a note first");
-		return;
-	}
-
-	const recordings = findRecordingsNear(event.startTime);
-
-	if (recordings.length === 0) {
-		new Notice("No matching recording found");
-		return;
-	}
-
-	let selected: MacWhisperRecording | null;
-	if (recordings.length === 1) {
-		selected = recordings[0]!;
-	} else {
-		const modal = new RecordingSuggestModal(app, recordings);
-		selected = await modal.prompt();
-	}
-
-	if (!selected) return;
-
-	// Set title in MacWhisper DB: "YYYY-MM-DD Subject"
-	const date = formatDate(event.startTime, timezone);
-	const title = `${date} ${event.subject}`;
-	setSessionTitle(selected.sessionId, title);
-
-	// Write session ID to note frontmatter
-	const notePath = noteCreator.getNotePath(event);
-	await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
-
-	// Update icon to show linked state
-	setIcon(micBtn, "check");
-	// eslint-disable-next-line obsidianmd/ui/sentence-case
-	micBtn.ariaLabel = "MacWhisper recording linked";
-
-	new Notice("Recording linked to note");
 }

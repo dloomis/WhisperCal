@@ -16,6 +16,7 @@ export interface WhisperCalSettings {
 	clientId: string;
 	cloudInstance: CloudInstance;
 	peopleFolderPath: string;
+	transcriptFolderPath: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	clientId: "",
 	cloudInstance: "Public",
 	peopleFolderPath: "",
+	transcriptFolderPath: "Transcripts",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -70,6 +72,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.noteFolderPath)
 					.onChange(async (value) => {
 						this.plugin.settings.noteFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Transcripts folder")
+			.setDesc("Vault folder where transcript files are created when linking recordings")
+			.addText(text => {
+				text.setPlaceholder("Transcripts")
+					.setValue(this.plugin.settings.transcriptFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.transcriptFolderPath = value;
 						await this.plugin.saveSettings();
 					});
 				new FolderSuggest(this.app, text.inputEl);

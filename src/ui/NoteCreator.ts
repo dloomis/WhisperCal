@@ -50,7 +50,8 @@ export class NoteCreator {
 		// Ensure folder exists
 		await this.ensureFolder(this.settings.noteFolderPath);
 
-		const content = await this.buildNoteContent(event);
+		const noteCreated = new Date();
+		const content = await this.buildNoteContent(event, noteCreated);
 		const file = await this.app.vault.create(path, content);
 		const leaf = this.app.workspace.getLeaf("tab");
 		await leaf.openFile(file);
@@ -93,12 +94,12 @@ export class NoteCreator {
 		editor.focus();
 	}
 
-	private async buildNoteContent(event: CalendarEvent): Promise<string> {
+	private async buildNoteContent(event: CalendarEvent, noteCreated: Date): Promise<string> {
 		const template = await loadTemplate(this.app, this.settings.noteTemplatePath);
 		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
 		const peopleMatch = peopleSvc.matchAttendees(event.attendees);
 		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
-		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath);
+		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated);
 		return applyTemplate(template, variables);
 	}
 }

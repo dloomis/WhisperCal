@@ -20,7 +20,9 @@ organizer: "{{organizer}}"
 whisper_event_id: "{{eventId}}"
 whisper_subject: "{{subject}}"
 whisper_date: "{{date}}"
+note_created: "{{noteCreated}}"
 macwhisper_session_id: ""
+transcript: ""
 tags: [meeting]
 ---
 
@@ -39,6 +41,7 @@ export function buildVariableMap(
 	timezone: string,
 	peopleMatch?: PeopleMatchResult,
 	organizerNotePath?: string | null,
+	noteCreated?: Date,
 ): Record<string, string> {
 	const date = formatDate(event.startTime, timezone);
 	const startTime = formatTime(event.startTime, timezone);
@@ -93,6 +96,7 @@ export function buildVariableMap(
 		onlineMeetingUrl: event.onlineMeetingUrl || "",
 		isAllDay: String(event.isAllDay),
 		description: event.body,
+		noteCreated: (noteCreated ?? new Date()).toISOString(),
 	};
 }
 

@@ -16,6 +16,32 @@ interface SessionRow {
 	duration: number | null;
 }
 
+interface TranscriptLineRow {
+	speaker: string | null;
+	text: string;
+	startMs: number;
+}
+
+interface SessionMetadataRow {
+	title: string | null;
+	dateCreated: string;
+	hasBeenDiarized: number;
+	modelEngine: string | null;
+	modelIdentifer: string | null;
+	modelInputLanguage: string | null;
+	detectedLanguage: string | null;
+	aiTitle: string | null;
+	aiSummary: string | null;
+	durationSec: number | null;
+	appName: string | null;
+}
+
+export interface TranscriptData {
+	lines: TranscriptLineRow[];
+	metadata: SessionMetadataRow | null;
+	speakers: string[];
+}
+
 /**
  * Query the MacWhisper SQLite database to find and link recordings.
  * Uses `sqlite3` CLI — no npm dependencies needed.
@@ -23,7 +49,10 @@ interface SessionRow {
 
 function query(sql: string, readonly = true): string {
 	const flags = readonly ? "-readonly" : "";
-	const cmd = `sqlite3 ${flags} -json "${MACWHISPER_DB_PATH}" ${JSON.stringify(sql)}`;
+	// Collapse newlines/tabs to spaces so JSON.stringify won't produce
+	// \n / \t literals that sqlite3 can't parse as SQL tokens.
+	const flat = sql.replace(/[\n\t]+/g, " ").trim();
+	const cmd = `sqlite3 ${flags} -json "${MACWHISPER_DB_PATH}" ${JSON.stringify(flat)}`;
 	try {
 		return execSync(cmd, {encoding: "utf-8", timeout: 5000}).trim();
 	} catch {
@@ -128,4 +157,57 @@ export function setSessionTitle(sessionId: string, title: string): void {
 	const escaped = title.replace(/'/g, "''");
 	const sql = `UPDATE session SET userChosenTitle = '${escaped}' WHERE hex(id) = '${sessionId}';`;
 	query(sql, false);
+}
+
+/**
+ * Fetch full transcript data for a session: lines with speaker attribution,
+ * session metadata, and speaker list.
+ */
+export function getTranscript(sessionId: string): TranscriptData {
+	// 1. Transcript lines with speaker names and start timestamps
+	//    tl.start is already in milliseconds; speakerID has capital D
+	const linesSql = `
+		SELECT sp.name as speaker,
+		       tl.text as text,
+		       tl.start as startMs
+		FROM transcriptline tl
+		LEFT JOIN speaker sp ON tl.speakerID = sp.id
+		WHERE hex(tl.sessionId) = '${sessionId}'
+		ORDER BY tl.start ASC;
+	`;
+	const lines = parseRows<TranscriptLineRow>(query(linesSql));
+
+	// 2. Session metadata (actual column names from MacWhisper schema)
+	const metaSql = `
+		SELECT s.userChosenTitle as title,
+		       s.dateCreated as dateCreated,
+		       s.hasBeenDiarized as hasBeenDiarized,
+		       s.modelEngine as modelEngine,
+		       s.modelIdentifer as modelIdentifer,
+		       s.modelInputLanguage as modelInputLanguage,
+		       s.detectedLanguage as detectedLanguage,
+		       s.aiTitle as aiTitle,
+		       s.aiSummary as aiSummary,
+		       sar.duration as durationSec,
+		       rm.appName as appName
+		FROM session s
+		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
+		LEFT JOIN recordedmeeting rm ON s.recordedMeetingID = rm.id
+		WHERE hex(s.id) = '${sessionId}';
+	`;
+	const metaRows = parseRows<SessionMetadataRow>(query(metaSql));
+	const metadata = metaRows[0] ?? null;
+
+	// 3. Speaker list (session_speaker uses capital D: speakerID)
+	const speakersSql = `
+		SELECT DISTINCT sp.name as name
+		FROM session_speaker ss
+		JOIN speaker sp ON ss.speakerID = sp.id
+		WHERE hex(ss.sessionID) = '${sessionId}'
+		ORDER BY sp.name ASC;
+	`;
+	const speakerRows = parseRows<{name: string}>(query(speakersSql));
+	const speakers = speakerRows.map(r => r.name);
+
+	return {lines, metadata, speakers};
 }

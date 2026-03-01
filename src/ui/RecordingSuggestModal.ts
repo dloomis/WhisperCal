@@ -4,6 +4,7 @@ import type {MacWhisperRecording} from "../services/MacWhisperDb";
 export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 	private recordings: MacWhisperRecording[];
 	private resolve: ((value: MacWhisperRecording | null) => void) | null = null;
+	private selected: MacWhisperRecording | null = null;
 
 	constructor(app: App, recordings: MacWhisperRecording[]) {
 		super(app);
@@ -50,17 +51,17 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 	}
 
 	onChooseSuggestion(recording: MacWhisperRecording): void {
-		if (this.resolve) {
-			this.resolve(recording);
-			this.resolve = null;
-		}
+		this.selected = recording;
 	}
 
 	onClose(): void {
 		super.onClose();
-		if (this.resolve) {
-			this.resolve(null);
-			this.resolve = null;
-		}
+		// Defer to next tick — onChooseSuggestion fires after onClose
+		setTimeout(() => {
+			if (this.resolve) {
+				this.resolve(this.selected);
+				this.resolve = null;
+			}
+		}, 0);
 	}
 }

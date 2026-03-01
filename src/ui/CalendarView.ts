@@ -202,7 +202,7 @@ export class CalendarView extends ItemView {
 		renderMeetingCard(
 			this.contentContainer, unscheduledEvent,
 			this.settings.timezone, this.noteCreator, this.app,
-			false,
+			false, this.settings.transcriptFolderPath,
 		);
 
 		if (events.length === 0) {
@@ -225,7 +225,7 @@ export class CalendarView extends ItemView {
 				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
-					activeEventIds.has(event.id),
+					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
 				);
 			}
 		}
@@ -239,7 +239,7 @@ export class CalendarView extends ItemView {
 				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
-					activeEventIds.has(event.id),
+					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
 				);
 			}
 		}
