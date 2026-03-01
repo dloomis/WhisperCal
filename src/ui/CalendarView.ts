@@ -290,9 +290,14 @@ export class CalendarView extends ItemView {
 				startTime = this.selectedDate;
 			}
 
+			// Prefer basename over frontmatter subject (user may rename the note)
+			const displaySubject = child.basename.startsWith(`${datePrefix} - `)
+				? child.basename.slice(datePrefix.length + 3)
+				: meetingSubject ?? child.basename;
+
 			results.push({
 				id: `unscheduled-${child.path}`,
-				subject: meetingSubject ?? child.basename.replace(`${datePrefix} - `, ""),
+				subject: displaySubject,
 				body: "",
 				isAllDay: false,
 				isOnlineMeeting: false,

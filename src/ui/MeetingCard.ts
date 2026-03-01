@@ -31,9 +31,13 @@ export function renderMeetingCard(
 	const timeEl = timeRow.createDiv({cls: "whisper-cal-card-time"});
 	if (event.isAllDay) {
 		timeEl.setText("All day");
-	} else if (event.startTime.getTime() === event.endTime.getTime()) {
-		// Unscheduled card before note creation — no meaningful time
+	} else if (event.id === "unscheduled") {
+		// Top-level unscheduled card — no time yet
 		timeEl.setText("Ad hoc");
+	} else if (event.startTime.getTime() === event.endTime.getTime()) {
+		// Same start/end (e.g. unscheduled note with only a start time)
+		const start = formatTime(event.startTime, timezone);
+		timeEl.setText(start);
 	} else {
 		const start = formatTime(event.startTime, timezone);
 		const end = formatTime(event.endTime, timezone);
