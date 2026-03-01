@@ -72,6 +72,10 @@ export class NoteRecordingAction {
 
 		// Read file content to check for whisper-recording block
 		const content = view.data;
+		if (!content) {
+			this.removeAction();
+			return;
+		}
 		const session = parseSessionFromContent(content);
 
 		if (!session) {

@@ -57,15 +57,16 @@ export default class WhisperCalPlugin extends Plugin {
 
 		this.transcriptionManager = new TranscriptionManager(this.app, {
 			transcriptionFolderPath: this.settings.transcriptionFolderPath,
-			transcriptionServerUrl: this.settings.transcriptionServerUrl,
-			transcriptionModel: this.settings.transcriptionModel,
+			assemblyAiBaseUrl: this.settings.assemblyAiBaseUrl,
+			assemblyAiApiKey: this.settings.assemblyAiApiKey,
+			assemblyAiSpeechModel: this.settings.assemblyAiSpeechModel,
 			transcriptionLanguage: this.settings.transcriptionLanguage,
 		});
 
 		this.recordingManager.onRecordingSaved((session, recordingPath) => {
 			void this.linkRecordingToNote(session, recordingPath);
 
-			if (this.settings.autoTranscribe && this.settings.transcriptionServerUrl) {
+			if (this.settings.autoTranscribe && this.settings.assemblyAiApiKey) {
 				void this.transcriptionManager.transcribe({
 					recordingPath,
 					session: {eventId: session.eventId, subject: session.subject, date: session.date},
@@ -87,7 +88,7 @@ export default class WhisperCalPlugin extends Plugin {
 		this.statusBarRecording = new StatusBarRecording(statusBarEl, this.recordingManager, this.transcriptionManager);
 
 		this.noteRecordingAction = new NoteRecordingAction(this.app, this.recordingManager);
-		this.noteTranscriptionAction = new NoteTranscriptionAction(this.app, this.transcriptionManager);
+		this.noteTranscriptionAction = new NoteTranscriptionAction(this.app, this.transcriptionManager, this.recordingManager);
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
 			void this.activateView();
@@ -138,8 +139,9 @@ export default class WhisperCalPlugin extends Plugin {
 		// Update transcription manager config
 		this.transcriptionManager.updateConfig({
 			transcriptionFolderPath: this.settings.transcriptionFolderPath,
-			transcriptionServerUrl: this.settings.transcriptionServerUrl,
-			transcriptionModel: this.settings.transcriptionModel,
+			assemblyAiBaseUrl: this.settings.assemblyAiBaseUrl,
+			assemblyAiApiKey: this.settings.assemblyAiApiKey,
+			assemblyAiSpeechModel: this.settings.assemblyAiSpeechModel,
 			transcriptionLanguage: this.settings.transcriptionLanguage,
 		});
 		// Update existing views with new settings

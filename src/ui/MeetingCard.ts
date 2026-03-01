@@ -108,7 +108,17 @@ export function renderMeetingCard(
 	updateMicState();
 
 	micBtn.addEventListener("click", () => {
-		void recordingManager.startRecording(session);
+		const start = async () => {
+			// Ensure note exists and is open before recording
+			if (noteCreator.noteExists(event)) {
+				await noteCreator.openExistingNote(event);
+			} else {
+				await noteCreator.createNote(event);
+			}
+			updateButtonState();
+			await recordingManager.startRecording(session);
+		};
+		void start();
 	});
 
 	const unsubscribe = recordingManager.onChange(() => updateMicState());

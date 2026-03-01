@@ -1,5 +1,6 @@
 import {MarkdownView, TFile} from "obsidian";
 import type {App} from "obsidian";
+import type {RecordingManager} from "../services/RecordingManager";
 import type {TranscriptionManager} from "../services/TranscriptionManager";
 import type {RecordingSession} from "../services/RecordingTypes";
 import type {TranscriptionRequest} from "../services/TranscriptionTypes";
@@ -55,12 +56,13 @@ export class NoteTranscriptionAction {
 	private transcriptionManager: TranscriptionManager;
 	private unsubscribeWorkspace: (() => void) | null = null;
 	private unsubscribeTranscription: (() => void) | null = null;
+	private unsubscribeRecording: (() => void) | null = null;
 	private unsubscribeMetadata: (() => void) | null = null;
 	private activeActionEl: HTMLElement | null = null;
 	private activeView: MarkdownView | null = null;
 	private activeSession: RecordingSession | null = null;
 
-	constructor(app: App, transcriptionManager: TranscriptionManager) {
+	constructor(app: App, transcriptionManager: TranscriptionManager, recordingManager?: RecordingManager) {
 		this.app = app;
 		this.transcriptionManager = transcriptionManager;
 
@@ -72,6 +74,14 @@ export class NoteTranscriptionAction {
 		this.unsubscribeTranscription = transcriptionManager.onChange(() => {
 			this.updateIcon();
 		});
+
+		if (recordingManager) {
+			this.unsubscribeRecording = recordingManager.onChange(() => {
+				// Recording just finished — frontmatter update is async, so
+				// defer to let the metadata cache settle before re-evaluating.
+				window.setTimeout(() => this.onLeafChange(), 200);
+			});
+		}
 
 		const metaRef = this.app.metadataCache.on("changed", (file) => {
 			if (this.activeView?.file instanceof TFile && file.path === this.activeView.file.path) {
@@ -89,6 +99,8 @@ export class NoteTranscriptionAction {
 		this.unsubscribeWorkspace = null;
 		this.unsubscribeTranscription?.();
 		this.unsubscribeTranscription = null;
+		this.unsubscribeRecording?.();
+		this.unsubscribeRecording = null;
 		this.unsubscribeMetadata?.();
 		this.unsubscribeMetadata = null;
 	}
@@ -102,6 +114,10 @@ export class NoteTranscriptionAction {
 
 		const file = view.file;
 		const content = view.data;
+		if (!content) {
+			this.removeAction();
+			return;
+		}
 		const session = parseSessionFromContent(content);
 
 		if (!session) {
@@ -168,11 +184,13 @@ export class NoteTranscriptionAction {
 		if (!this.activeActionEl || !this.activeSession) return;
 
 		const state = this.transcriptionManager.getState();
+		const activeStatuses = ["uploading", "transcribing", "polling", "saving"] as const;
+		const isActive = activeStatuses.some(s => s === state.status);
 		const isThisNote =
-			(state.status === "transcribing" || state.status === "saving") &&
+			isActive &&
+			"request" in state &&
 			state.request.session.eventId === this.activeSession.eventId;
-		const isBusy =
-			(state.status === "transcribing" || state.status === "saving") && !isThisNote;
+		const isBusy = isActive && !isThisNote;
 
 		this.activeActionEl.removeClass("whisper-cal-note-transcribe-active");
 		this.activeActionEl.removeClass("whisper-cal-note-transcribe-disabled");

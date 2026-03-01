@@ -328,11 +328,27 @@
 .whisper-cal-statusbar {
 	display: flex;
 	align-items: center;
+	gap: 0;
+}
+
+.whisper-cal-statusbar-hidden {
+	display: none;
+}
+
+.whisper-cal-statusbar-segment {
+	display: flex;
+	align-items: center;
 	gap: 8px;
 }
 
-.whisper-cal-statusbar:empty {
+.whisper-cal-statusbar-segment:empty {
 	display: none;
+}
+
+.whisper-cal-statusbar-segment + .whisper-cal-statusbar-segment:not(:empty) {
+	margin-left: 8px;
+	padding-left: 8px;
+	border-left: 1px solid var(--background-modifier-border);
 }
 
 .whisper-cal-statusbar-dot span {
