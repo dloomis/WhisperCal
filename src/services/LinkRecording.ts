@@ -42,10 +42,14 @@ export async function linkRecording(opts: {
 
 	console.debug("[WhisperCal] selected session:", selected.sessionId);
 
-	// Set title in MacWhisper DB: "YYYY-MM-DD Subject"
+	// Set title in MacWhisper DB first — only proceed if successful
 	const date = formatDate(meetingStart, timezone);
 	const title = `${date} ${subject}`;
-	setSessionTitle(selected.sessionId, title);
+	if (!setSessionTitle(selected.sessionId, title)) {
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("Failed to update MacWhisper session title");
+		return false;
+	}
 
 	// Write session ID to note frontmatter
 	await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);

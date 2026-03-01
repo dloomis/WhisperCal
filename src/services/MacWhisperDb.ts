@@ -152,11 +152,20 @@ export function findRecordingsNear(
 
 /**
  * Set the user-chosen title on a MacWhisper session.
+ * Returns true if the update succeeded, false on error.
  */
-export function setSessionTitle(sessionId: string, title: string): void {
+export function setSessionTitle(sessionId: string, title: string): boolean {
 	const escaped = title.replace(/'/g, "''");
 	const sql = `UPDATE session SET userChosenTitle = '${escaped}' WHERE hex(id) = '${sessionId}';`;
-	query(sql, false);
+	const flat = sql.replace(/[\n\t]+/g, " ").trim();
+	const cmd = `sqlite3 -json "${MACWHISPER_DB_PATH}" ${JSON.stringify(flat)}`;
+	try {
+		execSync(cmd, {encoding: "utf-8", timeout: 5000});
+		return true;
+	} catch (err) {
+		console.error("[WhisperCal] setSessionTitle failed:", err);
+		return false;
+	}
 }
 
 /**
