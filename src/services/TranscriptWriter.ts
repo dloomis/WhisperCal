@@ -1,5 +1,5 @@
 import type {App} from "obsidian";
-import {TFile, TFolder} from "obsidian";
+import {TFile, TFolder, normalizePath} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
 import {updateFrontmatter} from "../utils/frontmatter";
@@ -13,7 +13,7 @@ interface SpeakerBlock {
 function getTranscriptPath(notePath: string, transcriptFolderPath: string): string {
 	// Extract basename without extension from the meeting note path
 	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
-	return `${transcriptFolderPath}/${basename} - Transcript.md`;
+	return normalizePath(`${transcriptFolderPath}/${basename} - Transcript.md`);
 }
 
 function formatDuration(seconds: number): string {
@@ -180,7 +180,7 @@ export async function createTranscriptFile(opts: {
 		return null;
 	}
 
-	const data = getTranscript(sessionId);
+	const data = await getTranscript(sessionId);
 
 	// Skip if session not found
 	if (!data.metadata) return null;

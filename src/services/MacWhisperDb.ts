@@ -1,4 +1,4 @@
-import {execSync} from "child_process";
+import {execFile, exec} from "child_process";
 import {join} from "path";
 import {MACWHISPER_DB_PATH, MACWHISPER_MEDIA_PATH} from "../constants";
 
@@ -42,22 +42,34 @@ export interface TranscriptData {
 	speakers: string[];
 }
 
+/** Validate that a string is a hex-encoded session ID (safe for SQL interpolation). */
+function isValidHexId(id: string): boolean {
+	return /^[0-9A-Fa-f]+$/.test(id) && id.length > 0;
+}
+
 /**
  * Query the MacWhisper SQLite database to find and link recordings.
  * Uses `sqlite3` CLI — no npm dependencies needed.
  */
 
-function query(sql: string, readonly = true): string {
-	const flags = readonly ? "-readonly" : "";
-	// Collapse newlines/tabs to spaces so JSON.stringify won't produce
-	// \n / \t literals that sqlite3 can't parse as SQL tokens.
+function query(sql: string, readonly = true): Promise<string> {
+	const flags = readonly ? ["-readonly", "-json"] : ["-json"];
+	// Collapse newlines/tabs to spaces for clean SQL
 	const flat = sql.replace(/[\n\t]+/g, " ").trim();
-	const cmd = `sqlite3 ${flags} -json "${MACWHISPER_DB_PATH}" ${JSON.stringify(flat)}`;
-	try {
-		return execSync(cmd, {encoding: "utf-8", timeout: 5000}).trim();
-	} catch {
-		return "[]";
-	}
+	return new Promise((resolve) => {
+		execFile(
+			"sqlite3",
+			[...flags, MACWHISPER_DB_PATH, flat],
+			{encoding: "utf-8", timeout: 5000},
+			(err, stdout) => {
+				if (err) {
+					resolve("[]");
+				} else {
+					resolve(stdout.trim());
+				}
+			},
+		);
+	});
 }
 
 function parseRows<T>(raw: string): T[] {
@@ -86,31 +98,36 @@ function hexToUuid(hex: string): string {
  *   etc.
  * Track-0 birthtime = actual recording start time.
  */
-function getTrack0Birthtime(sessionId: string): Date | null {
+function getTrack0Birthtime(sessionId: string): Promise<Date | null> {
 	const uuid = hexToUuid(sessionId);
 	const prefix = `${uuid}_track-0_`;
-	try {
-		// Use stat on the expected filename pattern via shell glob
-		const cmd = `stat -f "%B" "${join(MACWHISPER_MEDIA_PATH, prefix)}"*.m4a`;
-		const raw = execSync(cmd, {encoding: "utf-8", shell: "/bin/zsh", timeout: 3000}).trim();
-		if (!raw) return null;
-		// stat -f "%B" returns birthtime as epoch seconds
-		const epoch = parseInt(raw.split("\n")[0]!, 10);
-		if (isNaN(epoch)) return null;
-		return new Date(epoch * 1000);
-	} catch {
-		return null;
-	}
+	// Use stat on the expected filename pattern via shell glob
+	const cmd = `stat -f "%B" "${join(MACWHISPER_MEDIA_PATH, prefix)}"*.m4a`;
+	return new Promise((resolve) => {
+		exec(cmd, {encoding: "utf-8", shell: "/bin/zsh", timeout: 3000}, (err, stdout) => {
+			if (err || !stdout.trim()) {
+				resolve(null);
+				return;
+			}
+			// stat -f "%B" returns birthtime as epoch seconds
+			const epoch = parseInt(stdout.trim().split("\n")[0]!, 10);
+			if (isNaN(epoch)) {
+				resolve(null);
+			} else {
+				resolve(new Date(epoch * 1000));
+			}
+		});
+	});
 }
 
 /**
  * Find MacWhisper recordings whose track-0 birthtime is within
  * ±windowMinutes of the given meeting start time.
  */
-export function findRecordingsNear(
+export async function findRecordingsNear(
 	meetingStart: Date,
 	windowMinutes = 10,
-): MacWhisperRecording[] {
+): Promise<MacWhisperRecording[]> {
 	// Join session → mediafile for track-0, and session → SAR for duration
 	const sql = `
 		SELECT hex(s.id) as sessionId,
@@ -126,16 +143,22 @@ export function findRecordingsNear(
 		ORDER BY s.dateCreated DESC
 		LIMIT 50;
 	`;
-	const raw = query(sql);
+	const raw = await query(sql);
 	const rows = parseRows<SessionRow>(raw);
 
 	const windowMs = windowMinutes * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
-	for (const row of rows) {
-		const birthtime = getTrack0Birthtime(row.sessionId);
+	// Resolve all birthtimes concurrently
+	const birthtimes = await Promise.all(
+		rows.map(row => getTrack0Birthtime(row.sessionId)),
+	);
+
+	for (let i = 0; i < rows.length; i++) {
+		const birthtime = birthtimes[i];
 		if (!birthtime) continue;
 
+		const row = rows[i]!;
 		const diff = Math.abs(birthtime.getTime() - meetingStart.getTime());
 		if (diff <= windowMs) {
 			results.push({
@@ -154,25 +177,35 @@ export function findRecordingsNear(
  * Set the user-chosen title on a MacWhisper session.
  * Returns true if the update succeeded, false on error.
  */
-export function setSessionTitle(sessionId: string, title: string): boolean {
+export async function setSessionTitle(sessionId: string, title: string): Promise<boolean> {
+	if (!isValidHexId(sessionId)) return false;
 	const escaped = title.replace(/'/g, "''");
 	const sql = `UPDATE session SET userChosenTitle = '${escaped}' WHERE hex(id) = '${sessionId}';`;
 	const flat = sql.replace(/[\n\t]+/g, " ").trim();
-	const cmd = `sqlite3 -json "${MACWHISPER_DB_PATH}" ${JSON.stringify(flat)}`;
-	try {
-		execSync(cmd, {encoding: "utf-8", timeout: 5000});
-		return true;
-	} catch (err) {
-		console.error("[WhisperCal] setSessionTitle failed:", err);
-		return false;
-	}
+	return new Promise((resolve) => {
+		execFile(
+			"sqlite3",
+			[MACWHISPER_DB_PATH, flat],
+			{encoding: "utf-8", timeout: 5000},
+			(err) => {
+				if (err) {
+					console.error("[WhisperCal] setSessionTitle failed:", err);
+					resolve(false);
+				} else {
+					resolve(true);
+				}
+			},
+		);
+	});
 }
 
 /**
  * Fetch full transcript data for a session: lines with speaker attribution,
  * session metadata, and speaker list.
  */
-export function getTranscript(sessionId: string): TranscriptData {
+export async function getTranscript(sessionId: string): Promise<TranscriptData> {
+	if (!isValidHexId(sessionId)) return {lines: [], metadata: null, speakers: []};
+
 	// 1. Transcript lines with speaker names and start timestamps
 	//    tl.start is already in milliseconds; speakerID has capital D
 	const linesSql = `
@@ -184,7 +217,6 @@ export function getTranscript(sessionId: string): TranscriptData {
 		WHERE hex(tl.sessionId) = '${sessionId}'
 		ORDER BY tl.start ASC;
 	`;
-	const lines = parseRows<TranscriptLineRow>(query(linesSql));
 
 	// 2. Session metadata (actual column names from MacWhisper schema)
 	const metaSql = `
@@ -204,8 +236,6 @@ export function getTranscript(sessionId: string): TranscriptData {
 		LEFT JOIN recordedmeeting rm ON s.recordedMeetingID = rm.id
 		WHERE hex(s.id) = '${sessionId}';
 	`;
-	const metaRows = parseRows<SessionMetadataRow>(query(metaSql));
-	const metadata = metaRows[0] ?? null;
 
 	// 3. Speaker list (session_speaker uses capital D: speakerID)
 	const speakersSql = `
@@ -215,7 +245,18 @@ export function getTranscript(sessionId: string): TranscriptData {
 		WHERE hex(ss.sessionID) = '${sessionId}'
 		ORDER BY sp.name ASC;
 	`;
-	const speakerRows = parseRows<{name: string}>(query(speakersSql));
+
+	// Run all three queries concurrently
+	const [linesRaw, metaRaw, speakersRaw] = await Promise.all([
+		query(linesSql),
+		query(metaSql),
+		query(speakersSql),
+	]);
+
+	const lines = parseRows<TranscriptLineRow>(linesRaw);
+	const metaRows = parseRows<SessionMetadataRow>(metaRaw);
+	const metadata = metaRows[0] ?? null;
+	const speakerRows = parseRows<{name: string}>(speakersRaw);
 	const speakers = speakerRows.map(r => r.name);
 
 	return {lines, metadata, speakers};

@@ -5,6 +5,6 @@
 	"minAppVersion": "1.4.10",
 	"description": "Daily calendar view with Outlook integration. Create meeting notes with one click.",
 	"author": "Dan Loomis",
-	"authorUrl": "",
+	"authorUrl": "https://github.com/dloomis",
 	"isDesktopOnly": true
 }

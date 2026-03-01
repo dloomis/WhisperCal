@@ -1,90 +1,63 @@
-# Obsidian Sample Plugin
+# WhisperCal
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Daily calendar view for Obsidian with Microsoft 365 integration. Create templated meeting notes with one click and link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings and transcripts to your notes.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Calendar sidebar** — View today's meetings in a right-panel calendar view with day navigation
+- **One-click meeting notes** — Create structured meeting notes from calendar events using customizable templates
+- **Attendee matching** — Link attendees to People notes in your vault via `[[wiki links]]`
+- **MacWhisper integration** — Link MacWhisper recordings to meeting notes and generate transcript files with speaker attribution
+- **Unscheduled notes** — Create ad-hoc meeting notes that slot into the day's timeline
 
-## First time developing plugins?
+## Requirements
 
-Quick starting guide for new plugin devs:
+- **Obsidian** v1.4.10 or later (desktop only)
+- **Microsoft 365 account** with an Azure AD app registration for calendar access
+- **MacWhisper** (optional) — required only for recording/transcript features; must be installed at the default macOS location
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+### Azure AD setup
 
-## Releasing new releases
+1. Register an application in the [Azure portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+2. Set the platform to **Mobile and desktop applications** with redirect URI `https://login.microsoftonline.com/common/oauth2/nativeclient`
+3. Grant the **Calendars.Read** delegated permission under Microsoft Graph
+4. Copy the **Application (client) ID** and **Directory (tenant) ID** into the plugin settings
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## Installation
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### From community plugins
 
-## Adding your plugin to the community plugin list
+Search for **WhisperCal** in Obsidian's community plugin browser and click **Install**.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Manual installation
 
-## How to use
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/dloomis/whisper-cal/releases/latest)
+2. Create a folder at `<vault>/.obsidian/plugins/whisper-cal/`
+3. Copy the three files into that folder
+4. Restart Obsidian and enable the plugin under **Settings > Community plugins**
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Configuration
 
-## Manually installing the plugin
+Open **Settings > WhisperCal** to configure:
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+| Setting | Description |
+|---------|-------------|
+| Notes folder | Vault folder where meeting notes are created |
+| People folder | Vault folder containing people notes for attendee matching |
+| Transcripts folder | Vault folder for generated transcript files |
+| Note filename template | Pattern for note filenames (`{{date}}`, `{{subject}}`) |
+| Note template | Vault file used as a template for meeting note content |
+| Timezone | IANA timezone for displaying meeting times |
+| Refresh interval | How often the calendar view auto-refreshes |
+| Tenant ID / Client ID | Azure AD app registration credentials |
+| Cloud instance | Microsoft cloud environment (Public, USGov, USGovHigh, USGovDoD, China) |
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+## Disclosures
 
-## Funding URL
+- **Remote services:** This plugin connects to the **Microsoft Graph API** to fetch calendar events. Authentication uses the OAuth 2.0 Device Code Flow. OAuth tokens are stored locally in the plugin's `data.json` file within your vault.
+- **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
+- **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and is not available on Obsidian Mobile.
 
-You can include funding URLs where people who use your plugin can financially support it.
+## License
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
-```
-
-If you have multiple URLs, you can also do:
-
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
-
-## API Documentation
-
-See https://docs.obsidian.md
+[0-BSD](LICENSE)

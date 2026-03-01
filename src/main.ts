@@ -19,6 +19,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private provider: CalendarProvider;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 	private micButtonEl: HTMLElement | null = null;
+	private tokenCache: TokenCache | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -106,14 +107,11 @@ export default class WhisperCalPlugin extends Plugin {
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-		// tokenCache is stored in data but not part of WhisperCalSettings
-		// It gets loaded separately by loadTokenCache()
+		this.tokenCache = data?.tokenCache ?? null;
 	}
 
 	async saveSettings() {
-		// Persist settings (tokenCache is saved alongside)
-		const data = await this.loadData() as Partial<PluginData> | null;
-		await this.saveData({...data, ...this.settings});
+		await this.saveData({...this.settings, tokenCache: this.tokenCache});
 		// Update auth config if tenant/client/cloud changed
 		this.auth.updateConfig({
 			tenantId: this.settings.tenantId,
@@ -143,21 +141,19 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private loadTokenCache(): TokenCache | null {
-		// Synchronously read from the already-loaded data
-		// loadData() was called in loadSettings() before auth.initialize()
-		// tokenCache lives in data.json alongside settings fields
-		return (this.settings as unknown as Record<string, unknown>)?.["tokenCache"] as TokenCache | null ?? null;
+		return this.tokenCache;
 	}
 
 	private async saveTokenCache(cache: TokenCache | null): Promise<void> {
-		const data = await this.loadData() as Partial<PluginData> | null;
-		await this.saveData({...data, ...this.settings, tokenCache: cache});
+		this.tokenCache = cache;
+		await this.saveData({...this.settings, tokenCache: cache});
 	}
 
 	private removeTitleBarMicButton(): void {
-		// Remove all instances — handles stale buttons from plugin reloads
-		document.querySelectorAll(".whisper-cal-mic-action").forEach(el => el.remove());
-		this.micButtonEl = null;
+		if (this.micButtonEl) {
+			this.micButtonEl.remove();
+			this.micButtonEl = null;
+		}
 	}
 
 	private updateTitleBarMicButton(): void {
@@ -178,7 +174,6 @@ export default class WhisperCalPlugin extends Plugin {
 			// Re-read frontmatter at click time to avoid stale closures
 			const freshFm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 			if (!freshFm) return;
-			console.debug("[WhisperCal] mic click:", file.path, "sessionId:", String(freshFm["macwhisper_session_id"] ?? "none"));
 			if (freshFm["macwhisper_session_id"]) {
 				new Notice("Recording already linked to this note");
 				return;
@@ -186,8 +181,15 @@ export default class WhisperCalPlugin extends Plugin {
 			const doLink = async () => {
 				try {
 					await this.handleLinkRecording(file, freshFm);
-					// Wait for metadataCache to update after frontmatter write
-					setTimeout(() => this.updateTitleBarMicButton(), 500);
+					// Re-render mic button once metadataCache reflects the new frontmatter
+					const ref = this.app.metadataCache.on("changed", (changedFile) => {
+						if (changedFile.path === file.path) {
+							this.app.metadataCache.offref(ref);
+							this.updateTitleBarMicButton();
+						}
+					});
+					// Safety: clean up if the event never fires
+					window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
 				} catch (err) {
 					console.error("[WhisperCal] handleLinkRecording error:", err);
 				}

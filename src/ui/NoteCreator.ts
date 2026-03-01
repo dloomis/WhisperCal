@@ -1,4 +1,4 @@
-import {App, MarkdownView, TFile, TFolder, WorkspaceLeaf} from "obsidian";
+import {App, MarkdownView, TFile, TFolder, WorkspaceLeaf, normalizePath} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {formatDate} from "../utils/time";
@@ -21,7 +21,7 @@ export class NoteCreator {
 		const filename = this.settings.noteFilenameTemplate
 			.replace("{{date}}", date)
 			.replace("{{subject}}", subject);
-		return `${this.settings.noteFolderPath}/${filename}.md`;
+		return normalizePath(`${this.settings.noteFolderPath}/${filename}.md`);
 	}
 
 	noteExists(event: CalendarEvent): boolean {
@@ -55,12 +55,11 @@ export class NoteCreator {
 		// For unscheduled events, stamp the actual creation time so
 		// frontmatter records a real meeting_start and the card can
 		// render inline at the correct time slot.
-		if (event.id === "unscheduled") {
-			event.startTime = noteCreated;
-			event.endTime = noteCreated;
-		}
+		const effectiveEvent = event.id === "unscheduled"
+			? {...event, startTime: noteCreated, endTime: noteCreated}
+			: event;
 
-		const content = await this.buildNoteContent(event, noteCreated);
+		const content = await this.buildNoteContent(effectiveEvent, noteCreated);
 		const file = await this.app.vault.create(path, content);
 		const leaf = this.app.workspace.getLeaf("tab");
 		await leaf.openFile(file);

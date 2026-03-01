@@ -1,4 +1,4 @@
-import {App, Notice, TFile} from "obsidian";
+import {App, Notice, TFile, normalizePath} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {PeopleMatchResult} from "./PeopleMatchService";
 import {formatDate, formatTime} from "../utils/time";
@@ -132,7 +132,8 @@ export async function loadTemplate(app: App, path: string): Promise<string> {
  * Write the DEFAULT_TEMPLATE to a file in the vault.
  * Creates parent folders if needed.
  */
-export async function createDefaultTemplateFile(app: App, path: string): Promise<void> {
+export async function createDefaultTemplateFile(app: App, rawPath: string): Promise<void> {
+	const path = normalizePath(rawPath);
 	// Ensure parent folder exists
 	const folderPath = path.substring(0, path.lastIndexOf("/"));
 	if (folderPath) {

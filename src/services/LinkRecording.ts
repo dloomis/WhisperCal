@@ -22,8 +22,7 @@ export async function linkRecording(opts: {
 }): Promise<boolean> {
 	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, windowMinutes} = opts;
 
-	const recordings = findRecordingsNear(meetingStart, windowMinutes);
-	console.debug("[WhisperCal] linkRecording:", {notePath, windowMinutes, found: recordings.length});
+	const recordings = await findRecordingsNear(meetingStart, windowMinutes);
 
 	if (recordings.length === 0) {
 		new Notice("No matching recording found");
@@ -40,12 +39,10 @@ export async function linkRecording(opts: {
 
 	if (!selected) return false;
 
-	console.debug("[WhisperCal] selected session:", selected.sessionId);
-
 	// Set title in MacWhisper DB first — only proceed if successful
 	const date = formatDate(meetingStart, timezone);
 	const title = `${date} ${subject}`;
-	if (!setSessionTitle(selected.sessionId, title)) {
+	if (!await setSessionTitle(selected.sessionId, title)) {
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Failed to update MacWhisper session title");
 		return false;
@@ -61,8 +58,6 @@ export async function linkRecording(opts: {
 		sessionId: selected.sessionId,
 		transcriptFolderPath,
 	});
-	console.debug("[WhisperCal] transcript:", transcriptPath ?? "skipped");
-
 	if (transcriptPath) {
 		new Notice("Recording and transcript linked to note");
 	} else {

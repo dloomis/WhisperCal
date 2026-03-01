@@ -50,7 +50,7 @@ export function renderMeetingCard(
 		});
 		locLink.addEventListener("click", (e) => {
 			e.preventDefault();
-			window.open(joinUrl);
+			window.open(joinUrl, "_blank", "noopener");
 		});
 		const locIcon = locLink.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(locIcon, "map-pin");
@@ -132,7 +132,6 @@ export function renderMeetingCard(
 							? leaf.view.file
 							: null;
 						if (file) {
-							console.debug("[WhisperCal] note path fallback:", notePath, "→", file.path);
 							notePath = file.path;
 						} else {
 							new Notice("Open the meeting note first, then link the recording");

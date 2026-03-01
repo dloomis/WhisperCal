@@ -123,18 +123,15 @@ export class CalendarView extends ItemView {
 		}
 
 		this.renderLoading();
-		console.debug("[WhisperCal] refresh — selectedDate:", this.selectedDate.toISOString());
 
 		try {
 			const available = await this.provider.isAvailable();
-			console.debug("[WhisperCal] isAvailable:", available);
 			if (!available) {
 				this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
 				return;
 			}
 
 			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
-			console.debug("[WhisperCal] fetchEvents returned", events.length, "events");
 			this.renderEvents(events);
 		} catch (e) {
 			console.error("[WhisperCal] refresh error:", e);
@@ -185,6 +182,11 @@ export class CalendarView extends ItemView {
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 		const activeEventIds = isToday ? this.findActiveEventIds(events) : new Set<string>();
 
+		const onNoteCreated = () => {
+			this.lastRefreshTime = 0;
+			void this.refresh();
+		};
+
 		// Unscheduled card — always at the top
 		const unscheduledEvent: CalendarEvent = {
 			id: "unscheduled",
@@ -205,10 +207,7 @@ export class CalendarView extends ItemView {
 			this.contentContainer, unscheduledEvent,
 			this.settings.timezone, this.noteCreator, this.app,
 			false, this.settings.transcriptFolderPath,
-			() => {
-				this.lastRefreshTime = 0;
-				void this.refresh();
-			},
+			onNoteCreated,
 		);
 
 		if (events.length === 0) {
@@ -237,6 +236,7 @@ export class CalendarView extends ItemView {
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
 					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
+					onNoteCreated,
 				);
 			}
 		}
@@ -251,6 +251,7 @@ export class CalendarView extends ItemView {
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
 					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
+					onNoteCreated,
 				);
 			}
 		}
@@ -361,16 +362,17 @@ export class CalendarView extends ItemView {
 	startAutoRefresh(): void {
 		this.stopAutoRefresh();
 		const intervalMs = this.settings.refreshIntervalMinutes * 60 * 1000;
-		this.refreshTimerId = this.registerInterval(
-			window.setInterval(() => {
-				void this.refresh();
-			}, intervalMs)
-		) as unknown as number;
+		this.refreshTimerId = window.setInterval(() => {
+			void this.refresh();
+		}, intervalMs);
+		this.registerInterval(this.refreshTimerId);
 	}
 
 	private stopAutoRefresh(): void {
-		// registerInterval handles cleanup on unload; this is for manual restarts
-		this.refreshTimerId = null;
+		if (this.refreshTimerId !== null) {
+			window.clearInterval(this.refreshTimerId);
+			this.refreshTimerId = null;
+		}
 	}
 
 	private restartAutoRefresh(): void {
