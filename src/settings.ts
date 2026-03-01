@@ -19,8 +19,9 @@ export interface WhisperCalSettings {
 	recordingFolderPath: string;
 	systemAudioDeviceId: string;
 	transcriptionFolderPath: string;
-	transcriptionServerUrl: string;
-	transcriptionModel: string;
+	assemblyAiBaseUrl: string;
+	assemblyAiApiKey: string;
+	assemblyAiSpeechModel: string;
 	transcriptionLanguage: string;
 	autoTranscribe: boolean;
 }
@@ -38,8 +39,9 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	recordingFolderPath: "Recordings",
 	systemAudioDeviceId: "",
 	transcriptionFolderPath: "Transcriptions",
-	transcriptionServerUrl: "http://localhost:8000",
-	transcriptionModel: "large-v3-turbo",
+	assemblyAiBaseUrl: "https://api.assemblyai.com/v2",
+	assemblyAiApiKey: "",
+	assemblyAiSpeechModel: "universal-3-pro",
 	transcriptionLanguage: "",
 	autoTranscribe: false,
 };
@@ -207,39 +209,55 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Server URL")
-			.setDesc("URL of an OpenAI-compatible Whisper server with diarization (e.g. http://localhost:8000)")
+			.setName("API endpoint")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("AssemblyAI API base URL")
 			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("http://localhost:8000")
-				.setValue(this.plugin.settings.transcriptionServerUrl)
+				.setPlaceholder("https://api.assemblyai.com/v2")
+				.setValue(this.plugin.settings.assemblyAiBaseUrl)
 				.onChange(async (value) => {
-					this.plugin.settings.transcriptionServerUrl = value;
+					this.plugin.settings.assemblyAiBaseUrl = value;
 					await this.plugin.saveSettings();
 				}));
 
-		let modelDropdown: DropdownComponent;
 		new Setting(containerEl)
-			.setName("Model")
-			.setDesc("Whisper model name to use for transcription")
+			.setName("API key")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("AssemblyAI API key for cloud transcription with speaker diarization")
+			.addText(text => {
+				text.setPlaceholder("Enter your API key")
+					.setValue(this.plugin.settings.assemblyAiApiKey)
+					.onChange(async (value) => {
+						this.plugin.settings.assemblyAiApiKey = value;
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.type = "password";
+			});
+
+		let speechModelDropdown: DropdownComponent;
+		new Setting(containerEl)
+			.setName("Speech model")
+			.setDesc("Speech recognition model to use for transcription")
 			.addDropdown(dropdown => {
-				modelDropdown = dropdown;
-				const current = this.plugin.settings.transcriptionModel || "large-v3-turbo";
-				dropdown.addOption(current, current);
-				dropdown.setValue(current);
+				speechModelDropdown = dropdown;
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				dropdown.addOption("universal-3-pro", "universal-3-pro");
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				dropdown.addOption("universal-2", "universal-2");
+				dropdown.setValue(this.plugin.settings.assemblyAiSpeechModel);
 				dropdown.onChange(async (value) => {
-					this.plugin.settings.transcriptionModel = value;
+					this.plugin.settings.assemblyAiSpeechModel = value;
 					await this.plugin.saveSettings();
 				});
 			});
 
-		const testConnectionSetting = new Setting(containerEl)
-			.setName("Test connection")
-			.setDesc("Verify the server is reachable and fetch available models")
+		const testKeySetting = new Setting(containerEl)
+			.setName("Test API key")
+			.setDesc("Verify your API key is valid and detect available speech models")
 			.addButton(button => button
-				.setButtonText("Test connection")
+				.setButtonText("Test API key")
 				.onClick(async () => {
-					await this.testTranscriptionServer(modelDropdown, testConnectionSetting);
+					await this.testAssemblyAiKey(testKeySetting, speechModelDropdown);
 				}));
 
 		new Setting(containerEl)
@@ -324,61 +342,85 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.authUnsubscribe = null;
 	}
 
-	private async testTranscriptionServer(
-		modelDropdown: DropdownComponent,
-		setting: Setting,
-	): Promise<void> {
-		const serverUrl = this.plugin.settings.transcriptionServerUrl.replace(/\/+$/, "");
-		if (!serverUrl) {
-			new Notice("Server URL is empty");
+	private async testAssemblyAiKey(setting: Setting, modelDropdown: DropdownComponent): Promise<void> {
+		const apiKey = this.plugin.settings.assemblyAiApiKey;
+		if (!apiKey) {
+			new Notice("API key is empty");
 			return;
 		}
 
-		setting.setDesc("Testing connection...");
+		setting.setDesc("Testing...");
+		const baseUrl = this.plugin.settings.assemblyAiBaseUrl.replace(/\/+$/, "");
 
 		try {
-			const response = await requestUrl({
-				url: `${serverUrl}/v1/models`,
+			await requestUrl({
+				url: `${baseUrl}/transcript?limit=1`,
 				method: "GET",
+				headers: {
+					"Authorization": apiKey,
+				},
 			});
+		} catch {
+			setting.setDesc("API key test failed — check your key and endpoint");
+			new Notice("API key test failed");
+			return;
+		}
 
-			const data = response.json as {data?: Array<{id: string}>};
-			const models = data.data;
-
-			if (!Array.isArray(models) || models.length === 0) {
-				setting.setDesc("Connected but no models returned");
-				new Notice("Server reachable but returned no models");
-				return;
-			}
-
-			const modelIds = models.map(m => m.id);
-
-			// Rebuild dropdown with server models
+		// Discover available speech models by sending an invalid value and parsing the error
+		const models = await this.discoverSpeechModels(baseUrl, apiKey);
+		if (models.length > 0) {
 			const selectEl = modelDropdown.selectEl;
 			selectEl.empty();
-			for (const id of modelIds) {
+			for (const id of models) {
 				modelDropdown.addOption(id, id);
 			}
-
-			// Preserve current selection if it's in the list, otherwise pick first
-			const current = this.plugin.settings.transcriptionModel;
-			if (modelIds.includes(current)) {
+			// Preserve current selection if still valid, otherwise pick first
+			const current = this.plugin.settings.assemblyAiSpeechModel;
+			if (models.includes(current)) {
 				modelDropdown.setValue(current);
 			} else {
-				const first = modelIds[0] as string;
+				const first = models[0] as string;
 				modelDropdown.setValue(first);
-				this.plugin.settings.transcriptionModel = first;
+				this.plugin.settings.assemblyAiSpeechModel = first;
 				await this.plugin.saveSettings();
 			}
-
-			const modelList = modelIds.join(", ");
-			setting.setDesc(`Connected — ${models.length} model(s): ${modelList}`);
-			new Notice(`Transcription server OK — ${models.length} model(s) available`);
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Connection failed";
-			setting.setDesc(`Connection failed: ${message}`);
-			new Notice(`Transcription server connection failed: ${message}`);
+			const modelList = models.join(", ");
+			setting.setDesc(`API key valid — models: ${modelList}`);
+			new Notice(`API key valid — ${models.length} model(s): ${modelList}`);
+		} else {
+			setting.setDesc("API key is valid");
+			new Notice("API key is valid");
 		}
+	}
+
+	private async discoverSpeechModels(baseUrl: string, apiKey: string): Promise<string[]> {
+		try {
+			// eslint-disable-next-line no-restricted-globals
+			const response = await fetch(`${baseUrl}/transcript`, {
+				method: "POST",
+				headers: {
+					"Authorization": apiKey,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					audio_url: "https://invalid",
+					speech_models: ["__probe__"],
+				}),
+			});
+
+			if (response.status === 400) {
+				const data = await response.json() as {error?: string};
+				if (typeof data.error === "string") {
+					// Parse model names from error like: "...one or more of: \"universal-3-pro\", \"universal-2\""
+					const matches = [...data.error.matchAll(/"([^"]+)"/g)];
+					const models = matches.map(m => m[1] as string).filter(m => m !== "speech_models");
+					if (models.length > 0) return models;
+				}
+			}
+		} catch {
+			// Discovery is best-effort
+		}
+		return [];
 	}
 
 	private async populateAudioDevices(dropdown: DropdownComponent): Promise<void> {

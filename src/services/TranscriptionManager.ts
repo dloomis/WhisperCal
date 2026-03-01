@@ -1,20 +1,22 @@
 import type {App} from "obsidian";
-import {Notice, normalizePath, requestUrl} from "obsidian";
+import {Notice, normalizePath} from "obsidian";
 import {TFile} from "obsidian";
-import {buildMultipartBody, audioMimeType} from "../utils/multipart";
 import {sanitizeFilename} from "../utils/sanitize";
 import type {
 	TranscriptionRequest,
 	TranscriptionState,
 	TranscriptionSavedCallback,
-	WhisperVerboseResponse,
-	WhisperSegment,
+	AssemblyAITranscriptResponse,
+	AssemblyAIUtterance,
 } from "./TranscriptionTypes";
+
+const POLL_INTERVAL_MS = 3000;
 
 export interface TranscriptionConfig {
 	transcriptionFolderPath: string;
-	transcriptionServerUrl: string;
-	transcriptionModel: string;
+	assemblyAiBaseUrl: string;
+	assemblyAiApiKey: string;
+	assemblyAiSpeechModel: string;
 	transcriptionLanguage: string;
 }
 
@@ -28,6 +30,10 @@ export class TranscriptionManager {
 	constructor(app: App, config: TranscriptionConfig) {
 		this.app = app;
 		this.config = config;
+	}
+
+	private get baseUrl(): string {
+		return this.config.assemblyAiBaseUrl.replace(/\/+$/, "");
 	}
 
 	getState(): TranscriptionState {
@@ -58,13 +64,19 @@ export class TranscriptionManager {
 			return;
 		}
 
-		this.setState({status: "transcribing", request});
-
 		try {
+			this.setState({status: "uploading", request});
 			const audioBuffer = await this.readAudioFile(request.recordingPath);
-			const response = await this.postToServer(audioBuffer, request.recordingPath);
-			const segments = this.parseResponse(response);
-			const markdown = this.formatTranscript(segments);
+			const uploadUrl = await this.uploadAudio(audioBuffer);
+
+			this.setState({status: "transcribing", request});
+			const transcriptId = await this.submitTranscription(uploadUrl);
+
+			this.setState({status: "polling", request, pollingStatus: "queued"});
+			const response = await this.pollTranscription(transcriptId, request);
+
+			const utterances = this.parseResponse(response);
+			const markdown = this.formatTranscript(utterances);
 
 			this.setState({status: "saving", request});
 			const savedPath = await this.saveTranscript(markdown, request);
@@ -111,83 +123,134 @@ export class TranscriptionManager {
 		return await this.app.vault.readBinary(file);
 	}
 
-	private async postToServer(audioBuffer: ArrayBuffer, recordingPath: string): Promise<WhisperVerboseResponse> {
-		const url = this.config.transcriptionServerUrl.replace(/\/+$/, "");
-		const filename = recordingPath.split("/").pop() ?? "audio.webm";
-		const ext = filename.split(".").pop() ?? "webm";
+	/* eslint-disable no-restricted-globals */
 
-		const fields = [
-			{name: "model", value: this.config.transcriptionModel || "large-v3-turbo"},
-			{name: "response_format", value: "verbose_json"},
-		];
+	/** Fetch wrapper that reads error response bodies for diagnostics. */
+	private async apiRequest(url: string, init: RequestInit): Promise<Response> {
+		const response = await fetch(url, {
+			...init,
+			headers: {
+				"Authorization": this.config.assemblyAiApiKey,
+				...init.headers as Record<string, string>,
+			},
+		});
+
+		if (!response.ok) {
+			const body = await response.text();
+			throw new Error(`status ${response.status}: ${body.substring(0, 300)}`);
+		}
+
+		return response;
+	}
+
+	/* eslint-enable no-restricted-globals */
+
+	private async uploadAudio(audioBuffer: ArrayBuffer): Promise<string> {
+		console.debug("[WhisperCal] Uploading audio to AssemblyAI", {size: audioBuffer.byteLength});
+
+		let response;
+		try {
+			response = await this.apiRequest(`${this.baseUrl}/upload`, {
+				method: "POST",
+				headers: {"Content-Type": "application/octet-stream"},
+				body: audioBuffer,
+			});
+		} catch (e) {
+			throw new Error(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+
+		const data = await response.json() as {upload_url?: string};
+		if (!data.upload_url) {
+			throw new Error("AssemblyAI upload did not return an upload_url");
+		}
+
+		console.debug("[WhisperCal] Audio uploaded:", data.upload_url);
+		return data.upload_url;
+	}
+
+	private async submitTranscription(uploadUrl: string): Promise<string> {
+		const body: Record<string, unknown> = {
+			audio_url: uploadUrl,
+			speech_models: [this.config.assemblyAiSpeechModel || "universal-3-pro"],
+			speaker_labels: true,
+		};
 
 		if (this.config.transcriptionLanguage) {
-			fields.push({name: "language", value: this.config.transcriptionLanguage});
+			body["language_code"] = this.config.transcriptionLanguage;
 		}
 
-		const {body, contentType} = buildMultipartBody(fields, {
-			name: "file",
-			filename,
-			mimeType: audioMimeType(ext),
-			data: audioBuffer,
-		});
+		console.debug("[WhisperCal] Submitting transcription:", body);
 
-		const response = await requestUrl({
-			url: `${url}/v1/audio/transcriptions`,
-			method: "POST",
-			headers: {"Content-Type": contentType},
-			body,
-		});
+		let response;
+		try {
+			response = await this.apiRequest(`${this.baseUrl}/transcript`, {
+				method: "POST",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify(body),
+			});
+		} catch (e) {
+			throw new Error(`Submit failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
 
-		return response.json as WhisperVerboseResponse;
+		const data = await response.json() as {id?: string};
+		if (!data.id) {
+			throw new Error("AssemblyAI did not return a transcript ID");
+		}
+
+		console.debug("[WhisperCal] Transcript submitted:", data.id);
+		return data.id;
 	}
 
-	private parseResponse(response: WhisperVerboseResponse): WhisperSegment[] {
-		if (!response.segments || !Array.isArray(response.segments)) {
-			throw new Error("Server response missing segments array");
-		}
+	private async pollTranscription(transcriptId: string, request: TranscriptionRequest): Promise<AssemblyAITranscriptResponse> {
+		const url = `${this.baseUrl}/transcript/${transcriptId}`;
 
-		const hasSpeakers = response.segments.length > 0 &&
-			response.segments.some(s => s.speaker !== undefined && s.speaker !== null);
-
-		if (!hasSpeakers) {
-			throw new Error("Server response missing speaker labels — diarization is required");
-		}
-
-		return response.segments;
-	}
-
-	private formatTranscript(segments: WhisperSegment[]): string {
-		const lines: string[] = [];
-		let lastSpeaker = "";
-		let blockStart = 0;
-		let blockTexts: string[] = [];
-
-		for (let i = 0; i < segments.length; i++) {
-			const seg = segments[i] as WhisperSegment;
-			const speaker = seg.speaker ?? "Unknown";
-
-			if (speaker !== lastSpeaker) {
-				// Flush previous block
-				if (blockTexts.length > 0) {
-					const prev = segments[i - 1] as WhisperSegment;
-					lines.push(`**${lastSpeaker}** (${this.formatTimestamp(blockStart)} - ${this.formatTimestamp(prev.end)})`);
-					lines.push(blockTexts.join(" ").trim());
-					lines.push("");
-				}
-				lastSpeaker = speaker;
-				blockStart = seg.start;
-				blockTexts = [seg.text.trim()];
-			} else {
-				blockTexts.push(seg.text.trim());
+		while (true) {
+			let response;
+			try {
+				response = await this.apiRequest(url, {method: "GET"});
+			} catch (e) {
+				throw new Error(`Poll failed: ${e instanceof Error ? e.message : String(e)}`);
 			}
+
+			const data = await response.json() as AssemblyAITranscriptResponse;
+			console.debug("[WhisperCal] Poll status:", data.status);
+
+			if (data.status === "completed") {
+				return data;
+			}
+
+			if (data.status === "error") {
+				throw new Error(`Transcription error: ${data.error ?? "unknown"}`);
+			}
+
+			const pollingStatus = data.status === "processing" ? "processing" : "queued";
+			this.setState({status: "polling", request, pollingStatus, audioDuration: data.audio_duration});
+
+			await this.sleep(POLL_INTERVAL_MS);
+		}
+	}
+
+	private sleep(ms: number): Promise<void> {
+		return new Promise(resolve => window.setTimeout(resolve, ms));
+	}
+
+	private parseResponse(response: AssemblyAITranscriptResponse): AssemblyAIUtterance[] {
+		if (!response.utterances || !Array.isArray(response.utterances)) {
+			throw new Error("AssemblyAI response missing utterances — speaker_labels may not be enabled");
 		}
 
-		// Flush final block
-		if (blockTexts.length > 0) {
-			const lastSeg = segments[segments.length - 1] as WhisperSegment;
-			lines.push(`**${lastSpeaker}** (${this.formatTimestamp(blockStart)} - ${this.formatTimestamp(lastSeg.end)})`);
-			lines.push(blockTexts.join(" ").trim());
+		return response.utterances;
+	}
+
+	private formatTranscript(utterances: AssemblyAIUtterance[]): string {
+		const lines: string[] = [];
+
+		for (const utterance of utterances) {
+			const speaker = utterance.speaker ?? "Unknown";
+			const startSec = utterance.start / 1000;
+			const endSec = utterance.end / 1000;
+			lines.push(`**Speaker ${speaker}** (${this.formatTimestamp(startSec)} - ${this.formatTimestamp(endSec)})`);
+			lines.push(utterance.text.trim());
 			lines.push("");
 		}
 

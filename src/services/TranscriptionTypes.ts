@@ -9,22 +9,25 @@ export interface TranscriptionRequest {
 
 export type TranscriptionState =
 	| { status: "idle" }
+	| { status: "uploading"; request: TranscriptionRequest }
 	| { status: "transcribing"; request: TranscriptionRequest }
+	| { status: "polling"; request: TranscriptionRequest; pollingStatus: "queued" | "processing"; audioDuration?: number }
 	| { status: "saving"; request: TranscriptionRequest }
 	| { status: "error"; message: string };
 
 export type TranscriptionSavedCallback = (request: TranscriptionRequest, transcriptPath: string) => void;
 
-export interface WhisperSegment {
+export interface AssemblyAIUtterance {
+	speaker: string;
+	text: string;
 	start: number;
 	end: number;
-	text: string;
-	speaker: string;
 }
 
-export interface WhisperVerboseResponse {
-	text: string;
-	segments: WhisperSegment[];
-	duration: number;
-	language: string;
+export interface AssemblyAITranscriptResponse {
+	id: string;
+	status: string;
+	error?: string;
+	audio_duration?: number;
+	utterances?: AssemblyAIUtterance[];
 }
