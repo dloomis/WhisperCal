@@ -141,11 +141,9 @@
 	height: 14px;
 }
 
-.whisper-cal-card-actions {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin-top: 8px;
+/* Note icon — muted when note doesn't exist yet */
+.whisper-cal-card-note-missing {
+	opacity: 0.4;
 }
 
 .whisper-cal-btn {
@@ -190,6 +188,14 @@
 	color: var(--text-muted);
 	padding: 32px 16px;
 }
+
+/* Settings — wider text inputs (1.5x default) */
+.whisper-cal-settings input[type="text"],
+.whisper-cal-settings input[type="password"],
+.whisper-cal-settings select {
+	min-width: 300px;
+}
+
 
 /* Auth settings UI */
 .whisper-cal-auth-status {
@@ -280,153 +286,5 @@
 	height: 16px;
 }
 
-/* Active recording — red icon + pulsing dot */
-.whisper-cal-card-rec-active {
-	color: var(--text-error);
-	cursor: default;
-}
 
-.whisper-cal-card-rec-active:hover {
-	color: var(--text-error);
-	background: none;
-}
 
-.whisper-cal-card-rec-active::after {
-	content: "";
-	position: absolute;
-	top: 2px;
-	right: 2px;
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	background: var(--text-error);
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
-}
-
-/* Disabled mic (another session recording) */
-.whisper-cal-card-rec-disabled {
-	opacity: 0.3;
-	cursor: not-allowed;
-}
-
-.whisper-cal-card-rec-disabled:hover {
-	background: none;
-	color: var(--text-muted);
-}
-
-/* Note view header mic action */
-.whisper-cal-note-rec-active {
-	color: var(--text-error);
-}
-
-.whisper-cal-note-rec-disabled {
-	opacity: 0.3;
-	pointer-events: none;
-}
-
-/* Status bar recording controls */
-.whisper-cal-statusbar {
-	display: flex;
-	align-items: center;
-	gap: 0;
-}
-
-.whisper-cal-statusbar-hidden {
-	display: none;
-}
-
-.whisper-cal-statusbar-segment {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.whisper-cal-statusbar-segment:empty {
-	display: none;
-}
-
-.whisper-cal-statusbar-segment + .whisper-cal-statusbar-segment:not(:empty) {
-	margin-left: 8px;
-	padding-left: 8px;
-	border-left: 1px solid var(--background-modifier-border);
-}
-
-.whisper-cal-statusbar-dot span {
-	display: inline-block;
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	background: var(--text-error);
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
-}
-
-.whisper-cal-statusbar-dot-paused span {
-	animation: none;
-	opacity: 0.4;
-}
-
-.whisper-cal-statusbar-subject {
-	max-width: 150px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: var(--font-ui-smaller);
-	color: var(--text-normal);
-}
-
-.whisper-cal-statusbar-time {
-	font-family: var(--font-monospace);
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-}
-
-.whisper-cal-statusbar-saving {
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-	font-style: italic;
-}
-
-.whisper-cal-statusbar-btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 20px;
-	height: 20px;
-}
-
-.whisper-cal-statusbar-btn svg {
-	width: 14px;
-	height: 14px;
-}
-
-.whisper-cal-statusbar-btn-stop {
-	color: var(--text-error);
-}
-
-/* Note view header transcribe action */
-.whisper-cal-note-transcribe-active {
-	color: var(--interactive-accent);
-}
-
-.whisper-cal-note-transcribe-disabled {
-	opacity: 0.3;
-	pointer-events: none;
-}
-
-/* Status bar transcription dot */
-.whisper-cal-statusbar-dot-transcribing span {
-	background: var(--interactive-accent);
-}
-
-/* Recording code block in notes — hidden metadata block */
-.block-language-whisper-recording {
-	background: none;
-	border: none;
-	padding: 0;
-	margin: 0;
-	font-family: inherit;
-}
-
-.whisper-cal-recording-block {
-	display: none;
-}

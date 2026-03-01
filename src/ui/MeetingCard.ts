@@ -1,13 +1,10 @@
-import {setIcon} from "obsidian";
+import {Notice, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
-import type {RecordingManager} from "../services/RecordingManager";
-import type {RecordingSession} from "../services/RecordingTypes";
-import {formatTime, formatDate} from "../utils/time";
+import {formatTime} from "../utils/time";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
-	destroy: () => void;
 }
 
 export function renderMeetingCard(
@@ -15,12 +12,11 @@ export function renderMeetingCard(
 	event: CalendarEvent,
 	timezone: string,
 	noteCreator: NoteCreator,
-	recordingManager: RecordingManager,
+	macWhisperShortcutName: string,
 	isActive = false,
 ): MeetingCardHandle {
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
 	const card = container.createDiv({cls});
-	const destroyFns: Array<() => void> = [];
 
 	// Subject row: Meeting Name
 	const subjectRow = card.createDiv({cls: "whisper-cal-card-subject-row"});
@@ -36,12 +32,6 @@ export function renderMeetingCard(
 		const end = formatTime(event.endTime, timezone);
 		timeEl.setText(`${start} - ${end}`);
 	}
-
-	const session: RecordingSession = {
-		eventId: event.id,
-		subject: event.subject,
-		date: formatDate(event.startTime, timezone),
-	};
 
 	// Metadata row: [Teams link] [invitee count] [mic icon]
 	const meta = card.createDiv({cls: "whisper-cal-card-meta"});
@@ -73,80 +63,27 @@ export function renderMeetingCard(
 		attEl.createSpan({text: String(event.attendeeCount)});
 	}
 
-	const micBtn = meta.createEl("button", {
+	// Note icon — create or open note
+	const noteBtn = meta.createEl("button", {
 		cls: "whisper-cal-card-rec-trigger clickable-icon",
-		attr: {"aria-label": "Record meeting"},
-	});
-	setIcon(micBtn, "mic");
-
-	const updateMicState = () => {
-		const state = recordingManager.getState();
-		const isThisSession =
-			(state.status === "recording" || state.status === "paused" || state.status === "saving") &&
-			state.session.eventId === session.eventId;
-		const isBusy =
-			(state.status === "recording" || state.status === "paused" || state.status === "saving") &&
-			!isThisSession;
-
-		micBtn.removeClass("whisper-cal-card-rec-active");
-		micBtn.removeClass("whisper-cal-card-rec-disabled");
-		micBtn.removeAttribute("disabled");
-
-		if (isThisSession) {
-			micBtn.addClass("whisper-cal-card-rec-active");
-			micBtn.setAttribute("disabled", "true");
-			micBtn.ariaLabel = "Recording in progress";
-		} else if (isBusy) {
-			micBtn.addClass("whisper-cal-card-rec-disabled");
-			micBtn.setAttribute("disabled", "true");
-			micBtn.ariaLabel = "Another recording in progress";
-		} else {
-			micBtn.ariaLabel = "Record meeting";
-		}
-	};
-
-	updateMicState();
-
-	micBtn.addEventListener("click", () => {
-		const start = async () => {
-			// Ensure note exists and is open before recording
-			if (noteCreator.noteExists(event)) {
-				await noteCreator.openExistingNote(event);
-			} else {
-				await noteCreator.createNote(event);
-			}
-			updateButtonState();
-			await recordingManager.startRecording(session);
-		};
-		void start();
 	});
 
-	const unsubscribe = recordingManager.onChange(() => updateMicState());
-	destroyFns.push(unsubscribe);
-
-	// Actions row
-	const btnContainer = card.createDiv({cls: "whisper-cal-card-actions"});
-
-	// Create/open note button
-	const btn = btnContainer.createEl("button", {cls: "whisper-cal-btn"});
-
-	const updateButtonState = () => {
-		btn.empty();
+	const updateNoteState = () => {
 		if (noteCreator.noteExists(event)) {
-			const icon = btn.createSpan({cls: "whisper-cal-card-icon"});
-			setIcon(icon, "file-text");
-			btn.createSpan({text: "Open note"});
+			setIcon(noteBtn, "file-text");
+			noteBtn.ariaLabel = "Open note";
+			noteBtn.removeClass("whisper-cal-card-note-missing");
 		} else {
-			const icon = btn.createSpan({cls: "whisper-cal-card-icon"});
-			setIcon(icon, "plus");
-			btn.createSpan({text: "Create note"});
+			setIcon(noteBtn, "file-plus");
+			noteBtn.ariaLabel = "Create note";
+			noteBtn.addClass("whisper-cal-card-note-missing");
 		}
 	};
 
-	updateButtonState();
+	updateNoteState();
 
-	btn.addEventListener("click", () => {
-		btn.disabled = true;
+	noteBtn.addEventListener("click", () => {
+		noteBtn.disabled = true;
 		const handleClick = async () => {
 			try {
 				if (noteCreator.noteExists(event)) {
@@ -154,20 +91,30 @@ export function renderMeetingCard(
 				} else {
 					await noteCreator.createNote(event);
 				}
-				updateButtonState();
+				updateNoteState();
 			} finally {
-				btn.disabled = false;
+				noteBtn.disabled = false;
 			}
 		};
 		void handleClick();
 	});
 
-	return {
-		el: card,
-		destroy: () => {
-			for (const fn of destroyFns) {
-				fn();
-			}
-		},
-	};
+	// Mic icon — launch MacWhisper via macOS Shortcut
+	const micBtn = meta.createEl("button", {
+		cls: "whisper-cal-card-rec-trigger clickable-icon",
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		attr: {"aria-label": "Open MacWhisper"},
+	});
+	setIcon(micBtn, "mic");
+
+	micBtn.addEventListener("click", () => {
+		if (macWhisperShortcutName) {
+			window.open(`shortcuts://run-shortcut?name=${encodeURIComponent(macWhisperShortcutName)}`);
+		} else {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("Configure a MacWhisper shortcut name in WhisperCal settings");
+		}
+	});
+
+	return {el: card};
 }

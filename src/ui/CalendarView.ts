@@ -2,7 +2,6 @@ import {ItemView, WorkspaceLeaf, setIcon} from "obsidian";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
-import type {RecordingManager} from "../services/RecordingManager";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
 import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
@@ -11,7 +10,6 @@ import {AuthError} from "../services/MsalAuth";
 export class CalendarView extends ItemView {
 	private settings: WhisperCalSettings;
 	private provider: CalendarProvider;
-	private recordingManager: RecordingManager;
 	private noteCreator: NoteCreator;
 	private contentContainer: HTMLElement | null = null;
 	private currentDateString: string;
@@ -21,18 +19,15 @@ export class CalendarView extends ItemView {
 	private selectedDate: Date;
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
-	private cardCleanups: Array<() => void> = [];
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
-		recordingManager: RecordingManager,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.provider = provider;
-		this.recordingManager = recordingManager;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
@@ -98,7 +93,6 @@ export class CalendarView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
-		this.destroyCards();
 		this.stopAutoRefresh();
 	}
 
@@ -157,25 +151,15 @@ export class CalendarView extends ItemView {
 	updateSettings(
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
-		recordingManager: RecordingManager,
 	): void {
 		this.settings = settings;
 		this.provider = provider;
-		this.recordingManager = recordingManager;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
 	}
 
-	private destroyCards(): void {
-		for (const cleanup of this.cardCleanups) {
-			cleanup();
-		}
-		this.cardCleanups = [];
-	}
-
 	private renderLoading(): void {
 		if (!this.contentContainer) return;
-		this.destroyCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-loading",
@@ -185,7 +169,6 @@ export class CalendarView extends ItemView {
 
 	private renderError(message: string): void {
 		if (!this.contentContainer) return;
-		this.destroyCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-error",
@@ -195,7 +178,6 @@ export class CalendarView extends ItemView {
 
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
-		this.destroyCards();
 		this.contentContainer.empty();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
@@ -217,12 +199,11 @@ export class CalendarView extends ItemView {
 			organizerName: "",
 			organizerEmail: "",
 		};
-		const unscheduledHandle = renderMeetingCard(
+		renderMeetingCard(
 			this.contentContainer, unscheduledEvent,
-			this.settings.timezone, this.noteCreator, this.recordingManager,
+			this.settings.timezone, this.noteCreator, this.settings.macWhisperShortcutName,
 			false,
 		);
-		this.cardCleanups.push(unscheduledHandle.destroy);
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
@@ -241,12 +222,11 @@ export class CalendarView extends ItemView {
 				text: "All day",
 			});
 			for (const event of allDay) {
-				const handle = renderMeetingCard(
+				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.recordingManager,
+					this.noteCreator, this.settings.macWhisperShortcutName,
 					activeEventIds.has(event.id),
 				);
-				this.cardCleanups.push(handle.destroy);
 			}
 		}
 
@@ -256,12 +236,11 @@ export class CalendarView extends ItemView {
 				text: isToday ? "Today" : "Scheduled",
 			});
 			for (const event of timed) {
-				const handle = renderMeetingCard(
+				renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.recordingManager,
+					this.noteCreator, this.settings.macWhisperShortcutName,
 					activeEventIds.has(event.id),
 				);
-				this.cardCleanups.push(handle.destroy);
 			}
 		}
 	}

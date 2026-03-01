@@ -17,16 +17,11 @@ meeting_location: "{{location}}"
 invitees:
 {{invitees}}
 organizer: "{{organizer}}"
-recording: ""
-transcript: ""
+whisper_event_id: "{{eventId}}"
+whisper_subject: "{{subject}}"
+whisper_date: "{{date}}"
 tags: [meeting]
 ---
-
-\`\`\`whisper-recording
-eventId: {{eventId}}
-subject: {{subject}}
-date: {{date}}
-\`\`\`
 
 # {{subject}}
 

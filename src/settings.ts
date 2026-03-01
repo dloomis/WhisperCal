@@ -1,4 +1,4 @@
-import {App, DropdownComponent, Notice, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -16,14 +16,7 @@ export interface WhisperCalSettings {
 	clientId: string;
 	cloudInstance: CloudInstance;
 	peopleFolderPath: string;
-	recordingFolderPath: string;
-	systemAudioDeviceId: string;
-	transcriptionFolderPath: string;
-	assemblyAiBaseUrl: string;
-	assemblyAiApiKey: string;
-	assemblyAiSpeechModel: string;
-	transcriptionLanguage: string;
-	autoTranscribe: boolean;
+	macWhisperShortcutName: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -36,14 +29,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	clientId: "",
 	cloudInstance: "Public",
 	peopleFolderPath: "",
-	recordingFolderPath: "Recordings",
-	systemAudioDeviceId: "",
-	transcriptionFolderPath: "Transcriptions",
-	assemblyAiBaseUrl: "https://api.assemblyai.com/v2",
-	assemblyAiApiKey: "",
-	assemblyAiSpeechModel: "universal-3-pro",
-	transcriptionLanguage: "",
-	autoTranscribe: false,
+	macWhisperShortcutName: "",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -59,47 +45,37 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	display(): void {
 		const {containerEl} = this;
 		containerEl.empty();
+		containerEl.addClass("whisper-cal-settings");
 
 		new Setting(containerEl)
-			.setName("Calendar")
+			.setName("Notes")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Timezone")
-			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("America/New_York")
-				.setValue(this.plugin.settings.timezone)
-				.onChange(async (value) => {
-					this.plugin.settings.timezone = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName("Refresh interval (minutes)")
-			.setDesc("How often to refresh the calendar view")
-			.addText(text => text
-				.setPlaceholder("5")
-				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.refreshIntervalMinutes = num;
+			.setName("People folder")
+			.setDesc("Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.")
+			.addText(text => {
+				text.setPlaceholder("People")
+					.setValue(this.plugin.settings.peopleFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.peopleFolderPath = value;
 						await this.plugin.saveSettings();
-					}
-				}));
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
 
 		new Setting(containerEl)
 			.setName("Notes folder")
 			.setDesc("Vault folder where meeting notes are created")
-			.addText(text => text
-				.setPlaceholder("Meetings")
-				.setValue(this.plugin.settings.noteFolderPath)
-				.onChange(async (value) => {
-					this.plugin.settings.noteFolderPath = value;
-					await this.plugin.saveSettings();
-				}));
+			.addText(text => {
+				text.setPlaceholder("Meetings")
+					.setValue(this.plugin.settings.noteFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.noteFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
 
 		new Setting(containerEl)
 			.setName("Note filename template")
@@ -141,144 +117,48 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
+		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
-			.setName("People notes")
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName("People folder")
-			.setDesc("Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.")
-			.addText(text => {
-				text.setPlaceholder("People")
-					.setValue(this.plugin.settings.peopleFolderPath)
-					.onChange(async (value) => {
-						this.plugin.settings.peopleFolderPath = value;
-						await this.plugin.saveSettings();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
-
-		// Recording section
-		new Setting(containerEl)
-			.setName("Recording")
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName("Recordings folder")
-			.setDesc("Vault folder where meeting recordings are saved")
-			.addText(text => {
-				text.setPlaceholder("Recordings")
-					.setValue(this.plugin.settings.recordingFolderPath)
-					.onChange(async (value) => {
-						this.plugin.settings.recordingFolderPath = value;
-						await this.plugin.saveSettings();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
-
-		new Setting(containerEl)
-			.setName("System audio device")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Virtual audio device (e.g. BlackHole) to capture system audio alongside your microphone. Leave as \"None\" for mic-only recording.")
-			.addDropdown(dropdown => {
-				dropdown.addOption("", "None (microphone only)");
-				dropdown.setValue(this.plugin.settings.systemAudioDeviceId);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.systemAudioDeviceId = value;
-					await this.plugin.saveSettings();
-				});
-				void this.populateAudioDevices(dropdown);
-			});
-
-		// Transcription section
-		new Setting(containerEl)
-			.setName("Transcription")
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName("Transcriptions folder")
-			.setDesc("Vault folder where transcript files are saved")
-			.addText(text => {
-				text.setPlaceholder("Transcriptions")
-					.setValue(this.plugin.settings.transcriptionFolderPath)
-					.onChange(async (value) => {
-						this.plugin.settings.transcriptionFolderPath = value;
-						await this.plugin.saveSettings();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
-
-		new Setting(containerEl)
-			.setName("API endpoint")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("AssemblyAI API base URL")
+			.setName("MacWhisper shortcut")
+			.setDesc("Name of the macOS Shortcut that opens MacWhisper. Create a Shortcut in the Shortcuts app, then enter its name here. The mic button in meeting cards will trigger this shortcut.")
+		/* eslint-enable obsidianmd/ui/sentence-case */
 			.addText(text => text
-				.setPlaceholder("https://api.assemblyai.com/v2")
-				.setValue(this.plugin.settings.assemblyAiBaseUrl)
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("Start MacWhisper")
+				.setValue(this.plugin.settings.macWhisperShortcutName)
 				.onChange(async (value) => {
-					this.plugin.settings.assemblyAiBaseUrl = value;
+					this.plugin.settings.macWhisperShortcutName = value;
 					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)
-			.setName("API key")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("AssemblyAI API key for cloud transcription with speaker diarization")
-			.addText(text => {
-				text.setPlaceholder("Enter your API key")
-					.setValue(this.plugin.settings.assemblyAiApiKey)
-					.onChange(async (value) => {
-						this.plugin.settings.assemblyAiApiKey = value;
-						await this.plugin.saveSettings();
-					});
-				text.inputEl.type = "password";
-			});
-
-		let speechModelDropdown: DropdownComponent;
-		new Setting(containerEl)
-			.setName("Speech model")
-			.setDesc("Speech recognition model to use for transcription")
-			.addDropdown(dropdown => {
-				speechModelDropdown = dropdown;
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				dropdown.addOption("universal-3-pro", "universal-3-pro");
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				dropdown.addOption("universal-2", "universal-2");
-				dropdown.setValue(this.plugin.settings.assemblyAiSpeechModel);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.assemblyAiSpeechModel = value;
-					await this.plugin.saveSettings();
-				});
-			});
-
-		const testKeySetting = new Setting(containerEl)
-			.setName("Test API key")
-			.setDesc("Verify your API key is valid and detect available speech models")
-			.addButton(button => button
-				.setButtonText("Test API key")
-				.onClick(async () => {
-					await this.testAssemblyAiKey(testKeySetting, speechModelDropdown);
-				}));
+			.setName("Calendar")
+			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Language")
-			.setDesc("Language code for transcription (leave empty for auto-detect)")
+			.setName("Timezone")
+			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
 			.addText(text => text
-				.setPlaceholder("Auto-detect")
-				.setValue(this.plugin.settings.transcriptionLanguage)
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("America/New_York")
+				.setValue(this.plugin.settings.timezone)
 				.onChange(async (value) => {
-					this.plugin.settings.transcriptionLanguage = value;
+					this.plugin.settings.timezone = value;
 					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)
-			.setName("Auto-transcribe")
-			.setDesc("Automatically transcribe recordings when they finish saving")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoTranscribe)
+			.setName("Refresh interval (minutes)")
+			.setDesc("How often to refresh the calendar view")
+			.addText(text => text
+				.setPlaceholder("5")
+				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
 				.onChange(async (value) => {
-					this.plugin.settings.autoTranscribe = value;
-					await this.plugin.saveSettings();
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.refreshIntervalMinutes = num;
+						await this.plugin.saveSettings();
+					}
 				}));
 
 		// Microsoft account section
@@ -340,102 +220,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
-	}
-
-	private async testAssemblyAiKey(setting: Setting, modelDropdown: DropdownComponent): Promise<void> {
-		const apiKey = this.plugin.settings.assemblyAiApiKey;
-		if (!apiKey) {
-			new Notice("API key is empty");
-			return;
-		}
-
-		setting.setDesc("Testing...");
-		const baseUrl = this.plugin.settings.assemblyAiBaseUrl.replace(/\/+$/, "");
-
-		try {
-			await requestUrl({
-				url: `${baseUrl}/transcript?limit=1`,
-				method: "GET",
-				headers: {
-					"Authorization": apiKey,
-				},
-			});
-		} catch {
-			setting.setDesc("API key test failed — check your key and endpoint");
-			new Notice("API key test failed");
-			return;
-		}
-
-		// Discover available speech models by sending an invalid value and parsing the error
-		const models = await this.discoverSpeechModels(baseUrl, apiKey);
-		if (models.length > 0) {
-			const selectEl = modelDropdown.selectEl;
-			selectEl.empty();
-			for (const id of models) {
-				modelDropdown.addOption(id, id);
-			}
-			// Preserve current selection if still valid, otherwise pick first
-			const current = this.plugin.settings.assemblyAiSpeechModel;
-			if (models.includes(current)) {
-				modelDropdown.setValue(current);
-			} else {
-				const first = models[0] as string;
-				modelDropdown.setValue(first);
-				this.plugin.settings.assemblyAiSpeechModel = first;
-				await this.plugin.saveSettings();
-			}
-			const modelList = models.join(", ");
-			setting.setDesc(`API key valid — models: ${modelList}`);
-			new Notice(`API key valid — ${models.length} model(s): ${modelList}`);
-		} else {
-			setting.setDesc("API key is valid");
-			new Notice("API key is valid");
-		}
-	}
-
-	private async discoverSpeechModels(baseUrl: string, apiKey: string): Promise<string[]> {
-		try {
-			// eslint-disable-next-line no-restricted-globals
-			const response = await fetch(`${baseUrl}/transcript`, {
-				method: "POST",
-				headers: {
-					"Authorization": apiKey,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({
-					audio_url: "https://invalid",
-					speech_models: ["__probe__"],
-				}),
-			});
-
-			if (response.status === 400) {
-				const data = await response.json() as {error?: string};
-				if (typeof data.error === "string") {
-					// Parse model names from error like: "...one or more of: \"universal-3-pro\", \"universal-2\""
-					const matches = [...data.error.matchAll(/"([^"]+)"/g)];
-					const models = matches.map(m => m[1] as string).filter(m => m !== "speech_models");
-					if (models.length > 0) return models;
-				}
-			}
-		} catch {
-			// Discovery is best-effort
-		}
-		return [];
-	}
-
-	private async populateAudioDevices(dropdown: DropdownComponent): Promise<void> {
-		try {
-			const devices = await navigator.mediaDevices.enumerateDevices();
-			const audioInputs = devices.filter(d => d.kind === "audioinput");
-			for (const device of audioInputs) {
-				const label = device.label || `Audio input (${device.deviceId.substring(0, 8)})`;
-				dropdown.addOption(device.deviceId, label);
-			}
-			// Re-set value so saved selection is shown after async load
-			dropdown.setValue(this.plugin.settings.systemAudioDeviceId);
-		} catch {
-			// Device enumeration unavailable
-		}
 	}
 
 	private renderAuthStatus(state: AuthState): void {
