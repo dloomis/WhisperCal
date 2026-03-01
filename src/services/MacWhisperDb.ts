@@ -1,7 +1,5 @@
 import {execSync} from "child_process";
 import {join} from "path";
-import {statSync} from "fs";
-import {readdirSync} from "fs";
 import {MACWHISPER_DB_PATH, MACWHISPER_MEDIA_PATH} from "../constants";
 
 export interface MacWhisperRecording {
@@ -15,6 +13,7 @@ interface SessionRow {
 	sessionId: string;
 	title: string | null;
 	mediaFilename: string;
+	duration: number | null;
 }
 
 /**
@@ -52,17 +51,24 @@ function hexToUuid(hex: string): string {
 
 /**
  * Get the filesystem birthtime of the track-0 media file for a session.
- * This represents the actual recording start time.
+ * ExternalMedia is a flat directory with files named:
+ *   {UUID}_track-0_{hash}.m4a
+ *   {UUID}_merged-audio_{hash}.m4a
+ *   etc.
+ * Track-0 birthtime = actual recording start time.
  */
 function getTrack0Birthtime(sessionId: string): Date | null {
 	const uuid = hexToUuid(sessionId);
-	const sessionDir = join(MACWHISPER_MEDIA_PATH, uuid);
+	const prefix = `${uuid}_track-0_`;
 	try {
-		const files = readdirSync(sessionDir);
-		const track0 = files.find(f => f.includes("_track-0_"));
-		if (!track0) return null;
-		const stat = statSync(join(sessionDir, track0));
-		return stat.birthtime;
+		// Use stat on the expected filename pattern via shell glob
+		const cmd = `stat -f "%B" "${join(MACWHISPER_MEDIA_PATH, prefix)}"*.m4a`;
+		const raw = execSync(cmd, {encoding: "utf-8", shell: "/bin/zsh", timeout: 3000}).trim();
+		if (!raw) return null;
+		// stat -f "%B" returns birthtime as epoch seconds
+		const epoch = parseInt(raw.split("\n")[0]!, 10);
+		if (isNaN(epoch)) return null;
+		return new Date(epoch * 1000);
 	} catch {
 		return null;
 	}
@@ -76,13 +82,17 @@ export function findRecordingsNear(
 	meetingStart: Date,
 	windowMinutes = 10,
 ): MacWhisperRecording[] {
+	// Join session → mediafile for track-0, and session → SAR for duration
 	const sql = `
 		SELECT hex(s.id) as sessionId,
 		       s.userChosenTitle as title,
-		       mf.filename as mediaFilename
+		       mf.filename as mediaFilename,
+		       sar.duration as duration
 		FROM session s
 		JOIN mediafile mf ON mf.sessionId = s.id
+		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
 		WHERE s.isTransient = 0
+		  AND s.dateDeleted IS NULL
 		  AND mf.filename LIKE '%_track-0_%'
 		ORDER BY s.dateCreated DESC
 		LIMIT 50;
@@ -99,30 +109,12 @@ export function findRecordingsNear(
 
 		const diff = Math.abs(birthtime.getTime() - meetingStart.getTime());
 		if (diff <= windowMs) {
-			// Estimate duration from the media file size or just use 0
-			// We can get duration from the DB if needed
 			results.push({
 				sessionId: row.sessionId,
 				title: row.title || null,
 				recordingStart: birthtime,
-				durationSeconds: 0,
+				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 			});
-		}
-	}
-
-	// Populate duration from systemaudiorecording table
-	for (const rec of results) {
-		const durSql = `
-			SELECT sar.duration
-			FROM systemaudiorecording sar
-			JOIN session s ON s.id = sar.sessionId
-			WHERE hex(s.id) = '${rec.sessionId}'
-			LIMIT 1;
-		`;
-		const durRaw = query(durSql);
-		const durRows = parseRows<{duration: number}>(durRaw);
-		if (durRows.length > 0 && durRows[0]) {
-			rec.durationSeconds = Math.round(durRows[0].duration);
 		}
 	}
 

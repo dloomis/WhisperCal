@@ -6,4 +6,4 @@ export const COMMAND_OPEN_CALENDAR = "open-calendar-view";
 
 const MW_BASE = join(homedir(), "Library", "Application Support", "MacWhisper");
 export const MACWHISPER_DB_PATH = join(MW_BASE, "Database", "main.sqlite");
-export const MACWHISPER_MEDIA_PATH = join(MW_BASE, "ExternalMedia");
+export const MACWHISPER_MEDIA_PATH = join(MW_BASE, "Database", "ExternalMedia");
