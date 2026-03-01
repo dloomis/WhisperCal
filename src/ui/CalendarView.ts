@@ -199,7 +199,7 @@ export class CalendarView extends ItemView {
 		this.contentContainer.empty();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
-		const activeEventId = isToday ? this.findActiveEventId(events) : null;
+		const activeEventIds = isToday ? this.findActiveEventIds(events) : new Set<string>();
 
 		// Unscheduled card — always at the top
 		const unscheduledEvent: CalendarEvent = {
@@ -244,7 +244,7 @@ export class CalendarView extends ItemView {
 				const handle = renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.recordingManager,
-					event.id === activeEventId,
+					activeEventIds.has(event.id),
 				);
 				this.cardCleanups.push(handle.destroy);
 			}
@@ -259,33 +259,31 @@ export class CalendarView extends ItemView {
 				const handle = renderMeetingCard(
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.recordingManager,
-					event.id === activeEventId,
+					activeEventIds.has(event.id),
 				);
 				this.cardCleanups.push(handle.destroy);
 			}
 		}
 	}
 
-	private findActiveEventId(events: CalendarEvent[]): string | null {
+	private findActiveEventIds(events: CalendarEvent[]): Set<string> {
 		const now = new Date();
 		const timed = events.filter(e => !e.isAllDay);
 
-		// Prefer an ongoing meeting (startTime <= now < endTime)
+		// Highlight all ongoing meetings (startTime <= now < endTime)
 		const ongoing = timed.filter(e => e.startTime <= now && e.endTime > now);
 		if (ongoing.length > 0) {
-			// If multiple overlap, pick the one that started most recently
-			ongoing.sort((a, b) => b.startTime.getTime() - a.startTime.getTime());
-			return ongoing[0]!.id;
+			return new Set(ongoing.map(e => e.id));
 		}
 
-		// Otherwise highlight the next upcoming meeting
+		// Otherwise highlight just the next upcoming meeting
 		const upcoming = timed.filter(e => e.startTime > now);
 		if (upcoming.length > 0) {
 			upcoming.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-			return upcoming[0]!.id;
+			return new Set([upcoming[0]!.id]);
 		}
 
-		return null;
+		return new Set();
 	}
 
 	private navigateDay(offset: number): void {

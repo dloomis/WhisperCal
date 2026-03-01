@@ -72,7 +72,7 @@
 }
 
 .whisper-cal-card-active {
-	background: var(--background-primary-alt);
+	background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
 	border-left-width: 4px;
 	box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
