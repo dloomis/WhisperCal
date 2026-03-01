@@ -16,6 +16,7 @@ export function renderMeetingCard(
 	app: App,
 	isActive = false,
 	transcriptFolderPath = "Transcripts",
+	recordingWindowMinutes = 10,
 	onNoteCreated?: () => void,
 ): MeetingCardHandle {
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
@@ -147,7 +148,7 @@ export function renderMeetingCard(
 						timezone,
 						transcriptFolderPath,
 						attendees: event.attendees,
-						windowMinutes: isUnscheduled ? 720 : undefined,
+						windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
 					});
 					if (linked) {
 						setIcon(micBtn, "check");

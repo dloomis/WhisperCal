@@ -207,6 +207,7 @@ export class CalendarView extends ItemView {
 			this.contentContainer, unscheduledEvent,
 			this.settings.timezone, this.noteCreator, this.app,
 			false, this.settings.transcriptFolderPath,
+			this.settings.recordingWindowMinutes,
 			onNoteCreated,
 		);
 
@@ -236,6 +237,7 @@ export class CalendarView extends ItemView {
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
 					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
+					this.settings.recordingWindowMinutes,
 					onNoteCreated,
 				);
 			}
@@ -251,6 +253,7 @@ export class CalendarView extends ItemView {
 					this.contentContainer, event, this.settings.timezone,
 					this.noteCreator, this.app,
 					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
+					this.settings.recordingWindowMinutes,
 					onNoteCreated,
 				);
 			}
@@ -266,15 +269,13 @@ export class CalendarView extends ItemView {
 		for (const child of folder.children) {
 			if (!(child instanceof TFile) || child.extension !== "md") continue;
 			if (!child.basename.startsWith(datePrefix)) continue;
-			// Match configured subject, plus legacy "Recording" and default "Unscheduled recording"
-			const subject = this.settings.unscheduledSubject || "Unscheduled Meeting";
-			if (!child.basename.includes(subject) &&
-				!child.basename.includes("Unscheduled recording") &&
-				!child.basename.includes("Recording")) continue;
 
 			const cache = this.app.metadataCache.getFileCache(child);
 			const fm = cache?.frontmatter;
 			if (!fm) continue;
+
+			// Identify unscheduled notes by frontmatter, not filename
+			if (fm["whisper_event_id"] !== "unscheduled") continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
 			const meetingStart = fm["meeting_start"] as string | undefined;

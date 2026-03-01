@@ -189,6 +189,13 @@
 	padding: 32px 16px;
 }
 
+/* Settings — version label */
+.whisper-cal-settings-version {
+	text-align: right;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
 /* Settings — wider text inputs (1.5x default) */
 .whisper-cal-settings input[type="text"],
 .whisper-cal-settings input[type="password"],

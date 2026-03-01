@@ -2,6 +2,7 @@ import {App, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
+import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
 import {createDefaultTemplateFile} from "./services/TemplateEngine";
@@ -18,6 +19,7 @@ export interface WhisperCalSettings {
 	peopleFolderPath: string;
 	transcriptFolderPath: string;
 	unscheduledSubject: string;
+	recordingWindowMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
 	unscheduledSubject: "Unscheduled Meeting",
+	recordingWindowMinutes: 10,
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -48,6 +51,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		const {containerEl} = this;
 		containerEl.empty();
 		containerEl.addClass("whisper-cal-settings");
+
+		containerEl.createEl("div", {
+			cls: "whisper-cal-settings-version",
+			text: `v${this.plugin.manifest.version}`,
+		});
 
 		new Setting(containerEl)
 			.setName("Notes")
@@ -141,6 +149,31 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.plugin.settings.noteTemplatePath = path;
 						await this.plugin.saveSettings();
 						this.display();
+					}
+				}));
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("MacWhisper")
+			.setHeading();
+		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		new Setting(containerEl)
+			.setName("Database path")
+			.setDesc(MACWHISPER_DB_PATH)
+			.setDisabled(true);
+
+		new Setting(containerEl)
+			.setName("Recording match window (minutes)")
+			.setDesc("How close a recording start must be to the scheduled meeting time to be suggested for linking")
+			.addText(text => text
+				.setPlaceholder("10")
+				.setValue(String(this.plugin.settings.recordingWindowMinutes))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.recordingWindowMinutes = num;
+						await this.plugin.saveSettings();
 					}
 				}));
 
