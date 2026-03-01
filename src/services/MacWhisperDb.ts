@@ -36,10 +36,17 @@ interface SessionMetadataRow {
 	appName: string | null;
 }
 
+export interface SpeakerInfo {
+	name: string;
+	id: string;
+	isStub: boolean;
+	lineCount: number;
+}
+
 export interface TranscriptData {
 	lines: TranscriptLineRow[];
 	metadata: SessionMetadataRow | null;
-	speakers: string[];
+	speakers: SpeakerInfo[];
 }
 
 /** Validate that a string is a hex-encoded session ID (safe for SQL interpolation). */
@@ -237,11 +244,20 @@ export async function getTranscript(sessionId: string): Promise<TranscriptData> 
 		WHERE hex(s.id) = '${sessionId}';
 	`;
 
-	// 3. Speaker list (session_speaker uses capital D: speakerID)
+	// 3. Speaker list with id, stub flag, and line count
 	const speakersSql = `
-		SELECT DISTINCT sp.name as name
+		SELECT sp.name as name,
+		       hex(sp.id) as id,
+		       sp.isStub as isStub,
+		       COALESCE(lc.cnt, 0) as lineCount
 		FROM session_speaker ss
 		JOIN speaker sp ON ss.speakerID = sp.id
+		LEFT JOIN (
+			SELECT tl.speakerID, COUNT(*) as cnt
+			FROM transcriptline tl
+			WHERE hex(tl.sessionId) = '${sessionId}'
+			GROUP BY tl.speakerID
+		) lc ON lc.speakerID = sp.id
 		WHERE hex(ss.sessionID) = '${sessionId}'
 		ORDER BY sp.name ASC;
 	`;
@@ -256,8 +272,13 @@ export async function getTranscript(sessionId: string): Promise<TranscriptData> 
 	const lines = parseRows<TranscriptLineRow>(linesRaw);
 	const metaRows = parseRows<SessionMetadataRow>(metaRaw);
 	const metadata = metaRows[0] ?? null;
-	const speakerRows = parseRows<{name: string}>(speakersRaw);
-	const speakers = speakerRows.map(r => r.name);
+	const speakerRows = parseRows<{name: string; id: string; isStub: number; lineCount: number}>(speakersRaw);
+	const speakers: SpeakerInfo[] = speakerRows.map(r => ({
+		name: r.name,
+		id: r.id,
+		isStub: r.isStub === 1,
+		lineCount: r.lineCount,
+	}));
 
 	return {lines, metadata, speakers};
 }

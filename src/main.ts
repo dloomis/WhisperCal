@@ -235,6 +235,13 @@ export default class WhisperCalPlugin extends Plugin {
 		const subject = (fm["whisper_subject"] as string) || file.basename;
 		const isUnscheduled = fm["whisper_event_id"] === "unscheduled";
 
+		// Extract attendee names from frontmatter (stored as wiki links or plain strings)
+		const rawAttendees = Array.isArray(fm["invitees"]) ? fm["invitees"] as string[] : [];
+		const attendees = rawAttendees.map(s => {
+			const name = String(s).replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/^"/, "").replace(/"$/, "");
+			return {name, email: ""};
+		});
+
 		await linkRecording({
 			app: this.app,
 			meetingStart,
@@ -242,6 +249,7 @@ export default class WhisperCalPlugin extends Plugin {
 			subject,
 			timezone: this.settings.timezone,
 			transcriptFolderPath: this.settings.transcriptFolderPath,
+			attendees,
 			windowMinutes: isUnscheduled ? 720 : undefined,
 		});
 	}

@@ -3,6 +3,7 @@ import {TFile, TFolder, normalizePath} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
 import {updateFrontmatter} from "../utils/frontmatter";
+import {formatDateTimeWithOffset} from "../utils/time";
 
 interface SpeakerBlock {
 	speaker: string | null;
@@ -49,51 +50,46 @@ function buildFrontmatter(opts: {
 	notePath: string;
 	sessionId: string;
 	metadata: NonNullable<TranscriptData["metadata"]>;
-	speakers: string[];
+	speakers: TranscriptData["speakers"];
+	recordingStart: Date;
+	timezone: string;
+	calendarEvent: string;
+	calendarAttendees: string[];
 }): string {
-	const {notePath, sessionId, metadata, speakers} = opts;
+	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees} = opts;
 
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-	const meetingNoteLink = `"[[${noteBasename}]]"`;
-
-	// Parse recording date from dateCreated
-	const recordingDate = metadata.dateCreated
-		? metadata.dateCreated.substring(0, 10)
-		: "";
-
-	const duration = metadata.durationSec
-		? formatDuration(metadata.durationSec)
-		: "";
-
-	const speakerYaml = speakers.length > 0
-		? speakers.map(s => `  - "${s}"`).join("\n")
-		: "";
-
-	const diarized = metadata.hasBeenDiarized ? "true" : "false";
-	const model = metadata.modelIdentifer ?? "";
-	const engine = metadata.modelEngine ?? "";
-	const language = metadata.detectedLanguage ?? metadata.modelInputLanguage ?? "";
+	const dateStr = formatDateTimeWithOffset(recordingStart, timezone);
+	const duration = metadata.durationSec ? Math.round(metadata.durationSec) : 0;
 
 	const lines = [
 		"---",
-		"type: transcript",
-		`meeting_note: ${meetingNoteLink}`,
-		`macwhisper_session_id: "${sessionId}"`,
+		`Date: ${dateStr}`,
+		"Type: transcript",
+		`session_id: "${sessionId}"`,
+		`duration: ${duration}`,
+		`meeting_note: "[[${noteBasename}]]"`,
+		`speaker_count: ${speakers.length}`,
 	];
 
-	if (recordingDate) lines.push(`recording_date: ${recordingDate}`);
-	if (duration) lines.push(`duration: "${duration}"`);
-
-	if (speakerYaml) {
+	if (speakers.length > 0) {
 		lines.push("speakers:");
-		lines.push(speakerYaml);
+		for (const sp of speakers) {
+			lines.push(`  - name: "${sp.name}"`);
+			lines.push(`    id: "${sp.id}"`);
+			lines.push(`    stub: ${sp.isStub}`);
+			lines.push(`    line_count: ${sp.lineCount}`);
+		}
 	}
 
-	lines.push(`diarized: ${diarized}`);
-	if (model) lines.push(`whisper_model: "${model}"`);
-	if (engine) lines.push(`whisper_engine: "${engine}"`);
-	if (language) lines.push(`language: "${language}"`);
-	lines.push("tags: [transcript]");
+	lines.push(`calendar_event: "${calendarEvent}"`);
+	if (calendarAttendees.length > 0) {
+		lines.push("calendar_attendees:");
+		for (const name of calendarAttendees) {
+			lines.push(`  - "${name}"`);
+		}
+	}
+	lines.push("pipeline_state: titled");
 	lines.push("---");
 
 	return lines.join("\n");
@@ -170,8 +166,12 @@ export async function createTranscriptFile(opts: {
 	notePath: string;
 	sessionId: string;
 	transcriptFolderPath: string;
+	recordingStart: Date;
+	timezone: string;
+	calendarEvent: string;
+	calendarAttendees: string[];
 }): Promise<string | null> {
-	const {app, notePath, sessionId, transcriptFolderPath} = opts;
+	const {app, notePath, sessionId, transcriptFolderPath, recordingStart, timezone, calendarEvent, calendarAttendees} = opts;
 
 	const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
 
@@ -192,6 +192,10 @@ export async function createTranscriptFile(opts: {
 		sessionId,
 		metadata: data.metadata,
 		speakers: data.speakers,
+		recordingStart,
+		timezone,
+		calendarEvent,
+		calendarAttendees,
 	});
 
 	const body = buildTranscriptBody(data);

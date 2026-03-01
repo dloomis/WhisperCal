@@ -146,6 +146,7 @@ export function renderMeetingCard(
 						subject: event.subject,
 						timezone,
 						transcriptFolderPath,
+						attendees: event.attendees,
 						windowMinutes: isUnscheduled ? 720 : undefined,
 					});
 					if (linked) {

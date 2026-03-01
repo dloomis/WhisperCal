@@ -96,3 +96,43 @@ export function getTodayString(timezone: string): string {
 export function isSameDay(a: Date, b: Date, timezone: string): boolean {
 	return formatDate(a, timezone) === formatDate(b, timezone);
 }
+
+/**
+ * Format a Date as "YYYY-MM-DD HH:mm:ss±HH:MM" in the given timezone.
+ * Uses Intl.DateTimeFormat to extract parts and compute UTC offset.
+ */
+export function formatDateTimeWithOffset(date: Date, timezone: string): string {
+	const fmt = new Intl.DateTimeFormat("en-US", {
+		timeZone: timezone,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	});
+	const parts = fmt.formatToParts(date);
+	const get = (type: string) => parts.find(p => p.type === type)?.value ?? "00";
+
+	const year = get("year");
+	const month = get("month");
+	const day = get("day");
+	const hour = get("hour") === "24" ? "00" : get("hour");
+	const minute = get("minute");
+	const second = get("second");
+
+	// Compute UTC offset: build a Date from the local parts in UTC, compare
+	const localMs = Date.UTC(
+		Number(year), Number(month) - 1, Number(day),
+		Number(hour), Number(minute), Number(second),
+	);
+	const offsetMs = localMs - date.getTime();
+	const offsetMin = Math.round(offsetMs / 60_000);
+	const sign = offsetMin >= 0 ? "+" : "-";
+	const absMin = Math.abs(offsetMin);
+	const offH = String(Math.floor(absMin / 60)).padStart(2, "0");
+	const offM = String(absMin % 60).padStart(2, "0");
+
+	return `${year}-${month}-${day} ${hour}:${minute}:${second}${sign}${offH}:${offM}`;
+}

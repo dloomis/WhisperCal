@@ -4,6 +4,7 @@ import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {formatDate} from "../utils/time";
+import type {EventAttendee} from "../types";
 
 /**
  * Search for a MacWhisper recording near a meeting start time,
@@ -18,9 +19,10 @@ export async function linkRecording(opts: {
 	subject: string;
 	timezone: string;
 	transcriptFolderPath: string;
+	attendees: EventAttendee[];
 	windowMinutes?: number;
 }): Promise<boolean> {
-	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, windowMinutes} = opts;
+	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, windowMinutes} = opts;
 
 	const recordings = await findRecordingsNear(meetingStart, windowMinutes);
 
@@ -57,6 +59,10 @@ export async function linkRecording(opts: {
 		notePath,
 		sessionId: selected.sessionId,
 		transcriptFolderPath,
+		recordingStart: selected.recordingStart,
+		timezone,
+		calendarEvent: subject,
+		calendarAttendees: attendees.map(a => a.name),
 	});
 	if (transcriptPath) {
 		new Notice("Recording and transcript linked to note");
