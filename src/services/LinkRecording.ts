@@ -4,6 +4,7 @@ import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {formatDate} from "../utils/time";
+import {sanitizeFilename} from "../utils/sanitize";
 import type {EventAttendee} from "../types";
 
 /**
@@ -41,33 +42,43 @@ export async function linkRecording(opts: {
 
 	if (!selected) return false;
 
-	// Set title in MacWhisper DB first — only proceed if successful
-	const date = formatDate(meetingStart, timezone);
-	const title = `${date} ${subject}`;
+	// Set MacWhisper title to match the note filename (without folder or .md)
+	const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(meetingStart, timezone)} ${sanitizeFilename(subject)}`;
 	if (!await setSessionTitle(selected.sessionId, title)) {
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Failed to update MacWhisper session title");
 		return false;
 	}
 
-	// Write session ID to note frontmatter
+	// Phase 1: Write session ID to note frontmatter (fast)
 	await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
+	new Notice("Recording linked to note");
 
-	// Create transcript file from MacWhisper DB
-	const transcriptPath = await createTranscriptFile({
-		app,
-		notePath,
-		sessionId: selected.sessionId,
-		transcriptFolderPath,
-		recordingStart: selected.recordingStart,
-		timezone,
-		calendarEvent: subject,
-		calendarAttendees: attendees.map(a => a.name),
-	});
-	if (transcriptPath) {
-		new Notice("Recording and transcript linked to note");
-	} else {
-		new Notice("Recording linked to note");
-	}
+	// Phase 2: Create transcript file in background (fire-and-forget)
+	void (async () => {
+		const notice = new Notice("Creating transcript\u2026", 0);
+		try {
+			const transcriptPath = await createTranscriptFile({
+				app,
+				notePath,
+				sessionId: selected.sessionId,
+				transcriptFolderPath,
+				recordingStart: selected.recordingStart,
+				timezone,
+				calendarEvent: subject,
+				calendarAttendees: attendees.map(a => a.name),
+			});
+			if (transcriptPath) {
+				notice.setMessage("Transcript linked to note");
+			} else {
+				notice.hide();
+			}
+		} catch (err) {
+			console.error("[WhisperCal] Transcript creation failed:", err);
+			notice.setMessage("Transcript creation failed");
+		}
+		setTimeout(() => notice.hide(), 4000);
+	})();
+
 	return true;
 }
