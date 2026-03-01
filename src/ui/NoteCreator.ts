@@ -51,6 +51,15 @@ export class NoteCreator {
 		await this.ensureFolder(this.settings.noteFolderPath);
 
 		const noteCreated = new Date();
+
+		// For unscheduled events, stamp the actual creation time so
+		// frontmatter records a real meeting_start and the card can
+		// render inline at the correct time slot.
+		if (event.id === "unscheduled") {
+			event.startTime = noteCreated;
+			event.endTime = noteCreated;
+		}
+
 		const content = await this.buildNoteContent(event, noteCreated);
 		const file = await this.app.vault.create(path, content);
 		const leaf = this.app.workspace.getLeaf("tab");

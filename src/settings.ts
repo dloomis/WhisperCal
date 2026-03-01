@@ -17,6 +17,7 @@ export interface WhisperCalSettings {
 	cloudInstance: CloudInstance;
 	peopleFolderPath: string;
 	transcriptFolderPath: string;
+	unscheduledSubject: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cloudInstance: "Public",
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
+	unscheduledSubject: "Unscheduled Meeting",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -98,6 +100,18 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.noteFilenameTemplate)
 				.onChange(async (value) => {
 					this.plugin.settings.noteFilenameTemplate = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Unscheduled note subject")
+			.setDesc("Subject used for ad-hoc meeting notes not tied to a calendar event")
+			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("Unscheduled Meeting")
+				.setValue(this.plugin.settings.unscheduledSubject)
+				.onChange(async (value) => {
+					this.plugin.settings.unscheduledSubject = value;
 					await this.plugin.saveSettings();
 				}));
 

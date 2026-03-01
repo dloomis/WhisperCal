@@ -1,10 +1,10 @@
-import {ItemView, WorkspaceLeaf, setIcon} from "obsidian";
+import {ItemView, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
-import {formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
+import {formatDate, formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
@@ -156,6 +156,8 @@ export class CalendarView extends ItemView {
 		this.provider = provider;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
+		this.lastRefreshTime = 0;
+		void this.refresh();
 	}
 
 	private renderLoading(): void {
@@ -186,7 +188,7 @@ export class CalendarView extends ItemView {
 		// Unscheduled card — always at the top
 		const unscheduledEvent: CalendarEvent = {
 			id: "unscheduled",
-			subject: "Recording",
+			subject: this.settings.unscheduledSubject || "Unscheduled Meeting",
 			body: "",
 			isAllDay: false,
 			isOnlineMeeting: false,
@@ -203,6 +205,10 @@ export class CalendarView extends ItemView {
 			this.contentContainer, unscheduledEvent,
 			this.settings.timezone, this.noteCreator, this.app,
 			false, this.settings.transcriptFolderPath,
+			() => {
+				this.lastRefreshTime = 0;
+				void this.refresh();
+			},
 		);
 
 		if (events.length === 0) {
@@ -213,8 +219,13 @@ export class CalendarView extends ItemView {
 			return;
 		}
 
-		const allDay = events.filter(e => e.isAllDay);
-		const timed = events.filter(e => !e.isAllDay);
+		// Merge any previously-created unscheduled notes into the timeline
+		const unscheduledNotes = this.findUnscheduledNotes();
+		const merged = [...events, ...unscheduledNotes];
+
+		const allDay = merged.filter(e => e.isAllDay);
+		const timed = merged.filter(e => !e.isAllDay);
+		timed.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
 		if (allDay.length > 0) {
 			this.contentContainer.createDiv({
@@ -243,6 +254,57 @@ export class CalendarView extends ItemView {
 				);
 			}
 		}
+	}
+
+	private findUnscheduledNotes(): CalendarEvent[] {
+		const datePrefix = formatDate(this.selectedDate, this.settings.timezone);
+		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
+		if (!(folder instanceof TFolder)) return [];
+
+		const results: CalendarEvent[] = [];
+		for (const child of folder.children) {
+			if (!(child instanceof TFile) || child.extension !== "md") continue;
+			if (!child.basename.startsWith(datePrefix)) continue;
+			// Match configured subject, plus legacy "Recording" and default "Unscheduled recording"
+			const subject = this.settings.unscheduledSubject || "Unscheduled Meeting";
+			if (!child.basename.includes(subject) &&
+				!child.basename.includes("Unscheduled recording") &&
+				!child.basename.includes("Recording")) continue;
+
+			const cache = this.app.metadataCache.getFileCache(child);
+			const fm = cache?.frontmatter;
+			if (!fm) continue;
+
+			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
+			const meetingStart = fm["meeting_start"] as string | undefined;
+			const meetingDate = fm["meeting_date"] as string | undefined;
+			const meetingSubject = fm["meeting_subject"] as string | undefined;
+
+			let startTime: Date;
+			if (meetingDate && meetingStart) {
+				const parsed = new Date(`${meetingDate} ${meetingStart}`);
+				startTime = isNaN(parsed.getTime()) ? this.selectedDate : parsed;
+			} else {
+				startTime = this.selectedDate;
+			}
+
+			results.push({
+				id: `unscheduled-${child.path}`,
+				subject: meetingSubject ?? child.basename.replace(`${datePrefix} - `, ""),
+				body: "",
+				isAllDay: false,
+				isOnlineMeeting: false,
+				onlineMeetingUrl: "",
+				startTime,
+				endTime: startTime,
+				location: "",
+				attendeeCount: 0,
+				attendees: [],
+				organizerName: "",
+				organizerEmail: "",
+			});
+		}
+		return results;
 	}
 
 	private findActiveEventIds(events: CalendarEvent[]): Set<string> {
