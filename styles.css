@@ -110,7 +110,13 @@
 	display: flex;
 	flex-wrap: wrap;
 	gap: 12px;
-	margin-bottom: 8px;
+}
+
+.whisper-cal-card-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 6px;
 }
 
 .whisper-cal-card-meta-item {
@@ -285,5 +291,16 @@
 .whisper-cal-card-rec-trigger svg {
 	width: 16px;
 	height: 16px;
+}
+
+/* Red dot indicator — note exists but no recording linked */
+.whisper-cal-rec-dot {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--text-error);
 }
 

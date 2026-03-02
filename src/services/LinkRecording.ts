@@ -1,9 +1,9 @@
 import {App, Notice} from "obsidian";
-import {findRecordingsNear, setSessionTitle} from "./MacWhisperDb";
+import {findRecordingsNear, hasTranscriptLines, setSessionTitle} from "./MacWhisperDb";
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {formatDate} from "../utils/time";
+import {formatDate, sleep} from "../utils/time";
 import {sanitizeFilename} from "../utils/sanitize";
 import type {EventAttendee} from "../types";
 
@@ -32,13 +32,8 @@ export async function linkRecording(opts: {
 		return false;
 	}
 
-	let selected;
-	if (recordings.length === 1) {
-		selected = recordings[0]!;
-	} else {
-		const modal = new RecordingSuggestModal(app, recordings);
-		selected = await modal.prompt();
-	}
+	const modal = new RecordingSuggestModal(app, recordings);
+	const selected = await modal.prompt();
 
 	if (!selected) return false;
 
@@ -61,9 +56,27 @@ export async function linkRecording(opts: {
 	new Notice("Recording linked to note");
 
 	// Phase 2: Create transcript file in background (fire-and-forget)
+	// Polls for transcript lines in case MacWhisper is still transcribing.
 	void (async () => {
 		const notice = new Notice("Creating transcript\u2026", 0);
 		try {
+			// Wait for MacWhisper transcription to finish
+			let ready = await hasTranscriptLines(selected.sessionId);
+			if (!ready) {
+				notice.setMessage("Waiting for MacWhisper transcription\u2026");
+				const maxAttempts = 60; // ~3 minutes at 3s intervals
+				for (let i = 0; i < maxAttempts && !ready; i++) {
+					await sleep(3000);
+					ready = await hasTranscriptLines(selected.sessionId);
+				}
+				if (!ready) {
+					notice.setMessage("Transcription still in progress \u2014 try linking again later");
+					setTimeout(() => notice.hide(), 6000);
+					return;
+				}
+			}
+
+			notice.setMessage("Creating transcript\u2026");
 			const transcriptPath = await createTranscriptFile({
 				app,
 				notePath,

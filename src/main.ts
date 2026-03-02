@@ -24,6 +24,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 	private micButtonEl: HTMLElement | null = null;
 	private tagSpeakersButtonEl: HTMLElement | null = null;
+	private micWatchRef: EventRef | null = null;
 	private tagSpeakersWatchRef: EventRef | null = null;
 	private tokenCache: TokenCache | null = null;
 
@@ -202,6 +203,10 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private removeTitleBarMicButton(): void {
+		if (this.micWatchRef) {
+			this.app.metadataCache.offref(this.micWatchRef);
+			this.micWatchRef = null;
+		}
 		if (this.micButtonEl) {
 			this.micButtonEl.remove();
 			this.micButtonEl = null;
@@ -406,6 +411,14 @@ export default class WhisperCalPlugin extends Plugin {
 			void doLink();
 		});
 		this.micButtonEl.addClass("whisper-cal-mic-action");
+
+		// Persistent watcher: update mic button when note frontmatter changes
+		// (e.g. when recording is linked via the calendar card's mic icon)
+		this.micWatchRef = this.app.metadataCache.on("changed", (changedFile) => {
+			if (changedFile.path === file.path) {
+				this.updateTitleBarMicButton();
+			}
+		});
 	}
 
 	private async handleLinkRecording(

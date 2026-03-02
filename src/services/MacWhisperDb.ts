@@ -196,6 +196,18 @@ export async function findRecordingsNear(
 }
 
 /**
+ * Check whether any transcript lines exist for a session.
+ * Used to detect whether MacWhisper has finished transcribing.
+ */
+export async function hasTranscriptLines(sessionId: string): Promise<boolean> {
+	if (!isValidHexId(sessionId)) return false;
+	const sql = `SELECT COUNT(*) as cnt FROM transcriptline WHERE hex(sessionId) = '${sessionId}' LIMIT 1;`;
+	const raw = await query(sql);
+	const rows = parseRows<{cnt: number}>(raw);
+	return (rows[0]?.cnt ?? 0) > 0;
+}
+
+/**
  * Set the user-chosen title on a MacWhisper session.
  * Returns true if the update succeeded, false on error.
  */

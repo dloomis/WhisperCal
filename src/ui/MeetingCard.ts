@@ -44,7 +44,7 @@ export function renderMeetingCard(
 		timeEl.setText(`${start} - ${end}`);
 	}
 
-	// Metadata row: [Teams link] [invitee count] [mic icon]
+	// Metadata row: location + invitee count
 	const meta = card.createDiv({cls: "whisper-cal-card-meta"});
 
 	if (event.onlineMeetingUrl) {
@@ -74,8 +74,14 @@ export function renderMeetingCard(
 		attEl.createSpan({text: String(event.attendeeCount)});
 	}
 
+	// Actions row: note + mic icons
+	const actions = card.createDiv({cls: "whisper-cal-card-actions"});
+
+	// Mic button ref — hoisted so note click handler can add/check the dot
+	let micBtn: HTMLButtonElement | undefined;
+
 	// Note icon — create or open note
-	const noteBtn = meta.createEl("button", {
+	const noteBtn = actions.createEl("button", {
 		cls: "whisper-cal-card-rec-trigger clickable-icon",
 	});
 
@@ -107,6 +113,11 @@ export function renderMeetingCard(
 					}
 				}
 				updateNoteState();
+				// Show red dot on mic if note now exists but recording not linked
+				if (micBtn && !micBtn.disabled && noteCreator.noteExists(event)
+					&& !micBtn.querySelector(".whisper-cal-rec-dot")) {
+					micBtn.createSpan({cls: "whisper-cal-rec-dot"});
+				}
 			} finally {
 				noteBtn.disabled = false;
 			}
@@ -117,7 +128,7 @@ export function renderMeetingCard(
 	// Mic icon — link MacWhisper recording to note
 	// Hidden on the top-level unscheduled card (no meeting to match)
 	if (event.id !== "unscheduled") {
-		const micBtn = meta.createEl("button", {
+		const btn = micBtn = actions.createEl("button", {
 			cls: "whisper-cal-card-rec-trigger clickable-icon",
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			attr: {"aria-label": "Link MacWhisper recording"},
@@ -129,16 +140,22 @@ export function renderMeetingCard(
 		const alreadyLinked = noteFile instanceof TFile &&
 			!!app.metadataCache.getFileCache(noteFile)?.frontmatter?.["macwhisper_session_id"];
 		if (alreadyLinked) {
-			setIcon(micBtn, "check");
+			setIcon(btn, "check");
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			micBtn.ariaLabel = "MacWhisper recording linked";
+			btn.ariaLabel = "MacWhisper recording linked";
+			btn.disabled = true;
 		} else {
-			setIcon(micBtn, "mic");
+			setIcon(btn, "mic");
+			// Red dot if note exists but recording not yet linked
+			if (noteCreator.noteExists(event)) {
+				btn.createSpan({cls: "whisper-cal-rec-dot"});
+			}
 		}
 
-		micBtn.addEventListener("click", () => {
-			micBtn.disabled = true;
+		btn.addEventListener("click", () => {
+			btn.disabled = true;
 			const handleMic = async () => {
+				let linked = false;
 				try {
 					const notePath = noteCreator.getNotePath(event);
 					if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
@@ -146,7 +163,7 @@ export function renderMeetingCard(
 						updateNoteState();
 					}
 					const isUnscheduled = event.id.startsWith("unscheduled");
-					const linked = await linkRecording({
+					linked = await linkRecording({
 						app,
 						meetingStart: event.startTime,
 						notePath,
@@ -157,12 +174,12 @@ export function renderMeetingCard(
 						windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
 					});
 					if (linked) {
-						setIcon(micBtn, "check");
+						setIcon(btn, "check");
 						// eslint-disable-next-line obsidianmd/ui/sentence-case
-						micBtn.ariaLabel = "MacWhisper recording linked";
+						btn.ariaLabel = "MacWhisper recording linked";
 					}
 				} finally {
-					micBtn.disabled = false;
+					if (!linked) btn.disabled = false;
 				}
 			};
 			void handleMic();

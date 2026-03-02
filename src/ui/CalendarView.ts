@@ -17,6 +17,8 @@ export class CalendarView extends ItemView {
 	private lastRefreshTime = 0;
 	private static readonly DEBOUNCE_MS = 2000;
 	private selectedDate: Date;
+	private cachedEvents: CalendarEvent[] | null = null;
+	private cardRefreshTimer: number | null = null;
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
 
@@ -87,12 +89,32 @@ export class CalendarView extends ItemView {
 		// Initial load
 		await this.refresh();
 
+		// Re-render cards when a meeting note's frontmatter changes
+		// (e.g. macwhisper_session_id added via title bar mic or command)
+		this.registerEvent(
+			this.app.metadataCache.on("changed", (file) => {
+				if (this.cachedEvents === null) return;
+				if (!file.path.startsWith(this.settings.noteFolderPath + "/")) return;
+				if (this.cardRefreshTimer !== null) {
+					window.clearTimeout(this.cardRefreshTimer);
+				}
+				this.cardRefreshTimer = window.setTimeout(() => {
+					this.cardRefreshTimer = null;
+					this.renderEvents(this.cachedEvents!);
+				}, 500);
+			}),
+		);
+
 		// Start auto-refresh
 		this.startAutoRefresh();
 	}
 
 	async onClose(): Promise<void> {
 		this.stopAutoRefresh();
+		if (this.cardRefreshTimer !== null) {
+			window.clearTimeout(this.cardRefreshTimer);
+			this.cardRefreshTimer = null;
+		}
 	}
 
 	async refresh(): Promise<void> {
@@ -176,6 +198,7 @@ export class CalendarView extends ItemView {
 
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
+		this.cachedEvents = events;
 		this.contentContainer.empty();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
