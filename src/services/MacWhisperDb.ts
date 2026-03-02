@@ -153,6 +153,9 @@ export async function findRecordingsNear(
 	const raw = await query(sql);
 	const rows = parseRows<SessionRow>(raw);
 
+	console.debug("[WhisperCal] findRecordingsNear: meetingStart=%s (%d), window=%d min, rows=%d",
+		meetingStart.toISOString(), meetingStart.getTime(), windowMinutes, rows.length);
+
 	const windowMs = windowMinutes * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
@@ -161,22 +164,32 @@ export async function findRecordingsNear(
 		rows.map(row => getTrack0Birthtime(row.sessionId)),
 	);
 
+	const nullCount = birthtimes.filter(b => b === null).length;
+	console.debug("[WhisperCal] findRecordingsNear: resolved %d birthtimes, %d null", birthtimes.length, nullCount);
+
 	for (let i = 0; i < rows.length; i++) {
 		const birthtime = birthtimes[i];
 		if (!birthtime) continue;
 
 		const row = rows[i]!;
 		const diff = Math.abs(birthtime.getTime() - meetingStart.getTime());
+		const diffMin = diff / 60000;
 		if (diff <= windowMs) {
+			console.debug("[WhisperCal] MATCH: session=%s title=%s birthtime=%s diff=%.1f min",
+				row.sessionId, row.title, birthtime.toISOString(), diffMin);
 			results.push({
 				sessionId: row.sessionId,
 				title: row.title || null,
 				recordingStart: birthtime,
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 			});
+		} else if (diffMin < 120) {
+			console.debug("[WhisperCal] NEAR-MISS: session=%s title=%s birthtime=%s diff=%.1f min",
+				row.sessionId, row.title, birthtime.toISOString(), diffMin);
 		}
 	}
 
+	console.debug("[WhisperCal] findRecordingsNear: returning %d matches", results.length);
 	return results;
 }
 
