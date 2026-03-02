@@ -20,6 +20,12 @@ export interface WhisperCalSettings {
 	transcriptFolderPath: string;
 	unscheduledSubject: string;
 	recordingWindowMinutes: number;
+	speakerTaggingPromptPath: string;
+	microphoneUser: string;
+	llmCli: string;
+	llmSkipPermissions: boolean;
+	llmExtraFlags: string;
+	terminalApp: "Terminal" | "iTerm2";
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -35,6 +41,12 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	transcriptFolderPath: "Transcripts",
 	unscheduledSubject: "Unscheduled Meeting",
 	recordingWindowMinutes: 10,
+	speakerTaggingPromptPath: "",
+	microphoneUser: "",
+	llmCli: "claude",
+	llmSkipPermissions: true,
+	llmExtraFlags: "",
+	terminalApp: "Terminal",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -176,6 +188,83 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}
 				}));
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("LLM")
+			.setHeading();
+		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		new Setting(containerEl)
+			.setName("Speaker tagging prompt")
+			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for tagging speakers (e.g. Prompts/Speaker Tagging.md)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Speaker Tagging.md")
+					.setValue(this.plugin.settings.speakerTaggingPromptPath)
+					.onChange(async (value) => {
+						this.plugin.settings.speakerTaggingPromptPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Microphone user")
+			.setDesc("Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts")
+			.addText(text => text
+				.setPlaceholder("Full Name")
+				.setValue(this.plugin.settings.microphoneUser)
+				.onChange(async (value) => {
+					this.plugin.settings.microphoneUser = value;
+					await this.plugin.saveSettings();
+				}));
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("CLI command")
+			.setDesc("Command used to invoke the LLM (default: claude)")
+			/* eslint-enable obsidianmd/ui/sentence-case */
+			.addText(text => text
+				.setPlaceholder("claude")
+				.setValue(this.plugin.settings.llmCli)
+				.onChange(async (value) => {
+					this.plugin.settings.llmCli = value.trim() || "claude";
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Skip permissions")
+			.setDesc("Allows the LLM to read/write files without per-operation prompts (safe for trusted prompts)")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.llmSkipPermissions)
+				.onChange(async (value) => {
+					this.plugin.settings.llmSkipPermissions = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Additional flags")
+			.setDesc("Extra CLI flags appended to the LLM command (optional)")
+			.addText(text => text
+				.setPlaceholder("")
+				.setValue(this.plugin.settings.llmExtraFlags)
+				.onChange(async (value) => {
+					this.plugin.settings.llmExtraFlags = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Terminal app")
+			.setDesc("Terminal application to open for speaker tagging")
+			.addDropdown(dropdown => {
+				dropdown.addOption("Terminal", "Terminal");
+				dropdown.addOption("iTerm2", "iTerm2");
+				dropdown.setValue(this.plugin.settings.terminalApp);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.terminalApp = value as "Terminal" | "iTerm2";
+					await this.plugin.saveSettings();
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Calendar")

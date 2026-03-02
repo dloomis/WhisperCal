@@ -3,7 +3,7 @@
 	"name": "WhisperCal",
 	"version": "0.1.12",
 	"minAppVersion": "1.4.10",
-	"description": "Daily calendar view with Outlook integration. Create meeting notes with one click.",
+	"description": "Daily calendar view with Outlook integration. Create meeting notes with one click. Links MacWhisper recordings and transcripts to meeting notes.",
 	"author": "Dan Loomis",
 	"authorUrl": "https://github.com/dloomis",
 	"isDesktopOnly": true

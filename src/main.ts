@@ -1,9 +1,11 @@
-import {MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf} from "obsidian";
+import {EventRef, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf} from "obsidian";
+import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
 import {linkRecording} from "./services/LinkRecording";
+import {invokeTagSpeakers} from "./services/LlmInvoker";
 import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
@@ -19,6 +21,8 @@ export default class WhisperCalPlugin extends Plugin {
 	private provider: CalendarProvider;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 	private micButtonEl: HTMLElement | null = null;
+	private tagSpeakersButtonEl: HTMLElement | null = null;
+	private tagSpeakersWatchRef: EventRef | null = null;
 	private tokenCache: TokenCache | null = null;
 
 	async onload() {
@@ -96,18 +100,52 @@ export default class WhisperCalPlugin extends Plugin {
 			this.app.workspace.on("active-leaf-change", () => this.updateTitleBarMicButton()),
 		);
 
+		// Show tag speakers button in title bar for transcript/meeting notes
+		this.registerEvent(
+			this.app.workspace.on("file-open", () => this.updateTagSpeakersButton()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.updateTagSpeakersButton()),
+		);
+
+		this.addCommand({
+			id: COMMAND_TAG_SPEAKERS,
+			name: "Tag speakers in transcript",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				const transcriptFile = this.resolveTagSpeakersContext(file, fm);
+				if (!transcriptFile) return false;
+				if (checking) return true;
+				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
+				this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>);
+				return true;
+			},
+		});
+
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
 	onunload() {
 		this.auth.cancelSignIn();
 		this.removeTitleBarMicButton();
+		this.removeTagSpeakersButton();
 	}
 
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 		this.tokenCache = data?.tokenCache ?? null;
+		// Auto-populate microphoneUser from macOS account on first install
+		if (!this.settings.microphoneUser) {
+			try {
+				this.settings.microphoneUser = execSync("id -F", {encoding: "utf-8"}).trim();
+				await this.saveData({...this.settings, tokenCache: this.tokenCache});
+			} catch {
+				// Leave empty — user can fill in manually
+			}
+		}
 	}
 
 	async saveSettings() {
@@ -154,6 +192,144 @@ export default class WhisperCalPlugin extends Plugin {
 			this.micButtonEl.remove();
 			this.micButtonEl = null;
 		}
+	}
+
+	private removeTagSpeakersButton(): void {
+		if (this.tagSpeakersWatchRef) {
+			this.app.metadataCache.offref(this.tagSpeakersWatchRef);
+			this.tagSpeakersWatchRef = null;
+		}
+		if (this.tagSpeakersButtonEl) {
+			this.tagSpeakersButtonEl.remove();
+			this.tagSpeakersButtonEl = null;
+		}
+	}
+
+	private resolveTranscriptFile(
+		fm: Record<string, unknown>,
+		sourcePath: string,
+	): TFile | null {
+		const raw = fm["transcript"];
+		if (!raw || typeof raw !== "string" || !raw.trim()) return null;
+		const linktext = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+		return this.app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
+	}
+
+	private resolveTagSpeakersContext(
+		file: TFile,
+		fm: Record<string, unknown> | undefined,
+	): TFile | null {
+		if (!fm) return null;
+
+		// Context B: transcript note (tags contains "transcript")
+		const tags = fm["tags"];
+		const hasTranscriptTag = Array.isArray(tags)
+			? tags.includes("transcript")
+			: tags === "transcript";
+		if (hasTranscriptTag && fm["macwhisper_session_id"]) {
+			return file;
+		}
+
+		// Context A: meeting note with a linked transcript
+		if (fm["calendar_event_id"] && fm["macwhisper_session_id"] && fm["transcript"]) {
+			return this.resolveTranscriptFile(fm, file.path);
+		}
+
+		return null;
+	}
+
+	private updateTagSpeakersButton(): void {
+		this.removeTagSpeakersButton();
+
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view?.file) return;
+
+		const file = view.file;
+		const cache = this.app.metadataCache.getFileCache(file);
+
+		// File not yet indexed — retry when cache is ready
+		if (!cache) {
+			const ref = this.app.metadataCache.on("changed", (changedFile) => {
+				if (changedFile.path === file.path) {
+					this.app.metadataCache.offref(ref);
+					this.updateTagSpeakersButton();
+				}
+			});
+			window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
+			return;
+		}
+
+		const fm = cache.frontmatter;
+		const transcriptFile = this.resolveTagSpeakersContext(file, fm);
+		if (!transcriptFile) return;
+
+		// Get transcript frontmatter; retry if it's a different file not yet indexed
+		let transcriptFm: Record<string, unknown>;
+		if (transcriptFile.path === file.path) {
+			transcriptFm = fm ?? {};
+		} else {
+			const transcriptCache = this.app.metadataCache.getFileCache(transcriptFile);
+			if (!transcriptCache) {
+				const ref = this.app.metadataCache.on("changed", (changedFile) => {
+					if (changedFile.path === transcriptFile.path) {
+						this.app.metadataCache.offref(ref);
+						this.updateTagSpeakersButton();
+					}
+				});
+				window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
+				return;
+			}
+			transcriptFm = transcriptCache.frontmatter ?? {};
+		}
+
+		// Determine button state from pipeline_state
+		const pipelineState = transcriptFm["pipeline_state"] as string | undefined;
+		const isTagged = !!pipelineState && pipelineState !== "titled";
+		const icon = isTagged ? "check" : "users";
+		const label = isTagged ? "Speakers tagged" : "Tag speakers";
+
+		this.tagSpeakersButtonEl = view.addAction(icon, label, () => {
+			const freshFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
+			this.doTagSpeakers(transcriptFile, freshFm as Record<string, unknown>);
+		});
+
+		// Persistent watcher — flips icon when LLM writes pipeline_state to the transcript
+		this.tagSpeakersWatchRef = this.app.metadataCache.on("changed", (changedFile) => {
+			if (changedFile.path === transcriptFile.path) {
+				this.updateTagSpeakersButton();
+			}
+		});
+	}
+
+	private doTagSpeakers(
+		transcriptFile: TFile,
+		transcriptFm: Record<string, unknown>,
+	): void {
+		const state = transcriptFm["pipeline_state"] as string | undefined;
+		if (state && state !== "titled") {
+			new Notice("Speakers already tagged for this transcript");
+			return;
+		}
+		if (!transcriptFm["macwhisper_session_id"]) {
+			new Notice("Transcript is missing a MacWhisper session ID — try re-linking the recording");
+			return;
+		}
+		if (!this.settings.speakerTaggingPromptPath) {
+			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
+			return;
+		}
+		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
+		invokeTagSpeakers({
+			transcriptPath: transcriptFile.path,
+			vaultPath,
+			promptPath: this.settings.speakerTaggingPromptPath,
+			microphoneUser: this.settings.microphoneUser,
+			llmCli: this.settings.llmCli,
+			llmExtraFlags: this.settings.llmExtraFlags,
+			llmSkipPermissions: this.settings.llmSkipPermissions,
+			terminalApp: this.settings.terminalApp,
+		});
+		new Notice("Opening Claude Code for speaker tagging — this may take several minutes");
 	}
 
 	private updateTitleBarMicButton(): void {
