@@ -71,6 +71,7 @@ function query(sql: string, readonly = true): Promise<string> {
 			{encoding: "utf-8", timeout: 5000},
 			(err, stdout) => {
 				if (err) {
+					console.warn("[WhisperCal] SQLite query failed:", err.message);
 					resolve("[]");
 				} else {
 					resolve(stdout.trim());

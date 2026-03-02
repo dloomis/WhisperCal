@@ -193,7 +193,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("LLM")
 			.setHeading();
-		/* eslint-enable obsidianmd/ui/sentence-case */
 
 		new Setting(containerEl)
 			.setName("Speaker tagging prompt")
@@ -212,18 +211,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Microphone user")
 			.setDesc("Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts")
 			.addText(text => text
-				.setPlaceholder("Full Name")
+				.setPlaceholder("Full name")
 				.setValue(this.plugin.settings.microphoneUser)
 				.onChange(async (value) => {
 					this.plugin.settings.microphoneUser = value;
 					await this.plugin.saveSettings();
 				}));
 
-		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
 			.setName("CLI command")
 			.setDesc("Command used to invoke the LLM (default: claude)")
-			/* eslint-enable obsidianmd/ui/sentence-case */
 			.addText(text => text
 				.setPlaceholder("claude")
 				.setValue(this.plugin.settings.llmCli)
@@ -265,6 +262,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				});
 			});
+		/* eslint-enable obsidianmd/ui/sentence-case */
 
 		new Setting(containerEl)
 			.setName("Calendar")
@@ -278,6 +276,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setPlaceholder("America/New_York")
 				.setValue(this.plugin.settings.timezone)
 				.onChange(async (value) => {
+					try {
+						Intl.DateTimeFormat(undefined, {timeZone: value});
+					} catch {
+						return; // Ignore invalid timezone — keep previous value
+					}
 					this.plugin.settings.timezone = value;
 					await this.plugin.saveSettings();
 				}));

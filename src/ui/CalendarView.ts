@@ -4,7 +4,7 @@ import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
-import {formatDate, formatDisplayDate, getTodayString, isSameDay} from "../utils/time";
+import {formatDate, formatDisplayDate, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
@@ -47,8 +47,7 @@ export class CalendarView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		const container = this.containerEl.children[1];
-		if (!container) return;
+		const container = this.contentEl;
 		container.empty();
 
 		const root = container.createDiv({cls: "whisper-cal-container"});
@@ -265,9 +264,9 @@ export class CalendarView extends ItemView {
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
 		if (!(folder instanceof TFolder)) return [];
 
+		const files = this.getMarkdownFilesRecursive(folder);
 		const results: CalendarEvent[] = [];
-		for (const child of folder.children) {
-			if (!(child instanceof TFile) || child.extension !== "md") continue;
+		for (const child of files) {
 			if (!child.basename.startsWith(datePrefix)) continue;
 
 			const cache = this.app.metadataCache.getFileCache(child);
@@ -284,8 +283,8 @@ export class CalendarView extends ItemView {
 
 			let startTime: Date;
 			if (meetingDate && meetingStart) {
-				const parsed = new Date(`${meetingDate} ${meetingStart}`);
-				startTime = isNaN(parsed.getTime()) ? this.selectedDate : parsed;
+				const parsed = parseDateTime(meetingDate, meetingStart);
+				startTime = parsed ?? this.selectedDate;
 			} else {
 				startTime = this.selectedDate;
 			}
@@ -312,6 +311,18 @@ export class CalendarView extends ItemView {
 			});
 		}
 		return results;
+	}
+
+	private getMarkdownFilesRecursive(folder: TFolder): TFile[] {
+		const files: TFile[] = [];
+		for (const child of folder.children) {
+			if (child instanceof TFile && child.extension === "md") {
+				files.push(child);
+			} else if (child instanceof TFolder) {
+				files.push(...this.getMarkdownFilesRecursive(child));
+			}
+		}
+		return files;
 	}
 
 	private findActiveEventIds(events: CalendarEvent[]): Set<string> {
@@ -365,7 +376,7 @@ export class CalendarView extends ItemView {
 		this.todayBtn.toggleClass("whisper-cal-hidden", isToday);
 	}
 
-	startAutoRefresh(): void {
+	private startAutoRefresh(): void {
 		this.stopAutoRefresh();
 		const intervalMs = this.settings.refreshIntervalMinutes * 60 * 1000;
 		this.refreshTimerId = window.setInterval(() => {

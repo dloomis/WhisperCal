@@ -1,4 +1,4 @@
-import {EventRef, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf, normalizePath} from "obsidian";
+import {EventRef, MarkdownView, Notice, Plugin, TFile, normalizePath} from "obsidian";
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import speakerAutoTagPrompt from "../prompts/Speaker Auto-Tag Prompt.md";
@@ -7,6 +7,7 @@ import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
 import {linkRecording} from "./services/LinkRecording";
 import {invokeTagSpeakers} from "./services/LlmInvoker";
+import {parseDateTime} from "./utils/time";
 import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
@@ -324,13 +325,17 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 		if (!transcriptFm["macwhisper_session_id"]) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Transcript is missing a MacWhisper session ID — try re-linking the recording");
 			return;
 		}
 		if (!this.settings.speakerTaggingPromptPath) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
 			return;
 		}
+		// basePath is undocumented but stable on desktop — no Vault API alternative
+		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
 		invokeTagSpeakers({
 			transcriptPath: transcriptFile.path,
@@ -342,6 +347,7 @@ export default class WhisperCalPlugin extends Plugin {
 			llmSkipPermissions: this.settings.llmSkipPermissions,
 			terminalApp: this.settings.terminalApp,
 		});
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Opening Claude Code for speaker tagging — this may take several minutes");
 	}
 
@@ -424,7 +430,7 @@ export default class WhisperCalPlugin extends Plugin {
 			const dateStr = rawDate instanceof Date
 				? rawDate.toISOString().slice(0, 10)
 				: rawDate as string;
-			meetingStart = new Date(`${dateStr} ${timeStr}`);
+			meetingStart = parseDateTime(dateStr, timeStr);
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
 			const noteCreatedStr = fm["note_created"] as string | undefined;
@@ -462,8 +468,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private async activateView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR);
 		if (existing.length > 0) {
-			const leaf = existing[0] as WorkspaceLeaf;
-			await this.app.workspace.revealLeaf(leaf);
+			await this.app.workspace.revealLeaf(existing[0]!);
 			return;
 		}
 

@@ -33,7 +33,8 @@ export class NoteCreator {
 		const path = this.getNotePath(event);
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (file instanceof TFile) {
-			await this.app.workspace.getLeaf("tab").openFile(file);
+			const leaf = this.getLeafForFile(file);
+			await leaf.openFile(file);
 		}
 	}
 
@@ -43,7 +44,8 @@ export class NoteCreator {
 		// If note already exists, just open it
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing instanceof TFile) {
-			await this.app.workspace.getLeaf("tab").openFile(existing);
+			const leaf = this.getLeafForFile(existing);
+			await leaf.openFile(existing);
 			return;
 		}
 
@@ -64,6 +66,16 @@ export class NoteCreator {
 		const leaf = this.app.workspace.getLeaf("tab");
 		await leaf.openFile(file);
 		this.setCursorToNotesSection(leaf, content);
+	}
+
+	/** Reuse an existing leaf showing this file, or open a new tab. */
+	private getLeafForFile(file: TFile): WorkspaceLeaf {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			if ((leaf.view as MarkdownView).file?.path === file.path) {
+				return leaf;
+			}
+		}
+		return this.app.workspace.getLeaf("tab");
 	}
 
 	private async ensureFolder(folderPath: string): Promise<void> {

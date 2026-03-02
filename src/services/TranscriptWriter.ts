@@ -46,6 +46,11 @@ function groupBySpeaker(lines: TranscriptData["lines"]): SpeakerBlock[] {
 	return blocks;
 }
 
+/** Escape a string for use inside a YAML double-quoted value. */
+function yamlEscape(s: string): string {
+	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function buildFrontmatter(opts: {
 	notePath: string;
 	sessionId: string;
@@ -66,27 +71,27 @@ function buildFrontmatter(opts: {
 		"---",
 		`date: ${dateStr}`,
 		"tags: [transcript]",
-		`macwhisper_session_id: "${sessionId}"`,
+		`macwhisper_session_id: "${yamlEscape(sessionId)}"`,
 		`duration: ${duration}`,
-		`meeting_note: "[[${noteBasename}]]"`,
+		`meeting_note: "[[${yamlEscape(noteBasename)}]]"`,
 		`speaker_count: ${speakers.length}`,
 	];
 
 	if (speakers.length > 0) {
 		lines.push("speakers:");
 		for (const sp of speakers) {
-			lines.push(`  - name: "${sp.name}"`);
-			lines.push(`    id: "${sp.id}"`);
+			lines.push(`  - name: "${yamlEscape(sp.name)}"`);
+			lines.push(`    id: "${yamlEscape(sp.id)}"`);
 			lines.push(`    stub: ${sp.isStub}`);
 			lines.push(`    line_count: ${sp.lineCount}`);
 		}
 	}
 
-	lines.push(`meeting_subject: "${calendarEvent}"`);
+	lines.push(`meeting_subject: "${yamlEscape(calendarEvent)}"`);
 	if (calendarAttendees.length > 0) {
 		lines.push("invitees:");
 		for (const name of calendarAttendees) {
-			lines.push(`  - "${name}"`);
+			lines.push(`  - "${yamlEscape(name)}"`);
 		}
 	}
 	lines.push("pipeline_state: titled");

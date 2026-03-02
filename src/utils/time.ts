@@ -98,6 +98,34 @@ export function isSameDay(a: Date, b: Date, timezone: string): boolean {
 }
 
 /**
+ * Parse a date string ("YYYY-MM-DD") and a time string ("9:00 AM") into a Date.
+ * Returns null if either part is missing or unparseable.
+ */
+export function parseDateTime(dateStr: string, timeStr: string): Date | null {
+	const dateParts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!dateParts) return null;
+
+	const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+	if (!timeMatch) return null;
+
+	let hour = parseInt(timeMatch[1]!, 10);
+	const minute = parseInt(timeMatch[2]!, 10);
+	const meridiem = timeMatch[3]!.toUpperCase();
+
+	if (meridiem === "PM" && hour !== 12) hour += 12;
+	if (meridiem === "AM" && hour === 12) hour = 0;
+
+	const d = new Date(
+		parseInt(dateParts[1]!, 10),
+		parseInt(dateParts[2]!, 10) - 1,
+		parseInt(dateParts[3]!, 10),
+		hour,
+		minute,
+	);
+	return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Format a Date as "YYYY-MM-DD HH:mm:ss±HH:MM" in the given timezone.
  * Uses Intl.DateTimeFormat to extract parts and compute UTC offset.
  */
