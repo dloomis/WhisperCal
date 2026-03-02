@@ -20,17 +20,29 @@ export class GraphApiProvider implements CalendarProvider {
 		const endDateTime = getDayEndUTC(date, timezone);
 
 		const graphBase = this.auth.getGraphBaseUrl();
-		const url = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type`;
+		const baseUrl = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$top=50&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type`;
 
-		const response = await requestUrl({
-			url,
-			method: "GET",
-			headers: {Authorization: `Bearer ${token}`},
-		});
+		const allEvents: GraphEvent[] = [];
+		let url: string | null = baseUrl;
 
-		const data = response.json as { value?: GraphEvent[] } | GraphEvent[];
-		const events = Array.isArray(data) ? data : (data.value ?? []);
-		return events.map(parseGraphEvent);
+		while (url) {
+			const response = await requestUrl({
+				url,
+				method: "GET",
+				headers: {Authorization: `Bearer ${token}`},
+			});
+
+			const data = response.json as { value?: GraphEvent[]; "@odata.nextLink"?: string } | GraphEvent[];
+			if (Array.isArray(data)) {
+				allEvents.push(...data);
+				url = null;
+			} else {
+				allEvents.push(...(data.value ?? []));
+				url = data["@odata.nextLink"] ?? null;
+			}
+		}
+
+		return allEvents.map(parseGraphEvent);
 	}
 }
 
