@@ -67,7 +67,7 @@ Do not block on this — continue regardless of current model.
 
 ## Step 5: Calendar Attendees
 
-Determine the calendar attendee source using the following decision tree (mirrors Processor 20 Step 2a-ii):
+Determine the calendar attendee source using the following decision tree:
 
 ### Case A: `calendar_event: none` in stub
 Skip all calendar lookups. Auto-tag will proceed without calendar context (ad-hoc/unscheduled meeting). Note this to the user.
@@ -80,25 +80,17 @@ Use the existing attendee list directly. No m365 queries needed.
 Skip to Step 6.
 
 ### Case C: No `calendar_event` field in stub (lookup not yet performed)
-Query both Exchange calendars via the **m365 skill**. Build a time window from the session's `Date` field:
+Query the user's calendar via the **m365 skill**. Build a time window from the session's `Date` field:
 - Window start: session start − 30 minutes
 - Window end: session start + `duration` seconds (or + 60 min if duration is unknown)
 
 ```bash
-# Primary calendar — with attendees
 m365 request \
   --url "https://graph.microsoft.com/v1.0/me/calendarView?\$select=subject,start,end,organizer,attendees&startDateTime=<window_start>&endDateTime=<window_end>&\$filter=isCancelled eq false&\$top=20" \
-  --method get
-
-# C2E Leadership calendar — with attendees
-m365 request \
-  --url "https://graph.microsoft.com/v1.0/me/calendars/AAMkADY1ZmI2M2I2LWNmNGQtNGNmMC1iMDU4LTFkMDk0MzY3NjA5MQBGAAAAAABADBoib4-MQZGBz1VcA3sYBwCOC3ekpVNATI-X10SFXCXkAAAAAAEGAACOC3ekpVNATI-X10SFXCXkAANl0f4nAAA=/calendarView?\$select=subject,start,end,organizer,attendees&startDateTime=<window_start>&endDateTime=<window_end>&\$filter=isCancelled eq false&\$top=20" \
   --method get
 ```
 
 **Date format:** `startDateTime=2026-03-02T08:30:00` (local time, no Z suffix).
-
-Run both calendar calls in parallel.
 
 **Match the session to a calendar event:**
 1. Strip date prefix from session title (first 11 chars: `YYYY-MM-DD `)
@@ -120,8 +112,8 @@ Format as:
 Calendar Attendees (from event: '<matched event title>'):
 | Name | Email | People Note | Nickname |
 |------|-------|-------------|----------|
-| Alexander Hernandez | alexander.hernandez.ctr@... | [[Alex Hernandez]] | Alex |
-| JODICE, LAUREL A Lt Col | laurel.a.jodice@... | (none) | - |
+| Jane Smith | jane.smith@example.com | [[Jane Smith]] | Jane |
+| John Doe | john.doe@example.com | (none) | - |
 ```
 
 **Graceful degradation:** If m365 fails or returns no events, log the error, note "Proceeding without calendar context," and continue.
@@ -138,7 +130,7 @@ Build a People context table:
 ```
 | Full Name | Nickname | Derived Names | Source |
 |-----------|----------|---------------|--------|
-| Alexander Hernandez | Alex | Alex H | People note |
+| Jane Smith | Jane | Jane S | People note |
 ```
 
 Skip gracefully if no matches — auto-tag still works via global roster and vocatives from within the macwhisper skill.

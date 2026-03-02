@@ -1,6 +1,7 @@
-import {EventRef, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf} from "obsidian";
+import {EventRef, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf, normalizePath} from "obsidian";
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
+import speakerAutoTagPrompt from "../prompts/Speaker Auto-Tag Prompt.md";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
@@ -27,6 +28,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		await this.ensurePromptFile();
 
 		this.auth = new MsalAuth(
 			{
@@ -131,6 +133,17 @@ export default class WhisperCalPlugin extends Plugin {
 		this.auth.cancelSignIn();
 		this.removeTitleBarMicButton();
 		this.removeTagSpeakersButton();
+	}
+
+	private async ensurePromptFile(): Promise<void> {
+		const filePath = this.settings.speakerTaggingPromptPath;
+		if (!filePath) return;
+		const normalized = normalizePath(filePath);
+		const exists = await this.app.vault.adapter.exists(normalized);
+		if (exists) return;
+		const dir = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : null;
+		if (dir) await this.app.vault.adapter.mkdir(dir);
+		await this.app.vault.adapter.write(normalized, speakerAutoTagPrompt);
 	}
 
 	async loadSettings() {
