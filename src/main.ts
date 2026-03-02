@@ -163,7 +163,21 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!view?.file) return;
 
 		const file = view.file;
-		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const cache = this.app.metadataCache.getFileCache(file);
+
+		// File not yet indexed (e.g. just created) — retry when cache is ready
+		if (!cache) {
+			const ref = this.app.metadataCache.on("changed", (changedFile) => {
+				if (changedFile.path === file.path) {
+					this.app.metadataCache.offref(ref);
+					this.updateTitleBarMicButton();
+				}
+			});
+			window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
+			return;
+		}
+
+		const fm = cache.frontmatter;
 		if (!fm?.["calendar_event_id"]) return;
 
 		const alreadyLinked = !!fm["macwhisper_session_id"];
