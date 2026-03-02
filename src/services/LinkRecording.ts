@@ -51,7 +51,13 @@ export async function linkRecording(opts: {
 	}
 
 	// Phase 1: Write session ID to note frontmatter (fast)
-	await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
+	try {
+		await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
+	} catch (err) {
+		console.error("[WhisperCal] Failed to update frontmatter — YAML may be malformed:", err);
+		new Notice("Failed to update note frontmatter (check for invalid YAML)");
+		return false;
+	}
 	new Notice("Recording linked to note");
 
 	// Phase 2: Create transcript file in background (fire-and-forget)

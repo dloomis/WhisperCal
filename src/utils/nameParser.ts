@@ -30,8 +30,8 @@ export function parseDisplayName(name: string, email: string): string {
 		return parts.map(smartCase).join(" ");
 	}
 
-	// Strip bracket suffixes like "[USA]" or "[USA"
-	const cleaned = name.replace(/\s*\[.*$/, "").trim();
+	// Strip bracket suffixes like "[USA]" or "[USA" and stray quotes
+	const cleaned = name.replace(/\s*\[.*$/, "").replace(/"/g, "").trim();
 	if (!cleaned) return name;
 
 	if (cleaned.includes(",")) {
