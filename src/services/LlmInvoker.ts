@@ -1,4 +1,5 @@
 import {execFile} from "child_process";
+import {writeFileSync} from "fs";
 import * as os from "os";
 import * as path from "path";
 
@@ -65,8 +66,13 @@ export function invokeTagSpeakers(opts: LlmInvokerOpts): void {
 	const cmd = `${llmCli}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
 	const shellCmd = `cd ${shellQuote(vaultPath)} && ${cmd}`;
 
-	// Build AppleScript
-	const asCmd = asAppleScriptStr(shellCmd);
+	// Write shellCmd to a temp script to avoid shell-quoting/AppleScript quoting conflicts.
+	// (Shell's '\'' escaping inside AppleScript double-quoted strings causes a syntax error.)
+	const tmpScript = path.join(os.tmpdir(), `whisper-cal-${Date.now()}.sh`);
+	writeFileSync(tmpScript, `#!/bin/bash\n${shellCmd}\n`, {mode: 0o755});
+
+	// The temp path has no special characters, so embedding it in AppleScript is safe.
+	const asCmd = asAppleScriptStr(`bash ${shellQuote(tmpScript)}`);
 	let applescript: string;
 	if (terminalApp === "iTerm2") {
 		applescript = `tell application "iTerm2"
