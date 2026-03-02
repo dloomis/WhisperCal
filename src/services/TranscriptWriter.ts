@@ -64,9 +64,9 @@ function buildFrontmatter(opts: {
 
 	const lines = [
 		"---",
-		`Date: ${dateStr}`,
-		"Type: transcript",
-		`session_id: "${sessionId}"`,
+		`date: ${dateStr}`,
+		"tags: [transcript]",
+		`macwhisper_session_id: "${sessionId}"`,
 		`duration: ${duration}`,
 		`meeting_note: "[[${noteBasename}]]"`,
 		`speaker_count: ${speakers.length}`,
@@ -82,9 +82,9 @@ function buildFrontmatter(opts: {
 		}
 	}
 
-	lines.push(`calendar_event: "${calendarEvent}"`);
+	lines.push(`meeting_subject: "${calendarEvent}"`);
 	if (calendarAttendees.length > 0) {
-		lines.push("calendar_attendees:");
+		lines.push("invitees:");
 		for (const name of calendarAttendees) {
 			lines.push(`  - "${name}"`);
 		}

@@ -1,4 +1,4 @@
-import {App, MarkdownView, Notice, TFile, setIcon} from "obsidian";
+import {App, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {formatTime} from "../utils/time";
@@ -122,26 +122,28 @@ export function renderMeetingCard(
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			attr: {"aria-label": "Link MacWhisper recording"},
 		});
-		setIcon(micBtn, "mic");
+
+		// Restore linked state from frontmatter on re-render
+		const notePath = noteCreator.getNotePath(event);
+		const noteFile = app.vault.getAbstractFileByPath(notePath);
+		const alreadyLinked = noteFile instanceof TFile &&
+			!!app.metadataCache.getFileCache(noteFile)?.frontmatter?.["macwhisper_session_id"];
+		if (alreadyLinked) {
+			setIcon(micBtn, "check");
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			micBtn.ariaLabel = "MacWhisper recording linked";
+		} else {
+			setIcon(micBtn, "mic");
+		}
 
 		micBtn.addEventListener("click", () => {
 			micBtn.disabled = true;
 			const handleMic = async () => {
 				try {
-					// Use computed path if the note exists, otherwise fall back
-					// to the most recent editor file (handles renamed notes).
-					let notePath = noteCreator.getNotePath(event);
+					const notePath = noteCreator.getNotePath(event);
 					if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
-						const leaf = app.workspace.getMostRecentLeaf();
-						const file = leaf?.view instanceof MarkdownView
-							? leaf.view.file
-							: null;
-						if (file) {
-							notePath = file.path;
-						} else {
-							new Notice("Open the meeting note first, then link the recording");
-							return;
-						}
+						await noteCreator.createNote(event);
+						updateNoteState();
 					}
 					const isUnscheduled = event.id.startsWith("unscheduled");
 					const linked = await linkRecording({

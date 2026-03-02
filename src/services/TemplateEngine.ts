@@ -9,6 +9,14 @@ import {parseDisplayName} from "../utils/nameParser";
  * NoteCreator.buildNoteContent() output.
  */
 export const DEFAULT_TEMPLATE = `---
+# WhisperCal reserved keys — renaming any of these will break plugin features:
+#   calendar_event_id  (identifies this as a WhisperCal note)
+#   macwhisper_session_id  (links a MacWhisper recording; written on mic-link)
+#   meeting_date + meeting_start  (used to match recordings to the meeting time)
+#   meeting_subject  (display title in the calendar view)
+#   note_created  (fallback timestamp for unscheduled notes)
+#   invitees  (attendee list passed to transcript creation)
+#   transcript  (written back as a link to the transcript file)
 meeting_subject: "{{subject}}"
 meeting_date: {{date}}
 meeting_start: "{{startTime}}"

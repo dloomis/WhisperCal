@@ -125,7 +125,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Note template")
-			.setDesc("Vault file used as a template for meeting note content. Leave empty to use the default template.")
+			.setDesc("Vault file used as a template for meeting note content. Leave empty to use the built-in default. The template file lists which frontmatter keys are reserved and must not be renamed.")
 			.addText(text => {
 				text.setPlaceholder("Templates/WhisperCal Meeting.md")
 					.setValue(this.plugin.settings.noteTemplatePath)
@@ -138,7 +138,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Create default template")
-			.setDesc("Write the default meeting note template to a file in your vault for customization")
+			.setDesc("Write the default meeting note template to a file in your vault. Open it to see which frontmatter keys are reserved before customizing.")
 			.addButton(button => button
 				.setButtonText("Create template file")
 				.onClick(async () => {
