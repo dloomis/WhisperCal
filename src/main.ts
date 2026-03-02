@@ -208,23 +208,25 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		// Prefer note_created (button-press time, close to recording start)
-		// over scheduled meeting_date + meeting_start
-		const noteCreatedStr = fm["note_created"] as string | undefined;
+		// Use the scheduled meeting time (meeting_date + meeting_start) so
+		// recording matching works even when the note is created days later.
+		// Fall back to note_created only for unscheduled meetings where
+		// the note is typically created at recording time.
 		let meetingStart: Date | null = null;
 
-		if (noteCreatedStr) {
-			meetingStart = new Date(noteCreatedStr);
+		const rawDate = fm["meeting_date"];
+		const timeStr = fm["meeting_start"] as string | undefined;
+		if (rawDate && timeStr) {
+			// meeting_date may be a YAML Date object (unquoted) or a string
+			const dateStr = rawDate instanceof Date
+				? rawDate.toISOString().slice(0, 10)
+				: rawDate as string;
+			meetingStart = new Date(`${dateStr} ${timeStr}`);
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
-			const rawDate = fm["meeting_date"];
-			const timeStr = fm["meeting_start"] as string | undefined;
-			if (rawDate && timeStr) {
-				// meeting_date may be a YAML Date object (unquoted) or a string
-				const dateStr = rawDate instanceof Date
-					? rawDate.toISOString().slice(0, 10)
-					: rawDate as string;
-				meetingStart = new Date(`${dateStr} ${timeStr}`);
+			const noteCreatedStr = fm["note_created"] as string | undefined;
+			if (noteCreatedStr) {
+				meetingStart = new Date(noteCreatedStr);
 			}
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
