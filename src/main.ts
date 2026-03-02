@@ -64,7 +64,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (!file) return false;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["whisper_event_id"]) return false;
+				if (!fm?.["calendar_event_id"]) return false;
 				if (checking) return true;
 				void this.handleLinkRecording(file, fm);
 				return true;
@@ -75,7 +75,7 @@ export default class WhisperCalPlugin extends Plugin {
 			this.app.workspace.on("file-menu", (menu, file) => {
 				if (!(file instanceof TFile)) return;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["whisper_event_id"]) return;
+				if (!fm?.["calendar_event_id"]) return;
 				menu.addItem((item) => {
 					item
 						// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -164,7 +164,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		const file = view.file;
 		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-		if (!fm?.["whisper_event_id"]) return;
+		if (!fm?.["calendar_event_id"]) return;
 
 		const alreadyLinked = !!fm["macwhisper_session_id"];
 		const icon = alreadyLinked ? "check" : "mic";
@@ -234,8 +234,8 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		const subject = (fm["whisper_subject"] as string) || file.basename;
-		const isUnscheduled = fm["whisper_event_id"] === "unscheduled";
+		const subject = (fm["meeting_subject"] as string) || file.basename;
+		const isUnscheduled = fm["calendar_event_id"] === "unscheduled";
 
 		// Extract attendee names from frontmatter (stored as wiki links or plain strings)
 		const rawAttendees = Array.isArray(fm["invitees"]) ? fm["invitees"] as string[] : [];

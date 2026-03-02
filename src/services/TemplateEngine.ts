@@ -17,9 +17,7 @@ meeting_location: "{{location}}"
 invitees:
 {{invitees}}
 organizer: "{{organizer}}"
-whisper_event_id: "{{eventId}}"
-whisper_subject: "{{subject}}"
-whisper_date: "{{date}}"
+calendar_event_id: "{{eventId}}"
 note_created: "{{noteCreated}}"
 macwhisper_session_id: ""
 transcript: ""

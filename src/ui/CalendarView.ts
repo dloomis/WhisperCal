@@ -275,7 +275,7 @@ export class CalendarView extends ItemView {
 			if (!fm) continue;
 
 			// Identify unscheduled notes by frontmatter, not filename
-			if (fm["whisper_event_id"] !== "unscheduled") continue;
+			if (fm["calendar_event_id"] !== "unscheduled") continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
 			const meetingStart = fm["meeting_start"] as string | undefined;
