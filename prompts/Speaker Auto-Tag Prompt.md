@@ -67,56 +67,22 @@ Do not block on this — continue regardless of current model.
 
 ## Step 5: Calendar Attendees
 
-Determine the calendar attendee source using the following decision tree:
+All attendee data comes from the transcript stub frontmatter — no external calendar queries are performed.
 
-### Case A: `calendar_event: none` in stub
-Skip all calendar lookups. Auto-tag will proceed without calendar context (ad-hoc/unscheduled meeting). Note this to the user.
+Check the stub for attendee fields in this order:
 
-### Case B: `calendar_attendees` or `invitees` already populated in stub
-Use the existing attendee list directly. No m365 queries needed.
+1. **`invitees`** — WhisperCal stubs use this field (array of plain name strings). Use directly.
+2. **`calendar_attendees`** — standard pipeline field (array of plain name strings). Use directly.
+3. **Neither present, or both empty** — proceed without attendee context. Note this to the user: "No attendee list found in stub — proceeding with speaker audio analysis only."
 
-**WhisperCal stubs** (`tags: [transcript]`): Map `invitees` → calendar attendees (plain strings). No additional lookup needed — WhisperCal integrates calendar data during stub creation.
-
-Skip to Step 6.
-
-### Case C: No `calendar_event` field in stub (lookup not yet performed)
-Query the user's calendar via the **m365 skill**. Build a time window from the session's `Date` field:
-- Window start: session start − 30 minutes
-- Window end: session start + `duration` seconds (or + 60 min if duration is unknown)
-
-```bash
-m365 request \
-  --url "https://graph.microsoft.com/v1.0/me/calendarView?\$select=subject,start,end,organizer,attendees&startDateTime=<window_start>&endDateTime=<window_end>&\$filter=isCancelled eq false&\$top=20" \
-  --method get
+When attendees are available, build a context table for the macwhisper skill:
 ```
-
-**Date format:** `startDateTime=2026-03-02T08:30:00` (local time, no Z suffix).
-
-**Match the session to a calendar event:**
-1. Strip date prefix from session title (first 11 chars: `YYYY-MM-DD `)
-2. Case-insensitive substring match or word overlap between cleaned session title and event subject
-3. If only one event overlaps the time window → accept it
-4. If no title match but time window overlap exists → present choices to user via AskUserQuestion
-5. If no match at all → set `calendar_event: none` in context; proceed without attendees
-
-**Build attendee context table (when match found):**
-1. Extract `attendees` array from Graph API response
-2. Derive names from emails when `name` field is just an email address: split local part on `.` / `_`, drop tokens like `ctr`, `mil`, `us`, `org`, drop numeric suffixes, title-case
-3. Filter out distribution lists and non-person addresses (`*team@*`, `*group.calendar*`, `*-team@*`)
-4. Deduplicate by lowercase name
-5. Cap at 20 attendees
-6. Cross-reference last names against `People/*.md` (Glob `People/*[LastName]*.md`) for `full_name` and `nickname`
-
-Format as:
+Calendar Attendees:
+| Name |
+|------|
+| Jane Smith |
+| John Doe |
 ```
-Calendar Attendees (from event: '<matched event title>'):
-| Name | Email | People Note | Nickname |
-|------|-------|-------------|----------|
-| Jane Smith | jane.smith@example.com | [[Jane Smith]] | Jane |
-| John Doe | john.doe@example.com | (none) | - |
-```
-
-**Graceful degradation:** If m365 fails or returns no events, log the error, note "Proceeding without calendar context," and continue.
 
 ---
 
@@ -189,18 +155,12 @@ After the macwhisper skill confirms DB writes, update the transcript stub frontm
    - Add `confidence: [HIGH/MEDIUM/LOW]` field
    - Add `evidence: "[evidence string from skill output]"` field
 
-2. **Calendar data (Case C only — newly fetched in Step 5):**
-   - If a calendar event was matched: add `calendar_event: "[event title]"` and `calendar_attendees:` list
-   - If no calendar match was found: add `calendar_event: none`
-   - Skip if stub already had `calendar_event` field (Cases A and B)
-
-3. **Confirmed speakers:** Build `confirmed_speakers` list:
+2. **Confirmed speakers:** Build `confirmed_speakers` list:
    - For each resolved speaker (stub: false), search `People/*.md` for a matching filename (Glob `People/*[LastName]*.md`)
    - If found, add `"[[People Note Filename]]"` (use exact filename, not speaker name — they may differ)
    - Speakers with no matching People note are omitted from this list (remain in `speakers[]`)
-   - `calendar_attendees` is NOT modified
 
-4. **Pipeline state:** Set `pipeline_state: tagged`
+3. **Pipeline state:** Set `pipeline_state: tagged`
 
 **Edit strategy:** Make a single Edit call that replaces the relevant frontmatter block. If the speakers array is large, make targeted edits per speaker. Always confirm the edit succeeds before reporting completion.
 
