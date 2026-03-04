@@ -104,7 +104,7 @@ export class MsalAuth {
 			this.setState({
 				status: "signing-in",
 				userCode: deviceCode.user_code,
-				verificationUri: deviceCode.verification_uri,
+				verificationUri: endpoints.deviceLoginUrl,
 			});
 
 			// Step 2: Poll for token

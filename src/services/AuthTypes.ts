@@ -45,7 +45,7 @@ export const CLOUD_ENDPOINTS: Record<CloudInstance, CloudEndpoints> = {
 	USGov: {
 		authority: "https://login.microsoftonline.com",
 		graphBaseUrl: "https://graph.microsoft.com",
-		deviceLoginUrl: "https://microsoft.com/devicelogin",
+		deviceLoginUrl: "https://microsoft.com/deviceloginus",
 	},
 	USGovHigh: {
 		authority: "https://login.microsoftonline.us",
