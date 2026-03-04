@@ -293,6 +293,36 @@
 	height: 16px;
 }
 
+/* Cache status indicator */
+.whisper-cal-status {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 4px 0;
+	margin-bottom: 4px;
+}
+
+.whisper-cal-status-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.whisper-cal-status-connected {
+	background: var(--text-success);
+}
+
+.whisper-cal-status-disconnected {
+	background: var(--text-error);
+}
+
+.whisper-cal-status-text {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
 /* Red dot indicator — note exists but no recording linked */
 .whisper-cal-rec-dot {
 	position: absolute;

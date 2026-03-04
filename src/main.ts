@@ -12,6 +12,7 @@ import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
 import type {CalendarProvider} from "./types";
+import {CachedCalendarProvider} from "./services/CalendarCache";
 
 interface PluginData extends WhisperCalSettings {
 	tokenCache?: TokenCache | null;
@@ -21,6 +22,7 @@ export default class WhisperCalPlugin extends Plugin {
 	settings: WhisperCalSettings;
 	auth: MsalAuth;
 	private provider: CalendarProvider;
+	private cachedProvider: CachedCalendarProvider | null = null;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 	private micButtonEl: HTMLElement | null = null;
 	private tagSpeakersButtonEl: HTMLElement | null = null;
@@ -46,10 +48,22 @@ export default class WhisperCalPlugin extends Plugin {
 		);
 		this.auth.initialize();
 
-		this.provider = createCalendarProvider(this.auth);
+		const upstream = createCalendarProvider(this.auth);
+		this.cachedProvider = new CachedCalendarProvider(
+			this.app,
+			upstream,
+			this.manifest.dir!,
+			this.settings.cacheFutureDays,
+			this.settings.cacheRetentionDays,
+			this.settings.timezone,
+		);
+		await this.cachedProvider.loadCache();
+		this.provider = this.cachedProvider;
+
+		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
 
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider)
+			new CalendarView(leaf, this.settings, this.provider, getCacheStatus)
 		);
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
@@ -135,6 +149,7 @@ export default class WhisperCalPlugin extends Plugin {
 		this.auth.cancelSignIn();
 		this.removeTitleBarMicButton();
 		this.removeTagSpeakersButton();
+		void this.cachedProvider?.flush();
 	}
 
 	private async ensurePromptFile(): Promise<void> {
@@ -171,11 +186,18 @@ export default class WhisperCalPlugin extends Plugin {
 			clientId: this.settings.clientId,
 			cloudInstance: this.settings.cloudInstance,
 		});
+		// Update cache config
+		this.cachedProvider?.updateConfig(
+			this.settings.cacheFutureDays,
+			this.settings.cacheRetentionDays,
+			this.settings.timezone,
+		);
 		// Update existing views with new settings
+		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider);
+				view.updateSettings(this.settings, this.provider, getCacheStatus);
 			}
 		}
 	}

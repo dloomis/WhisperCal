@@ -26,6 +26,8 @@ export interface WhisperCalSettings {
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
+	cacheFutureDays: number;
+	cacheRetentionDays: number;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -47,6 +49,8 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmSkipPermissions: true,
 	llmExtraFlags: "",
 	terminalApp: "Terminal",
+	cacheFutureDays: 5,
+	cacheRetentionDays: 30,
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -295,6 +299,34 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.refreshIntervalMinutes = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Cache future days")
+			.setDesc("Number of upcoming days to pre-fetch for offline access")
+			.addText(text => text
+				.setPlaceholder("5")
+				.setValue(String(this.plugin.settings.cacheFutureDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 0) {
+						this.plugin.settings.cacheFutureDays = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Cache retention (days)")
+			.setDesc("How many days of past calendar data to keep in the local cache")
+			.addText(text => text
+				.setPlaceholder("30")
+				.setValue(String(this.plugin.settings.cacheRetentionDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.cacheRetentionDays = num;
 						await this.plugin.saveSettings();
 					}
 				}));

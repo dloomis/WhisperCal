@@ -2,6 +2,7 @@ import {ItemView, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
+import type {CacheStatus} from "../services/CalendarCache";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
 import {formatDate, formatDisplayDate, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -21,11 +22,14 @@ export class CalendarView extends ItemView {
 	private cardRefreshTimer: number | null = null;
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
+	private statusEl: HTMLElement | null = null;
+	private getCacheStatus: (() => CacheStatus | null) | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
+		getCacheStatus?: () => CacheStatus | null,
 	) {
 		super(leaf);
 		this.settings = settings;
@@ -33,6 +37,7 @@ export class CalendarView extends ItemView {
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
+		this.getCacheStatus = getCacheStatus ?? null;
 	}
 
 	getViewType(): string {
@@ -82,6 +87,9 @@ export class CalendarView extends ItemView {
 		this.addAction("refresh-cw", "Refresh calendar", () => {
 			void this.refresh();
 		});
+
+		// Cache status indicator
+		this.statusEl = root.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
 
 		// Content area
 		this.contentContainer = root.createDiv();
@@ -146,13 +154,17 @@ export class CalendarView extends ItemView {
 		this.renderLoading();
 
 		try {
-			const available = await this.provider.isAvailable();
-			if (!available) {
-				this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
-				return;
-			}
-
 			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
+			if (events.length === 0) {
+				// Check if we're truly disconnected with no cache
+				const status = this.getCacheStatus?.();
+				if (status && !status.connected && status.fetchedAt === null) {
+					this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
+					this.updateStatusIndicator();
+					this.updateTodayButtonVisibility();
+					return;
+				}
+			}
 			this.renderEvents(events);
 		} catch (e) {
 			console.error("[WhisperCal] refresh error:", e);
@@ -163,15 +175,20 @@ export class CalendarView extends ItemView {
 			}
 		}
 
+		this.updateStatusIndicator();
 		this.updateTodayButtonVisibility();
 	}
 
 	updateSettings(
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
+		getCacheStatus?: () => CacheStatus | null,
 	): void {
 		this.settings = settings;
 		this.provider = provider;
+		if (getCacheStatus) {
+			this.getCacheStatus = getCacheStatus;
+		}
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
 		this.lastRefreshTime = 0;
@@ -397,6 +414,44 @@ export class CalendarView extends ItemView {
 		if (!this.todayBtn) return;
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 		this.todayBtn.toggleClass("whisper-cal-hidden", isToday);
+	}
+
+	private updateStatusIndicator(): void {
+		if (!this.statusEl) return;
+		const status = this.getCacheStatus?.();
+		if (!status) {
+			this.statusEl.toggleClass("whisper-cal-hidden", true);
+			return;
+		}
+
+		this.statusEl.empty();
+		this.statusEl.toggleClass("whisper-cal-hidden", false);
+
+		const dot = this.statusEl.createSpan({cls: "whisper-cal-status-dot"});
+		const isConnected = status.connected && status.source === "live";
+		dot.toggleClass("whisper-cal-status-connected", isConnected);
+		dot.toggleClass("whisper-cal-status-disconnected", !isConnected);
+
+		let text: string;
+		if (isConnected && status.fetchedAt) {
+			text = `Updated ${this.formatCacheAge(Date.now() - status.fetchedAt)}`;
+		} else if (!isConnected && status.fetchedAt) {
+			text = `Cached ${this.formatCacheAge(Date.now() - status.fetchedAt)}`;
+		} else {
+			text = "Offline";
+		}
+		this.statusEl.createSpan({cls: "whisper-cal-status-text", text});
+	}
+
+	private formatCacheAge(ms: number): string {
+		const seconds = Math.floor(ms / 1000);
+		if (seconds < 60) return "just now";
+		const minutes = Math.floor(seconds / 60);
+		if (minutes < 60) return `${minutes} min ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours}h ago`;
+		const days = Math.floor(hours / 24);
+		return `${days}d ago`;
 	}
 
 	private startAutoRefresh(): void {
