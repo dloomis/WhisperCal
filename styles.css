@@ -1,3 +1,8 @@
+/* Remove Obsidian's default view-content padding so sticky header is edge-to-edge */
+.workspace-leaf-content[data-type="whisper-cal-calendar-view"] .view-content {
+	padding: 0;
+}
+
 .whisper-cal-container {
 	padding: 0 12px 12px;
 }
@@ -7,7 +12,8 @@
 	top: 0;
 	z-index: 1;
 	background: var(--background-primary);
-	padding: 12px 0 4px;
+	padding: 8px 12px 4px;
+	margin: 0 -12px;
 	border-bottom: 1px solid var(--background-modifier-border);
 	margin-bottom: 12px;
 }
