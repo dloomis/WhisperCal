@@ -12,6 +12,9 @@ export interface LlmInvokerOpts {
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
+	// Optional parameters that skip prompt steps when provided
+	transcriptFolderPath?: string;  // folder name for transcript files
+	peopleFolderPath?: string;      // folder name for People notes
 }
 
 // Escape a string for use in a single-quoted shell argument: replace ' with '\''
@@ -42,6 +45,8 @@ export function invokeTagSpeakers(opts: LlmInvokerOpts): void {
 		llmSkipPermissions,
 		llmExtraFlags,
 		terminalApp,
+		transcriptFolderPath,
+		peopleFolderPath,
 	} = opts;
 
 	// Resolve prompt path to absolute
@@ -54,9 +59,15 @@ export function invokeTagSpeakers(opts: LlmInvokerOpts): void {
 		resolvedPromptPath = path.join(vaultPath, promptPath);
 	}
 
-	// Build trigger string
-	const micPart = microphoneUser ? ` Microphone user: ${microphoneUser}.` : "";
-	const trigger = `Follow the instructions in '${resolvedPromptPath}'. Transcript: ${transcriptPath}.${micPart}`;
+	// Build trigger string with required and optional parameters
+	const parts: string[] = [
+		`Follow the instructions in '${resolvedPromptPath}'.`,
+		`Transcript: ${transcriptPath}.`,
+	];
+	if (microphoneUser) parts.push(`Microphone user: ${microphoneUser}.`);
+	if (transcriptFolderPath) parts.push(`Transcripts Folder: ${transcriptFolderPath}.`);
+	if (peopleFolderPath) parts.push(`People Folder: ${peopleFolderPath}.`);
+	const trigger = parts.join(" ");
 
 	// Build CLI flags and command
 	const flags = [

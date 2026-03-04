@@ -368,6 +368,7 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
 			return;
 		}
+
 		// basePath is undocumented but stable on desktop — no Vault API alternative
 		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
@@ -380,6 +381,8 @@ export default class WhisperCalPlugin extends Plugin {
 			llmExtraFlags: this.settings.llmExtraFlags,
 			llmSkipPermissions: this.settings.llmSkipPermissions,
 			terminalApp: this.settings.terminalApp,
+			transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
+			peopleFolderPath: this.settings.peopleFolderPath || undefined,
 		});
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Opening Claude Code for speaker tagging — this may take several minutes");
