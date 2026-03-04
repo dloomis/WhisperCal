@@ -70,6 +70,11 @@ export default class WhisperCalPlugin extends Plugin {
 			void this.activateView();
 		});
 
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+		this.addRibbonIcon("mic", "Open MacWhisper", () => {
+			window.open("macwhisper://reopenWindow");
+		});
+
 		this.addCommand({
 			id: COMMAND_OPEN_CALENDAR,
 			name: "Open calendar view",
