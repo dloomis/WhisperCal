@@ -39,6 +39,7 @@ export default class WhisperCalPlugin extends Plugin {
 				tenantId: this.settings.tenantId,
 				clientId: this.settings.clientId,
 				cloudInstance: this.settings.cloudInstance,
+				deviceLoginUrl: this.settings.deviceLoginUrl,
 			},
 			{
 				loadTokenCache: () => this.loadTokenCache(),
@@ -190,6 +191,7 @@ export default class WhisperCalPlugin extends Plugin {
 			tenantId: this.settings.tenantId,
 			clientId: this.settings.clientId,
 			cloudInstance: this.settings.cloudInstance,
+			deviceLoginUrl: this.settings.deviceLoginUrl,
 		});
 		// Update cache config
 		this.cachedProvider?.updateConfig(

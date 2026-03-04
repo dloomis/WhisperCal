@@ -1,7 +1,7 @@
 import {App, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
-import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
+import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
@@ -28,6 +28,7 @@ export interface WhisperCalSettings {
 	terminalApp: "Terminal" | "iTerm2";
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
+	deviceLoginUrl: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	terminalApp: "Terminal",
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
+	deviceLoginUrl: "",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -362,6 +364,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		let deviceLoginUrlInput: import("obsidian").TextComponent | null = null;
+
 		new Setting(containerEl)
 			.setName("Cloud instance")
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -372,9 +376,32 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}
 				dropdown.setValue(this.plugin.settings.cloudInstance);
 				dropdown.onChange(async (value) => {
+					const oldDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
 					this.plugin.settings.cloudInstance = value as CloudInstance;
+					const newDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
+					// If the URL field is empty or matches the old cloud's default, clear it
+					const current = this.plugin.settings.deviceLoginUrl.trim();
+					if (!current || current === oldDefault) {
+						this.plugin.settings.deviceLoginUrl = "";
+						deviceLoginUrlInput?.setValue("");
+					}
+					deviceLoginUrlInput?.setPlaceholder(newDefault);
 					await this.plugin.saveSettings();
 				});
+			});
+
+		new Setting(containerEl)
+			.setName("Device login URL")
+			.setDesc("Override the device code login URL. Leave empty to use the cloud default.")
+			.addText(text => {
+				deviceLoginUrlInput = text;
+				const defaultUrl = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
+				text.setPlaceholder(defaultUrl)
+					.setValue(this.plugin.settings.deviceLoginUrl)
+					.onChange(async (value) => {
+						this.plugin.settings.deviceLoginUrl = value.trim();
+						await this.plugin.saveSettings();
+					});
 			});
 
 		// Auth status + actions

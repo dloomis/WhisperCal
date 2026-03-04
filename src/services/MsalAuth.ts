@@ -15,6 +15,7 @@ export interface MsalAuthConfig {
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
+	deviceLoginUrl?: string;
 }
 
 export interface MsalAuthCallbacks {
@@ -101,10 +102,11 @@ export class MsalAuth {
 			});
 			const deviceCode = dcResponse.json as DeviceCodeResponse;
 
+			const loginUrl = this.config.deviceLoginUrl?.trim() || endpoints.deviceLoginUrl;
 			this.setState({
 				status: "signing-in",
 				userCode: deviceCode.user_code,
-				verificationUri: endpoints.deviceLoginUrl,
+				verificationUri: loginUrl,
 			});
 
 			// Step 2: Poll for token
