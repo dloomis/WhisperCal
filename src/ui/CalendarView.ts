@@ -59,8 +59,11 @@ export class CalendarView extends ItemView {
 
 		const root = container.createDiv({cls: "whisper-cal-container"});
 
+		// Sticky header — date nav + status pinned while events scroll
+		const stickyHeader = root.createDiv({cls: "whisper-cal-sticky-header"});
+
 		// Header
-		const header = root.createDiv({cls: "whisper-cal-header"});
+		const header = stickyHeader.createDiv({cls: "whisper-cal-header"});
 
 		// Navigation row: [<] date [>]
 		const nav = header.createDiv({cls: "whisper-cal-nav"});
@@ -89,7 +92,7 @@ export class CalendarView extends ItemView {
 		});
 
 		// Cache status indicator
-		this.statusEl = root.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
+		this.statusEl = stickyHeader.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
 
 		// Content area
 		this.contentContainer = root.createDiv();

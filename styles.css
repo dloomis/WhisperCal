@@ -1,9 +1,19 @@
 .whisper-cal-container {
-	padding: 12px;
+	padding: 0 12px 12px;
+}
+
+.whisper-cal-sticky-header {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--background-primary);
+	padding: 12px 0 4px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: 12px;
 }
 
 .whisper-cal-header {
-	margin-bottom: 16px;
+	margin-bottom: 0;
 }
 
 .whisper-cal-nav {
