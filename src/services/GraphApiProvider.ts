@@ -70,5 +70,6 @@ function parseGraphEvent(event: GraphEvent): CalendarEvent {
 		attendees,
 		organizerName: event.organizer?.emailAddress?.name ?? "",
 		organizerEmail: event.organizer?.emailAddress?.address ?? "",
+		isRecurring: event.type !== "singleInstance",
 	};
 }

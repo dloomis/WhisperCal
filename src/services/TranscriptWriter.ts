@@ -60,8 +60,9 @@ function buildFrontmatter(opts: {
 	timezone: string;
 	calendarEvent: string;
 	calendarAttendees: string[];
+	isRecurring: boolean;
 }): string {
-	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees} = opts;
+	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 	const dateStr = formatDateTimeWithOffset(recordingStart, timezone);
@@ -88,6 +89,7 @@ function buildFrontmatter(opts: {
 	}
 
 	lines.push(`meeting_subject: "${yamlEscape(calendarEvent)}"`);
+	lines.push(`is_recurring: ${isRecurring}`);
 	if (calendarAttendees.length > 0) {
 		lines.push("invitees:");
 		for (const name of calendarAttendees) {
@@ -175,8 +177,9 @@ export async function createTranscriptFile(opts: {
 	timezone: string;
 	calendarEvent: string;
 	calendarAttendees: string[];
+	isRecurring: boolean;
 }): Promise<string | null> {
-	const {app, notePath, sessionId, transcriptFolderPath, recordingStart, timezone, calendarEvent, calendarAttendees} = opts;
+	const {app, notePath, sessionId, transcriptFolderPath, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
 	const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
 
@@ -201,6 +204,7 @@ export async function createTranscriptFile(opts: {
 		timezone,
 		calendarEvent,
 		calendarAttendees,
+		isRecurring,
 	});
 
 	const body = buildTranscriptBody(data);
@@ -208,9 +212,10 @@ export async function createTranscriptFile(opts: {
 
 	await app.vault.create(transcriptPath, content);
 
-	// Update meeting note frontmatter with link to transcript
+	// Update meeting note frontmatter with link to transcript and initial pipeline state
 	const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 	await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
+	await updateFrontmatter(app, notePath, "pipeline_state", "titled");
 
 	return transcriptPath;
 }

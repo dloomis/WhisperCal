@@ -8,17 +8,53 @@ export interface MeetingCardHandle {
 	el: HTMLElement;
 }
 
+export interface MeetingCardOpts {
+	event: CalendarEvent;
+	timezone: string;
+	noteCreator: NoteCreator;
+	app: App;
+	isActive?: boolean;
+	transcriptFolderPath?: string;
+	recordingWindowMinutes?: number;
+	onNoteCreated?: () => void;
+	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
+}
+
+type PillState = "incomplete" | "complete" | "disabled";
+
+function resolveTranscriptFile(app: App, notePath: string, fm: Record<string, unknown>): TFile | null {
+	const raw = fm["transcript"];
+	if (!raw || typeof raw !== "string" || !raw.trim()) return null;
+	const linktext = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+	return app.metadataCache.getFirstLinkpathDest(linktext, notePath);
+}
+
+function renderPill(container: HTMLElement, label: string, state: PillState): HTMLButtonElement {
+	const btn = container.createEl("button", {
+		cls: `whisper-cal-pill whisper-cal-pill-${state}`,
+	});
+	if (state === "complete") {
+		btn.createSpan({cls: "whisper-cal-pill-check", text: "✓"});
+	}
+	btn.createSpan({text: label});
+	if (state === "disabled") {
+		btn.disabled = true;
+	}
+	return btn;
+}
+
 export function renderMeetingCard(
 	container: HTMLElement,
-	event: CalendarEvent,
-	timezone: string,
-	noteCreator: NoteCreator,
-	app: App,
-	isActive = false,
-	transcriptFolderPath = "Transcripts",
-	recordingWindowMinutes = 10,
-	onNoteCreated?: () => void,
+	opts: MeetingCardOpts,
 ): MeetingCardHandle {
+	const {
+		event, timezone, noteCreator, app,
+		transcriptFolderPath = "Transcripts",
+		recordingWindowMinutes = 10,
+		onNoteCreated, onTagSpeakers,
+	} = opts;
+	const isActive = opts.isActive ?? false;
+
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
 	const card = container.createDiv({cls});
 
@@ -74,33 +110,36 @@ export function renderMeetingCard(
 		attEl.createSpan({text: String(event.attendeeCount)});
 	}
 
-	// Actions row: note + mic icons
+	// Actions row: workflow pills
 	const actions = card.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Mic button ref — hoisted so note click handler can add/check the dot
-	let micBtn: HTMLButtonElement | undefined;
+	// Read meeting note frontmatter for state detection
+	const notePath = noteCreator.getNotePath(event);
+	const noteAbstract = app.vault.getAbstractFileByPath(notePath);
+	const noteFile = noteAbstract instanceof TFile ? noteAbstract : null;
+	const noteExists = noteFile !== null;
+	const noteFm: Record<string, unknown> = noteFile
+		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
+		: {};
 
-	// Note icon — create or open note
-	const noteBtn = actions.createEl("button", {
-		cls: "whisper-cal-card-rec-trigger clickable-icon",
-	});
+	// Compute pill states
+	const noteState: PillState = noteExists ? "complete" : "incomplete";
 
-	const updateNoteState = () => {
-		if (noteCreator.noteExists(event)) {
-			setIcon(noteBtn, "file-text");
-			noteBtn.ariaLabel = "Open note";
-			noteBtn.removeClass("whisper-cal-card-note-missing");
-		} else {
-			setIcon(noteBtn, "file-plus");
-			noteBtn.ariaLabel = "Create note";
-			noteBtn.addClass("whisper-cal-card-note-missing");
-		}
-	};
+	const transcriptState: PillState = !noteExists
+		? "disabled"
+		: noteFm["transcript"] ? "complete" : "incomplete";
 
-	updateNoteState();
+	const pipelineState = noteFm["pipeline_state"] as string | undefined;
+	const speakersState: PillState = transcriptState !== "complete"
+		? "disabled"
+		: (pipelineState && pipelineState !== "titled") ? "complete" : "incomplete";
 
-	noteBtn.addEventListener("click", () => {
-		noteBtn.disabled = true;
+	const summaryState: PillState = "disabled";
+
+	// Note pill
+	const notePill = renderPill(actions, "Note", noteState);
+	notePill.addEventListener("click", () => {
+		notePill.disabled = true;
 		const handleClick = async () => {
 			try {
 				if (noteCreator.noteExists(event)) {
@@ -112,55 +151,37 @@ export function renderMeetingCard(
 						onNoteCreated();
 					}
 				}
-				updateNoteState();
-				// Show red dot on mic if note now exists but recording not linked
-				if (micBtn && !micBtn.disabled && noteCreator.noteExists(event)
-					&& !micBtn.querySelector(".whisper-cal-rec-dot")) {
-					micBtn.createSpan({cls: "whisper-cal-rec-dot"});
-				}
 			} finally {
-				noteBtn.disabled = false;
+				notePill.disabled = false;
 			}
 		};
 		void handleClick();
 	});
 
-	// Mic icon — link MacWhisper recording to note
-	// Hidden on the top-level unscheduled card (no meeting to match)
-	if (event.id !== "unscheduled") {
-		const btn = micBtn = actions.createEl("button", {
-			cls: "whisper-cal-card-rec-trigger clickable-icon",
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			attr: {"aria-label": "Link MacWhisper recording"},
-		});
+	// For the top-level unscheduled placeholder, only show the Note pill
+	if (event.id === "unscheduled") {
+		return {el: card};
+	}
 
-		// Restore linked state from frontmatter on re-render
-		const notePath = noteCreator.getNotePath(event);
-		const noteFile = app.vault.getAbstractFileByPath(notePath);
-		const alreadyLinked = noteFile instanceof TFile &&
-			!!app.metadataCache.getFileCache(noteFile)?.frontmatter?.["macwhisper_session_id"];
-		if (alreadyLinked) {
-			setIcon(btn, "check");
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			btn.ariaLabel = "MacWhisper recording linked";
-			btn.disabled = true;
-		} else {
-			setIcon(btn, "mic");
-			// Red dot if note exists but recording not yet linked
-			if (noteCreator.noteExists(event)) {
-				btn.createSpan({cls: "whisper-cal-rec-dot"});
+	// Transcript pill
+	const transcriptPill = renderPill(actions, "Transcript", transcriptState);
+	if (transcriptState !== "disabled") {
+		transcriptPill.addEventListener("click", () => {
+			if (transcriptState === "complete") {
+				// Open transcript file
+				const tf = resolveTranscriptFile(app, notePath, noteFm);
+				if (tf) {
+					void app.workspace.openLinkText(tf.path, "", false);
+				}
+				return;
 			}
-		}
-
-		btn.addEventListener("click", () => {
-			btn.disabled = true;
+			// Link recording (create note first if needed)
+			transcriptPill.disabled = true;
 			const handleMic = async () => {
 				let linked = false;
 				try {
-					const notePath = noteCreator.getNotePath(event);
 					if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 						await noteCreator.createNote(event);
-						updateNoteState();
 					}
 					const isUnscheduled = event.id.startsWith("unscheduled");
 					linked = await linkRecording({
@@ -171,20 +192,37 @@ export function renderMeetingCard(
 						timezone,
 						transcriptFolderPath,
 						attendees: event.attendees,
+						isRecurring: event.isRecurring,
 						windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
 					});
-					if (linked) {
-						setIcon(btn, "check");
-						// eslint-disable-next-line obsidianmd/ui/sentence-case
-						btn.ariaLabel = "MacWhisper recording linked";
-					}
 				} finally {
-					if (!linked) btn.disabled = false;
+					if (!linked) transcriptPill.disabled = false;
 				}
 			};
 			void handleMic();
 		});
 	}
+
+	// Speakers pill
+	const speakersPill = renderPill(actions, "Speakers", speakersState);
+	if (speakersState === "incomplete" && onTagSpeakers) {
+		speakersPill.addEventListener("click", () => {
+			const tf = resolveTranscriptFile(app, notePath, noteFm);
+			if (!tf) return;
+			const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
+			onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
+		});
+	} else if (speakersState === "complete") {
+		speakersPill.addEventListener("click", () => {
+			const tf = resolveTranscriptFile(app, notePath, noteFm);
+			if (tf) {
+				void app.workspace.openLinkText(tf.path, "", false);
+			}
+		});
+	}
+
+	// Summary pill (always disabled)
+	renderPill(actions, "Summary", summaryState);
 
 	return {el: card};
 }

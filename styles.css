@@ -131,6 +131,7 @@
 .whisper-cal-card-actions {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 4px;
 	margin-top: 6px;
 }
@@ -163,10 +164,6 @@
 	height: 14px;
 }
 
-/* Note icon — muted when note doesn't exist yet */
-.whisper-cal-card-note-missing {
-	opacity: 0.4;
-}
 
 .whisper-cal-btn {
 	display: inline-flex;
@@ -283,31 +280,6 @@
 	background: var(--background-modifier-border-hover);
 }
 
-/* Card mic icon — recording trigger */
-.whisper-cal-card-rec-trigger {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 28px;
-	border-radius: 50%;
-	border: none;
-	background: none;
-	color: var(--text-muted);
-	cursor: pointer;
-	position: relative;
-	padding: 0;
-}
-
-.whisper-cal-card-rec-trigger:hover {
-	color: var(--text-normal);
-	background: var(--background-modifier-hover);
-}
-
-.whisper-cal-card-rec-trigger svg {
-	width: 16px;
-	height: 16px;
-}
 
 /* Cache status indicator */
 .whisper-cal-status {
@@ -339,14 +311,46 @@
 	color: var(--text-faint);
 }
 
-/* Red dot indicator — note exists but no recording linked */
-.whisper-cal-rec-dot {
-	position: absolute;
-	top: 2px;
-	right: 2px;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--text-error);
+/* Workflow pill buttons */
+.whisper-cal-pill {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 3px;
+	flex: 1 1 0;
+	padding: 2px 8px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	border: 1px solid var(--background-modifier-border);
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	line-height: 1.4;
+	white-space: nowrap;
+}
+
+.whisper-cal-pill:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.whisper-cal-pill-complete {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+}
+
+.whisper-cal-pill-complete:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+}
+
+.whisper-cal-pill-check {
+	font-size: 0.85em;
+	font-weight: var(--font-semibold);
+}
+
+.whisper-cal-pill-disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
 }
 

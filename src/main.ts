@@ -8,6 +8,7 @@ import {createCalendarProvider} from "./services/CalendarProvider";
 import {linkRecording} from "./services/LinkRecording";
 import {invokeTagSpeakers} from "./services/LlmInvoker";
 import {parseDateTime} from "./utils/time";
+import {updateFrontmatter} from "./utils/frontmatter";
 import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
@@ -63,8 +64,34 @@ export default class WhisperCalPlugin extends Plugin {
 
 		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
 
+		const onTagSpeakers = (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
+			this.doTagSpeakers(transcriptFile, transcriptFm);
+		};
+
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider, getCacheStatus)
+			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, onTagSpeakers)
+		);
+
+		// Mirror pipeline_state from transcript files back to their meeting notes
+		this.registerEvent(
+			this.app.metadataCache.on("changed", (file) => {
+				if (!file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (!fm) return;
+				const pipelineState = fm["pipeline_state"] as string | undefined;
+				if (!pipelineState) return;
+				// Resolve meeting note from transcript's meeting_note backlink
+				const meetingNoteLink = fm["meeting_note"] as string | undefined;
+				if (!meetingNoteLink || typeof meetingNoteLink !== "string") return;
+				const linktext = meetingNoteLink.replace(/^\[\[/, "").replace(/\]\]$/, "");
+				const meetingFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
+				if (!meetingFile) return;
+				// Check if meeting note already has this pipeline_state
+				const meetingFm = this.app.metadataCache.getFileCache(meetingFile)?.frontmatter;
+				if (meetingFm?.["pipeline_state"] === pipelineState) return;
+				// Mirror it
+				void updateFrontmatter(this.app, meetingFile.path, "pipeline_state", pipelineState);
+			}),
 		);
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
@@ -201,10 +228,13 @@ export default class WhisperCalPlugin extends Plugin {
 		);
 		// Update existing views with new settings
 		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
+		const onTagSpeakers = (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
+			this.doTagSpeakers(transcriptFile, transcriptFm);
+		};
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider, getCacheStatus);
+				view.updateSettings(this.settings, this.provider, getCacheStatus, onTagSpeakers);
 			}
 		}
 	}
@@ -333,7 +363,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Determine button state from pipeline_state
 		const pipelineState = transcriptFm["pipeline_state"] as string | undefined;
 		const isTagged = !!pipelineState && pipelineState !== "titled";
-		const icon = isTagged ? "check" : "users";
+		const icon = isTagged ? "user-check" : "users";
 		const label = isTagged ? "Speakers tagged" : "Tag speakers";
 
 		this.tagSpeakersButtonEl = view.addAction(icon, label, () => {
@@ -498,6 +528,8 @@ export default class WhisperCalPlugin extends Plugin {
 			return {name, email: ""};
 		});
 
+		const isRecurring = fm["is_recurring"] === true;
+
 		await linkRecording({
 			app: this.app,
 			meetingStart,
@@ -506,6 +538,7 @@ export default class WhisperCalPlugin extends Plugin {
 			timezone: this.settings.timezone,
 			transcriptFolderPath: this.settings.transcriptFolderPath,
 			attendees,
+			isRecurring,
 			windowMinutes: isUnscheduled ? 720 : undefined,
 		});
 	}

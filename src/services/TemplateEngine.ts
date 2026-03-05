@@ -15,6 +15,7 @@ export const DEFAULT_TEMPLATE = `---
 #   meeting_date + meeting_start  (used to match recordings to the meeting time)
 #   meeting_subject  (display title in the calendar view)
 #   note_created  (fallback timestamp for unscheduled notes)
+#   is_recurring  (whether the calendar event is a recurring meeting)
 #   invitees  (attendee list passed to transcript creation)
 #   transcript  (written back as a link to the transcript file)
 meeting_subject: "{{subject}}"
@@ -27,6 +28,7 @@ invitees:
 organizer: "{{organizer}}"
 calendar_event_id: "{{eventId}}"
 note_created: "{{noteCreated}}"
+is_recurring: {{isRecurring}}
 macwhisper_session_id: ""
 transcript: ""
 tags: [meeting]
@@ -101,6 +103,7 @@ export function buildVariableMap(
 		isOnlineMeeting: String(event.isOnlineMeeting),
 		onlineMeetingUrl: event.onlineMeetingUrl || "",
 		isAllDay: String(event.isAllDay),
+		isRecurring: String(event.isRecurring),
 		description: event.body,
 		noteCreated: (noteCreated ?? new Date()).toISOString(),
 	};

@@ -24,12 +24,14 @@ export class CalendarView extends ItemView {
 	private todayBtn: HTMLElement | null = null;
 	private statusEl: HTMLElement | null = null;
 	private getCacheStatus: (() => CacheStatus | null) | null = null;
+	private onTagSpeakers: ((transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void) | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
+		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
 	) {
 		super(leaf);
 		this.settings = settings;
@@ -38,6 +40,7 @@ export class CalendarView extends ItemView {
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
 		this.getCacheStatus = getCacheStatus ?? null;
+		this.onTagSpeakers = onTagSpeakers ?? null;
 	}
 
 	getViewType(): string {
@@ -186,11 +189,15 @@ export class CalendarView extends ItemView {
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
+		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
 	): void {
 		this.settings = settings;
 		this.provider = provider;
 		if (getCacheStatus) {
 			this.getCacheStatus = getCacheStatus;
+		}
+		if (onTagSpeakers) {
+			this.onTagSpeakers = onTagSpeakers;
 		}
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
@@ -244,14 +251,19 @@ export class CalendarView extends ItemView {
 			attendees: [],
 			organizerName: "",
 			organizerEmail: "",
+			isRecurring: false,
 		};
-		renderMeetingCard(
-			this.contentContainer, unscheduledEvent,
-			this.settings.timezone, this.noteCreator, this.app,
-			false, this.settings.transcriptFolderPath,
-			this.settings.recordingWindowMinutes,
+		renderMeetingCard(this.contentContainer, {
+			event: unscheduledEvent,
+			timezone: this.settings.timezone,
+			noteCreator: this.noteCreator,
+			app: this.app,
+			isActive: false,
+			transcriptFolderPath: this.settings.transcriptFolderPath,
+			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			onNoteCreated,
-		);
+			onTagSpeakers: this.onTagSpeakers ?? undefined,
+		});
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
@@ -275,13 +287,17 @@ export class CalendarView extends ItemView {
 				text: "All day",
 			});
 			for (const event of allDay) {
-				renderMeetingCard(
-					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.app,
-					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
-					this.settings.recordingWindowMinutes,
+				renderMeetingCard(this.contentContainer, {
+					event,
+					timezone: this.settings.timezone,
+					noteCreator: this.noteCreator,
+					app: this.app,
+					isActive: activeEventIds.has(event.id),
+					transcriptFolderPath: this.settings.transcriptFolderPath,
+					recordingWindowMinutes: this.settings.recordingWindowMinutes,
 					onNoteCreated,
-				);
+					onTagSpeakers: this.onTagSpeakers ?? undefined,
+				});
 			}
 		}
 
@@ -291,13 +307,17 @@ export class CalendarView extends ItemView {
 				text: isToday ? "Today" : "Scheduled",
 			});
 			for (const event of timed) {
-				renderMeetingCard(
-					this.contentContainer, event, this.settings.timezone,
-					this.noteCreator, this.app,
-					activeEventIds.has(event.id), this.settings.transcriptFolderPath,
-					this.settings.recordingWindowMinutes,
+				renderMeetingCard(this.contentContainer, {
+					event,
+					timezone: this.settings.timezone,
+					noteCreator: this.noteCreator,
+					app: this.app,
+					isActive: activeEventIds.has(event.id),
+					transcriptFolderPath: this.settings.transcriptFolderPath,
+					recordingWindowMinutes: this.settings.recordingWindowMinutes,
 					onNoteCreated,
-				);
+					onTagSpeakers: this.onTagSpeakers ?? undefined,
+				});
 			}
 		}
 	}
@@ -351,6 +371,7 @@ export class CalendarView extends ItemView {
 				attendees: [],
 				organizerName: "",
 				organizerEmail: "",
+				isRecurring: false,
 			});
 		}
 		return results;

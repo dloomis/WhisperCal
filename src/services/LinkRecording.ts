@@ -21,9 +21,10 @@ export async function linkRecording(opts: {
 	timezone: string;
 	transcriptFolderPath: string;
 	attendees: EventAttendee[];
+	isRecurring: boolean;
 	windowMinutes?: number;
 }): Promise<boolean> {
-	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, windowMinutes} = opts;
+	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, windowMinutes} = opts;
 
 	const recordings = await findRecordingsNear(meetingStart, windowMinutes);
 
@@ -86,6 +87,7 @@ export async function linkRecording(opts: {
 				timezone,
 				calendarEvent: subject,
 				calendarAttendees: attendees.map(a => a.name),
+				isRecurring,
 			});
 			if (transcriptPath) {
 				notice.setMessage("Transcript linked to note");
