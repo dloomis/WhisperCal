@@ -423,8 +423,11 @@ export class CalendarView extends ItemView {
 			if (curr instanceof HTMLElement) {
 				curr.addClass(cls);
 				const headerHeight = this.stickyHeaderEl?.offsetHeight ?? 0;
-				curr.style.scrollMarginTop = `${headerHeight}px`;
-				curr.scrollIntoView({block: "start", behavior: "smooth"});
+				const scrollContainer = this.contentEl;
+				const cardRect = curr.getBoundingClientRect();
+				const containerRect = scrollContainer.getBoundingClientRect();
+				const targetScrollTop = scrollContainer.scrollTop + cardRect.top - containerRect.top - headerHeight;
+				scrollContainer.scrollTo({top: targetScrollTop, behavior: "smooth"});
 			}
 		}
 
