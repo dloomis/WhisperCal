@@ -85,6 +85,7 @@
 	padding: 12px;
 	margin-bottom: 8px;
 	border-left: 3px solid var(--interactive-accent);
+	scroll-margin-top: 80px;
 }
 
 .whisper-cal-card-active {
