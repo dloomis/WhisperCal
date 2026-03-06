@@ -25,6 +25,8 @@ export class CalendarView extends ItemView {
 	private statusEl: HTMLElement | null = null;
 	private getCacheStatus: (() => CacheStatus | null) | null = null;
 	private onTagSpeakers: ((transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void) | null = null;
+	private noteOpenPath: string | null = null;
+	private stickyHeaderEl: HTMLElement | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -63,7 +65,8 @@ export class CalendarView extends ItemView {
 		const root = container.createDiv({cls: "whisper-cal-container"});
 
 		// Sticky header — date nav + status pinned while events scroll
-		const stickyHeader = root.createDiv({cls: "whisper-cal-sticky-header"});
+		this.stickyHeaderEl = root.createDiv({cls: "whisper-cal-sticky-header"});
+		const stickyHeader = this.stickyHeaderEl;
 
 		// Header
 		const header = stickyHeader.createDiv({cls: "whisper-cal-header"});
@@ -119,12 +122,17 @@ export class CalendarView extends ItemView {
 			}),
 		);
 
+		// Highlight card when its meeting note is the active file
+		this.registerEvent(this.app.workspace.on("file-open", () => this.onActiveFileChanged()));
+		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.onActiveFileChanged()));
+
 		// Start auto-refresh
 		this.startAutoRefresh();
 	}
 
 	async onClose(): Promise<void> {
 		this.stopAutoRefresh();
+		this.noteOpenPath = null;
 		if (this.cardRefreshTimer !== null) {
 			window.clearTimeout(this.cardRefreshTimer);
 			this.cardRefreshTimer = null;
@@ -320,6 +328,9 @@ export class CalendarView extends ItemView {
 				});
 			}
 		}
+
+		this.noteOpenPath = null;
+		this.updateNoteOpenHighlight();
 	}
 
 	private findUnscheduledNotes(): CalendarEvent[] {
@@ -387,6 +398,68 @@ export class CalendarView extends ItemView {
 			}
 		}
 		return files;
+	}
+
+	private updateNoteOpenHighlight(): void {
+		if (!this.contentContainer) return;
+		const activePath = this.app.workspace.getActiveFile()?.path ?? null;
+		if (activePath === this.noteOpenPath) return;
+
+		const cls = "whisper-cal-card-note-open";
+
+		// Remove from previous
+		if (this.noteOpenPath !== null) {
+			const prev = this.contentContainer.querySelector(
+				`[data-note-path="${CSS.escape(this.noteOpenPath)}"]`,
+			);
+			prev?.removeClass(cls);
+		}
+
+		// Add to current
+		if (activePath !== null) {
+			const curr = this.contentContainer.querySelector(
+				`[data-note-path="${CSS.escape(activePath)}"]`,
+			);
+			if (curr instanceof HTMLElement) {
+				curr.addClass(cls);
+				const headerHeight = this.stickyHeaderEl?.offsetHeight ?? 0;
+				curr.style.scrollMarginTop = `${headerHeight}px`;
+				curr.scrollIntoView({block: "start", behavior: "smooth"});
+			}
+		}
+
+		this.noteOpenPath = activePath;
+	}
+
+	private onActiveFileChanged(): void {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile || !this.contentContainer) {
+			this.updateNoteOpenHighlight();
+			return;
+		}
+
+		// Only navigate for actual meeting notes
+		const fm = this.app.metadataCache.getFileCache(activeFile)?.frontmatter;
+		const meetingDate = fm?.["meeting_date"] as string | undefined;
+		if (!meetingDate || !activeFile.path.startsWith(this.settings.noteFolderPath + "/")) {
+			this.updateNoteOpenHighlight();
+			return;
+		}
+
+		// If viewing a different day, navigate to the note's day
+		const displayedDate = formatDate(this.selectedDate, this.settings.timezone);
+		if (meetingDate !== displayedDate) {
+			const [y, m, d] = meetingDate.split("-").map(Number);
+			if (!isNaN(y!) && !isNaN(m!) && !isNaN(d!)) {
+				this.selectedDate = new Date(y!, m! - 1, d!);
+				this.lastRefreshTime = 0;
+				this.updateHeader();
+				void this.refresh();
+				return; // renderEvents → updateNoteOpenHighlight handles highlight + scroll
+			}
+		}
+
+		this.updateNoteOpenHighlight();
 	}
 
 	private findActiveEventIds(events: CalendarEvent[]): Set<string> {

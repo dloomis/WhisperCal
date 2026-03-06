@@ -57,6 +57,7 @@ export function renderMeetingCard(
 
 	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
 	const card = container.createDiv({cls});
+	card.dataset.notePath = noteCreator.getNotePath(event);
 
 	// Subject row: Meeting Name
 	const subjectRow = card.createDiv({cls: "whisper-cal-card-subject-row"});
