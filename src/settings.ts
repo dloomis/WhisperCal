@@ -21,6 +21,7 @@ export interface WhisperCalSettings {
 	unscheduledSubject: string;
 	recordingWindowMinutes: number;
 	speakerTaggingPromptPath: string;
+	summarizerPromptPath: string;
 	microphoneUser: string;
 	llmCli: string;
 	llmSkipPermissions: boolean;
@@ -45,6 +46,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	unscheduledSubject: "Unscheduled Meeting",
 	recordingWindowMinutes: 10,
 	speakerTaggingPromptPath: "",
+	summarizerPromptPath: "",
 	microphoneUser: "",
 	llmCli: "claude",
 	llmSkipPermissions: true,
@@ -214,6 +216,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
+			.setName("Summarizer prompt")
+			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Meeting Summarizer.md")
+					.setValue(this.plugin.settings.summarizerPromptPath)
+					.onChange(async (value) => {
+						this.plugin.settings.summarizerPromptPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
 			.setName("Microphone user")
 			.setDesc("Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts")
 			.addText(text => text
@@ -258,7 +273,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Terminal app")
-			.setDesc("Terminal application to open for speaker tagging")
+			.setDesc("Terminal application to open for LLM prompts")
 			.addDropdown(dropdown => {
 				dropdown.addOption("Terminal", "Terminal");
 				dropdown.addOption("iTerm2", "iTerm2");

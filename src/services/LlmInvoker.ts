@@ -4,15 +4,16 @@ import * as os from "os";
 import * as path from "path";
 
 export interface LlmInvokerOpts {
-	transcriptPath: string;   // vault-relative path to transcript file
+	targetPath: string;       // vault-relative path to the file the prompt operates on
+	targetLabel?: string;     // label for the target in the trigger string (default: "Transcript")
 	vaultPath: string;        // absolute path to vault root
 	promptPath: string;       // absolute or vault-relative path to the prompt file
-	microphoneUser: string;
 	llmCli: string;
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
 	// Optional parameters that skip prompt steps when provided
+	microphoneUser?: string;
 	transcriptFolderPath?: string;  // folder name for transcript files
 	peopleFolderPath?: string;      // folder name for People notes
 }
@@ -35,9 +36,10 @@ function asAppleScriptStr(s: string): string {
 	return parts.map(p => `"${p}"`).join(' & quote & ');
 }
 
-export function invokeTagSpeakers(opts: LlmInvokerOpts): void {
+export function invokeLlmPrompt(opts: LlmInvokerOpts): void {
 	const {
-		transcriptPath,
+		targetPath,
+		targetLabel = "Transcript",
 		vaultPath,
 		promptPath,
 		microphoneUser,
@@ -62,7 +64,7 @@ export function invokeTagSpeakers(opts: LlmInvokerOpts): void {
 	// Build trigger string with required and optional parameters
 	const parts: string[] = [
 		`Follow the instructions in '${resolvedPromptPath}'.`,
-		`Transcript: ${transcriptPath}.`,
+		`${targetLabel}: ${targetPath}.`,
 	];
 	if (microphoneUser) parts.push(`Microphone user: ${microphoneUser}.`);
 	if (transcriptFolderPath) parts.push(`Transcripts Folder: ${transcriptFolderPath}.`);

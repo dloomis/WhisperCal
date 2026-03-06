@@ -25,6 +25,7 @@ export class CalendarView extends ItemView {
 	private statusEl: HTMLElement | null = null;
 	private getCacheStatus: (() => CacheStatus | null) | null = null;
 	private onTagSpeakers: ((transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void) | null = null;
+	private onSummarize: ((notePath: string) => void) | null = null;
 	private noteOpenPath: string | null = null;
 	private stickyHeaderEl: HTMLElement | null = null;
 
@@ -34,6 +35,7 @@ export class CalendarView extends ItemView {
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
 		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
+		onSummarize?: (notePath: string) => void,
 	) {
 		super(leaf);
 		this.settings = settings;
@@ -43,6 +45,7 @@ export class CalendarView extends ItemView {
 		this.selectedDate = new Date();
 		this.getCacheStatus = getCacheStatus ?? null;
 		this.onTagSpeakers = onTagSpeakers ?? null;
+		this.onSummarize = onSummarize ?? null;
 	}
 
 	getViewType(): string {
@@ -198,6 +201,7 @@ export class CalendarView extends ItemView {
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
 		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
+		onSummarize?: (notePath: string) => void,
 	): void {
 		this.settings = settings;
 		this.provider = provider;
@@ -206,6 +210,9 @@ export class CalendarView extends ItemView {
 		}
 		if (onTagSpeakers) {
 			this.onTagSpeakers = onTagSpeakers;
+		}
+		if (onSummarize) {
+			this.onSummarize = onSummarize;
 		}
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.restartAutoRefresh();
@@ -271,6 +278,7 @@ export class CalendarView extends ItemView {
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			onNoteCreated,
 			onTagSpeakers: this.onTagSpeakers ?? undefined,
+			onSummarize: this.onSummarize ?? undefined,
 		});
 
 		if (events.length === 0) {
@@ -305,6 +313,7 @@ export class CalendarView extends ItemView {
 					recordingWindowMinutes: this.settings.recordingWindowMinutes,
 					onNoteCreated,
 					onTagSpeakers: this.onTagSpeakers ?? undefined,
+					onSummarize: this.onSummarize ?? undefined,
 				});
 			}
 		}
@@ -325,6 +334,7 @@ export class CalendarView extends ItemView {
 					recordingWindowMinutes: this.settings.recordingWindowMinutes,
 					onNoteCreated,
 					onTagSpeakers: this.onTagSpeakers ?? undefined,
+					onSummarize: this.onSummarize ?? undefined,
 				});
 			}
 		}

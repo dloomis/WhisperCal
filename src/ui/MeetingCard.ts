@@ -18,6 +18,7 @@ export interface MeetingCardOpts {
 	recordingWindowMinutes?: number;
 	onNoteCreated?: () => void;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
+	onSummarize?: (notePath: string) => void;
 }
 
 type PillState = "incomplete" | "complete" | "disabled";
@@ -51,7 +52,7 @@ export function renderMeetingCard(
 		event, timezone, noteCreator, app,
 		transcriptFolderPath = "Transcripts",
 		recordingWindowMinutes = 10,
-		onNoteCreated, onTagSpeakers,
+		onNoteCreated, onTagSpeakers, onSummarize,
 	} = opts;
 	const isActive = opts.isActive ?? false;
 
@@ -135,7 +136,9 @@ export function renderMeetingCard(
 		? "disabled"
 		: (pipelineState && pipelineState !== "titled") ? "complete" : "incomplete";
 
-	const summaryState: PillState = "disabled";
+	const summaryState: PillState = speakersState !== "complete"
+		? "disabled"
+		: pipelineState === "summarized" ? "complete" : "incomplete";
 
 	// Note pill
 	const notePill = renderPill(actions, "Note", noteState);
@@ -222,8 +225,17 @@ export function renderMeetingCard(
 		});
 	}
 
-	// Summary pill (always disabled)
-	renderPill(actions, "Summary", summaryState);
+	// Summary pill
+	const summaryPill = renderPill(actions, "Summary", summaryState);
+	if (summaryState === "incomplete" && onSummarize) {
+		summaryPill.addEventListener("click", () => {
+			onSummarize(notePath);
+		});
+	} else if (summaryState === "complete") {
+		summaryPill.addEventListener("click", () => {
+			void app.workspace.openLinkText(notePath, "", false);
+		});
+	}
 
 	return {el: card};
 }

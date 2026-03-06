@@ -2,11 +2,12 @@ import {EventRef, MarkdownView, Notice, Plugin, TFile, normalizePath} from "obsi
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import speakerAutoTagPrompt from "../prompts/Speaker Auto-Tag Prompt.md";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS} from "./constants";
+import summarizerPrompt from "../prompts/Meeting Transcript Summarizer Prompt.md";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
 import {linkRecording} from "./services/LinkRecording";
-import {invokeTagSpeakers} from "./services/LlmInvoker";
+import {invokeLlmPrompt} from "./services/LlmInvoker";
 import {parseDateTime} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
 import {MsalAuth} from "./services/MsalAuth";
@@ -68,8 +69,12 @@ export default class WhisperCalPlugin extends Plugin {
 			this.doTagSpeakers(transcriptFile, transcriptFm);
 		};
 
+		const onSummarize = (notePath: string) => {
+			this.doSummarize(notePath);
+		};
+
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, onTagSpeakers)
+			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, onTagSpeakers, onSummarize)
 		);
 
 		// Mirror pipeline_state from transcript files back to their meeting notes
@@ -175,6 +180,22 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: COMMAND_SUMMARIZE,
+			name: "Summarize meeting transcript",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (!fm?.["calendar_event_id"]) return false;
+				const pipelineState = fm["pipeline_state"] as string | undefined;
+				if (pipelineState !== "tagged") return false;
+				if (checking) return true;
+				this.doSummarize(file.path);
+				return true;
+			},
+		});
+
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
@@ -186,14 +207,18 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private async ensurePromptFile(): Promise<void> {
-		const filePath = this.settings.speakerTaggingPromptPath;
+		await this.writePromptIfMissing(this.settings.speakerTaggingPromptPath, speakerAutoTagPrompt);
+		await this.writePromptIfMissing(this.settings.summarizerPromptPath, summarizerPrompt);
+	}
+
+	private async writePromptIfMissing(filePath: string, content: string): Promise<void> {
 		if (!filePath) return;
 		const normalized = normalizePath(filePath);
 		const exists = await this.app.vault.adapter.exists(normalized);
 		if (exists) return;
 		const dir = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : null;
 		if (dir) await this.app.vault.adapter.mkdir(dir);
-		await this.app.vault.adapter.write(normalized, speakerAutoTagPrompt);
+		await this.app.vault.adapter.write(normalized, content);
 	}
 
 	async loadSettings() {
@@ -231,10 +256,13 @@ export default class WhisperCalPlugin extends Plugin {
 		const onTagSpeakers = (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
 			this.doTagSpeakers(transcriptFile, transcriptFm);
 		};
+		const onSummarize = (notePath: string) => {
+			this.doSummarize(notePath);
+		};
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider, getCacheStatus, onTagSpeakers);
+				view.updateSettings(this.settings, this.provider, getCacheStatus, onTagSpeakers, onSummarize);
 			}
 		}
 	}
@@ -402,8 +430,9 @@ export default class WhisperCalPlugin extends Plugin {
 		// basePath is undocumented but stable on desktop — no Vault API alternative
 		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		invokeTagSpeakers({
-			transcriptPath: transcriptFile.path,
+		invokeLlmPrompt({
+			targetPath: transcriptFile.path,
+			targetLabel: "Transcript",
 			vaultPath,
 			promptPath: this.settings.speakerTaggingPromptPath,
 			microphoneUser: this.settings.microphoneUser,
@@ -416,6 +445,47 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Opening Claude Code for speaker tagging — this may take several minutes");
+	}
+
+	private doSummarize(notePath: string): void {
+		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
+		if (!(noteFile instanceof TFile)) {
+			new Notice("Meeting note not found");
+			return;
+		}
+		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+		if (!fm) {
+			new Notice("Meeting note has no frontmatter");
+			return;
+		}
+		const pipelineState = fm["pipeline_state"] as string | undefined;
+		if (pipelineState === "summarized") {
+			new Notice("This meeting has already been summarized");
+			return;
+		}
+		if (pipelineState !== "tagged") {
+			new Notice("Speakers must be tagged before summarizing");
+			return;
+		}
+		if (!this.settings.summarizerPromptPath) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("Summarizer prompt not configured — set it in WhisperCal settings");
+			return;
+		}
+
+		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
+		invokeLlmPrompt({
+			targetPath: notePath,
+			targetLabel: "Meeting note",
+			vaultPath,
+			promptPath: this.settings.summarizerPromptPath,
+			llmCli: this.settings.llmCli,
+			llmExtraFlags: this.settings.llmExtraFlags,
+			llmSkipPermissions: this.settings.llmSkipPermissions,
+			terminalApp: this.settings.terminalApp,
+		});
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("Opening Claude Code for summarization — this may take several minutes");
 	}
 
 	private updateTitleBarMicButton(): void {
