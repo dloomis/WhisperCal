@@ -72,6 +72,7 @@ export class NoteCreator {
 	private getLeafForFile(file: TFile): WorkspaceLeaf {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			if ((leaf.view as MarkdownView).file?.path === file.path) {
+				this.app.workspace.setActiveLeaf(leaf, {focus: true});
 				return leaf;
 			}
 		}
