@@ -110,6 +110,28 @@ export function renderMeetingCard(
 	// Actions row: workflow pills
 	const actions = card.createDiv({cls: "whisper-cal-card-actions"});
 
+	// Top-level unscheduled placeholder — just a Note pill, no state lookup
+	if (event.id === "unscheduled") {
+		const notePill = renderPill(actions, "Note", "incomplete");
+		notePill.addEventListener("click", () => {
+			notePill.disabled = true;
+			const handleClick = async () => {
+				try {
+					const name = await new NameInputModal(app, {
+						defaultValue: event.subject,
+					}).prompt();
+					if (!name) return;
+					await noteCreator.createNote({...event, subject: name});
+					if (onNoteCreated) onNoteCreated();
+				} finally {
+					notePill.disabled = false;
+				}
+			};
+			void handleClick();
+		});
+		return {el: card};
+	}
+
 	// Read meeting note frontmatter for state detection
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
@@ -148,7 +170,7 @@ export function renderMeetingCard(
 				if (noteCreator.noteExists(event)) {
 					await noteCreator.openExistingNote(event);
 				} else {
-					const isUnscheduled = event.id === "unscheduled";
+					const isUnscheduled = event.id.startsWith("unscheduled");
 					let targetEvent = event;
 					if (isUnscheduled) {
 						const name = await new NameInputModal(app, {
@@ -168,11 +190,6 @@ export function renderMeetingCard(
 		};
 		void handleClick();
 	});
-
-	// For the top-level unscheduled placeholder, only show the Note pill
-	if (event.id === "unscheduled") {
-		return {el: card};
-	}
 
 	// Transcript pill
 	const transcriptPill = renderPill(actions, "Transcript", transcriptState);
