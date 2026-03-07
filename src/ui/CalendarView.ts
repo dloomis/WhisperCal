@@ -1,4 +1,5 @@
 import {ItemView, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
+import {getMarkdownFilesRecursive} from "../utils/vault";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
@@ -348,7 +349,7 @@ export class CalendarView extends ItemView {
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
 		if (!(folder instanceof TFolder)) return [];
 
-		const files = this.getMarkdownFilesRecursive(folder);
+		const files = getMarkdownFilesRecursive(folder);
 		const results: CalendarEvent[] = [];
 		for (const child of files) {
 			if (!child.basename.startsWith(datePrefix)) continue;
@@ -396,18 +397,6 @@ export class CalendarView extends ItemView {
 			});
 		}
 		return results;
-	}
-
-	private getMarkdownFilesRecursive(folder: TFolder): TFile[] {
-		const files: TFile[] = [];
-		for (const child of folder.children) {
-			if (child instanceof TFile && child.extension === "md") {
-				files.push(child);
-			} else if (child instanceof TFolder) {
-				files.push(...this.getMarkdownFilesRecursive(child));
-			}
-		}
-		return files;
 	}
 
 	private updateNoteOpenHighlight(): void {
@@ -458,8 +447,8 @@ export class CalendarView extends ItemView {
 		const displayedDate = formatDate(this.selectedDate, this.settings.timezone);
 		if (meetingDate !== displayedDate) {
 			const [y, m, d] = meetingDate.split("-").map(Number);
-			if (!isNaN(y!) && !isNaN(m!) && !isNaN(d!)) {
-				this.selectedDate = new Date(y!, m! - 1, d!);
+			if (!isNaN(y as number) && !isNaN(m as number) && !isNaN(d as number)) {
+				this.selectedDate = new Date(y as number, (m as number) - 1, d as number);
 				this.lastRefreshTime = 0;
 				this.updateHeader();
 				void this.refresh();

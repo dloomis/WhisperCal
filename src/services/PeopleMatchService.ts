@@ -1,4 +1,5 @@
-import {App, TFile, TFolder} from "obsidian";
+import {App, TFolder} from "obsidian";
+import {getMarkdownFilesRecursive} from "../utils/vault";
 import type {EventAttendee} from "../types";
 
 export interface MatchedAttendee {
@@ -85,7 +86,7 @@ export class PeopleMatchService {
 			return {byEmail, byName};
 		}
 
-		const files = this.getMarkdownFilesRecursive(folder);
+		const files = getMarkdownFilesRecursive(folder);
 
 		for (const file of files) {
 			const cache = this.app.metadataCache.getFileCache(file);
@@ -112,15 +113,4 @@ export class PeopleMatchService {
 		return {byEmail, byName};
 	}
 
-	private getMarkdownFilesRecursive(folder: TFolder): TFile[] {
-		const files: TFile[] = [];
-		for (const child of folder.children) {
-			if (child instanceof TFile && child.extension === "md") {
-				files.push(child);
-			} else if (child instanceof TFolder) {
-				files.push(...this.getMarkdownFilesRecursive(child));
-			}
-		}
-		return files;
-	}
 }

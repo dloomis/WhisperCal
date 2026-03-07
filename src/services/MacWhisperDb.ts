@@ -1,4 +1,5 @@
-import {execFile, exec} from "child_process";
+import {execFile} from "child_process";
+import {readdirSync, statSync} from "fs";
 import {join} from "path";
 import {MACWHISPER_DB_PATH, MACWHISPER_MEDIA_PATH} from "../constants";
 import {debug} from "../utils/debug";
@@ -107,26 +108,18 @@ function hexToUuid(hex: string): string {
  *   etc.
  * Track-0 birthtime = actual recording start time.
  */
-function getTrack0Birthtime(sessionId: string): Promise<Date | null> {
+function getTrack0Birthtime(sessionId: string): Date | null {
 	const uuid = hexToUuid(sessionId);
 	const prefix = `${uuid}_track-0_`;
-	// Use stat on the expected filename pattern via shell glob
-	const cmd = `stat -f "%B" "${join(MACWHISPER_MEDIA_PATH, prefix)}"*.m4a`;
-	return new Promise((resolve) => {
-		exec(cmd, {encoding: "utf-8", shell: "/bin/zsh", timeout: 3000}, (err, stdout) => {
-			if (err || !stdout.trim()) {
-				resolve(null);
-				return;
-			}
-			// stat -f "%B" returns birthtime as epoch seconds
-			const epoch = parseInt(stdout.trim().split("\n")[0]!, 10);
-			if (isNaN(epoch)) {
-				resolve(null);
-			} else {
-				resolve(new Date(epoch * 1000));
-			}
-		});
-	});
+	try {
+		const files = readdirSync(MACWHISPER_MEDIA_PATH);
+		const match = files.find(f => f.startsWith(prefix) && f.endsWith(".m4a"));
+		if (!match) return null;
+		const stats = statSync(join(MACWHISPER_MEDIA_PATH, match));
+		return stats.birthtime;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -161,10 +154,7 @@ export async function findRecordingsNear(
 	const windowMs = windowMinutes * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
-	// Resolve all birthtimes concurrently
-	const birthtimes = await Promise.all(
-		rows.map(row => getTrack0Birthtime(row.sessionId)),
-	);
+	const birthtimes = rows.map(row => getTrack0Birthtime(row.sessionId));
 
 	const nullCount = birthtimes.filter(b => b === null).length;
 	debug("MacWhisperDb", "findRecordingsNear: resolved %d birthtimes, %d null", birthtimes.length, nullCount);

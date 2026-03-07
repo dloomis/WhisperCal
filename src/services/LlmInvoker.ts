@@ -1,5 +1,5 @@
 import {execFile} from "child_process";
-import {writeFileSync} from "fs";
+import {writeFile} from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
@@ -36,7 +36,7 @@ function asAppleScriptStr(s: string): string {
 	return parts.map(p => `"${p}"`).join(' & quote & ');
 }
 
-export function invokeLlmPrompt(opts: LlmInvokerOpts): void {
+export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 	const {
 		targetPath,
 		targetLabel = "Transcript",
@@ -82,7 +82,7 @@ export function invokeLlmPrompt(opts: LlmInvokerOpts): void {
 	// Write shellCmd to a temp script to avoid shell-quoting/AppleScript quoting conflicts.
 	// (Shell's '\'' escaping inside AppleScript double-quoted strings causes a syntax error.)
 	const tmpScript = path.join(os.tmpdir(), `whisper-cal-${Date.now()}.sh`);
-	writeFileSync(tmpScript, `#!/bin/bash\n${shellCmd}\n`, {mode: 0o755});
+	await writeFile(tmpScript, `#!/bin/bash\n${shellCmd}\n`, {mode: 0o755});
 
 	// The temp path has no special characters, so embedding it in AppleScript is safe.
 	const asCmd = asAppleScriptStr(`bash ${shellQuote(tmpScript)}`);

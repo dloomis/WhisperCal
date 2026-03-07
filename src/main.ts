@@ -10,6 +10,7 @@ import {linkRecording} from "./services/LinkRecording";
 import {invokeLlmPrompt} from "./services/LlmInvoker";
 import {parseDateTime} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
+import {resolveWikiLink} from "./utils/vault";
 import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
@@ -311,16 +312,6 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	private resolveTranscriptFile(
-		fm: Record<string, unknown>,
-		sourcePath: string,
-	): TFile | null {
-		const raw = fm["transcript"];
-		if (!raw || typeof raw !== "string" || !raw.trim()) return null;
-		const linktext = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
-		return this.app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
-	}
-
 	private resolveTagSpeakersContext(
 		file: TFile,
 		fm: Record<string, unknown> | undefined,
@@ -338,7 +329,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Context A: meeting note with a linked transcript
 		if (fm["calendar_event_id"] && fm["macwhisper_session_id"] && fm["transcript"]) {
-			return this.resolveTranscriptFile(fm, file.path);
+			return resolveWikiLink(this.app, fm, "transcript", file.path);
 		}
 
 		return null;
@@ -430,7 +421,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// basePath is undocumented but stable on desktop — no Vault API alternative
 		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		invokeLlmPrompt({
+		void invokeLlmPrompt({
 			targetPath: transcriptFile.path,
 			targetLabel: "Transcript",
 			vaultPath,
@@ -474,7 +465,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		invokeLlmPrompt({
+		void invokeLlmPrompt({
 			targetPath: notePath,
 			targetLabel: "Meeting note",
 			vaultPath,
@@ -571,7 +562,8 @@ export default class WhisperCalPlugin extends Plugin {
 		const rawDate = fm["meeting_date"];
 		const timeStr = fm["meeting_start"] as string | undefined;
 		if (rawDate && timeStr) {
-			// meeting_date may be a YAML Date object (unquoted) or a string
+			// meeting_date may be a YAML Date object in notes created before the
+			// template was fixed to quote this value. Keep both branches for compat.
 			const dateStr = rawDate instanceof Date
 				? rawDate.toISOString().slice(0, 10)
 				: rawDate as string;

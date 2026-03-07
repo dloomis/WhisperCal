@@ -126,10 +126,6 @@ export function parseDateTime(dateStr: string, timeStr: string): Date | null {
 }
 
 /**
- * Format a Date as "YYYY-MM-DD HH:mm:ss±HH:MM" in the given timezone.
- * Uses Intl.DateTimeFormat to extract parts and compute UTC offset.
- */
-/**
  * Return a promise that resolves after the given number of milliseconds.
  */
 export function sleep(ms: number): Promise<void> {

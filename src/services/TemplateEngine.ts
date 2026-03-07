@@ -9,17 +9,24 @@ import {parseDisplayName} from "../utils/nameParser";
  * NoteCreator.buildNoteContent() output.
  */
 export const DEFAULT_TEMPLATE = `---
-# WhisperCal reserved keys — renaming any of these will break plugin features:
-#   calendar_event_id  (identifies this as a WhisperCal note)
-#   macwhisper_session_id  (links a MacWhisper recording; written on mic-link)
-#   meeting_date + meeting_start  (used to match recordings to the meeting time)
-#   meeting_subject  (display title in the calendar view)
-#   note_created  (fallback timestamp for unscheduled notes)
-#   is_recurring  (whether the calendar event is a recurring meeting)
-#   invitees  (attendee list passed to transcript creation)
-#   transcript  (written back as a link to the transcript file)
+# WhisperCal reserved keys — the plugin reads/writes these programmatically.
+# Renaming or removing them will break plugin features:
+#   calendar_event_id    (identifies this as a WhisperCal meeting note)
+#   macwhisper_session_id (links a MacWhisper recording; written on mic-link)
+#   meeting_date         (calendar navigation + recording time matching)
+#   meeting_start        (recording time matching)
+#   meeting_subject      (display title; passed to transcript creation)
+#   note_created         (fallback timestamp for unscheduled notes)
+#   is_recurring         (passed to transcript creation)
+#   invitees             (attendee list; passed to transcript creation)
+#   transcript           (backlink to transcript file; written on transcript creation)
+#   pipeline_state       (workflow state; mirrored from transcript automatically)
+#   tags                 (used to detect transcript vs meeting note context)
+#
+# Informational keys (not read by plugin — safe to customize):
+#   meeting_end, meeting_location, organizer
 meeting_subject: "{{subject}}"
-meeting_date: {{date}}
+meeting_date: "{{date}}"
 meeting_start: "{{startTime}}"
 meeting_end: "{{endTime}}"
 meeting_location: "{{location}}"

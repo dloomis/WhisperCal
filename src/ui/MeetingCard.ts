@@ -2,6 +2,7 @@ import {App, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {formatTime} from "../utils/time";
+import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 
 export interface MeetingCardHandle {
@@ -22,13 +23,6 @@ export interface MeetingCardOpts {
 }
 
 type PillState = "incomplete" | "complete" | "disabled";
-
-function resolveTranscriptFile(app: App, notePath: string, fm: Record<string, unknown>): TFile | null {
-	const raw = fm["transcript"];
-	if (!raw || typeof raw !== "string" || !raw.trim()) return null;
-	const linktext = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
-	return app.metadataCache.getFirstLinkpathDest(linktext, notePath);
-}
 
 function renderPill(container: HTMLElement, label: string, state: PillState): HTMLButtonElement {
 	const btn = container.createEl("button", {
@@ -173,7 +167,7 @@ export function renderMeetingCard(
 		transcriptPill.addEventListener("click", () => {
 			if (transcriptState === "complete") {
 				// Open transcript file
-				const tf = resolveTranscriptFile(app, notePath, noteFm);
+				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 				if (tf) {
 					void app.workspace.openLinkText(tf.path, "", false);
 				}
@@ -211,14 +205,14 @@ export function renderMeetingCard(
 	const speakersPill = renderPill(actions, "Speakers", speakersState);
 	if (speakersState === "incomplete" && onTagSpeakers) {
 		speakersPill.addEventListener("click", () => {
-			const tf = resolveTranscriptFile(app, notePath, noteFm);
+			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 			if (!tf) return;
 			const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
 			onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
 		});
 	} else if (speakersState === "complete") {
 		speakersPill.addEventListener("click", () => {
-			const tf = resolveTranscriptFile(app, notePath, noteFm);
+			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 			if (tf) {
 				void app.workspace.openLinkText(tf.path, "", false);
 			}
