@@ -21,6 +21,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Meeting Cards](#meeting-cards)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
+  - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
   - [Unlinked Recordings](#unlinked-recordings)
 - [The Four-Stage Pipeline](#the-four-stage-pipeline)
@@ -182,6 +183,10 @@ Unscheduled notes use the current timestamp as their meeting time and get a wide
 When viewing today's calendar:
 - **Currently ongoing events** (between start and end time) are highlighted.
 - If no event is ongoing, the **next upcoming event** is highlighted instead.
+
+### Incomplete Workflow Highlighting
+
+Cards that have a meeting note but haven't completed the full pipeline (through summarization) are highlighted with a **warning-colored** left border. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The warning uses the theme's `--text-warning` color (typically amber/orange) and disappears once the Summary stage is complete.
 
 ### Note-Open Highlighting
 

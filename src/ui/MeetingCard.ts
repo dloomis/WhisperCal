@@ -134,6 +134,11 @@ export function renderMeetingCard(
 		? "disabled"
 		: pipelineState === "summarized" ? "complete" : "incomplete";
 
+	// Highlight card when workflow is started but not yet complete
+	if (noteExists && summaryState !== "complete") {
+		card.addClass("whisper-cal-card-warning");
+	}
+
 	// Note pill
 	const notePill = renderPill(actions, "Note", noteState);
 	notePill.addEventListener("click", () => {

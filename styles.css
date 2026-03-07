@@ -94,6 +94,10 @@
 	box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 
+.whisper-cal-card-warning {
+	border-left-color: var(--text-warning);
+}
+
 .whisper-cal-card-note-open {
 	border-left-color: var(--text-success);
 	border-left-width: 4px;
