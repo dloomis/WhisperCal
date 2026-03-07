@@ -535,13 +535,13 @@ export class CalendarView extends ItemView {
 		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {
 			linkBtn.disabled = true;
-			void this.handleLinkUnlinked(recording).finally(() => {
+			void this.handleLinkUnlinked(recording, card).finally(() => {
 				linkBtn.disabled = false;
 			});
 		});
 	}
 
-	private async handleLinkUnlinked(recording: MacWhisperRecording): Promise<void> {
+	private async handleLinkUnlinked(recording: MacWhisperRecording, card: HTMLElement): Promise<void> {
 		// Try to find matching calendar events from cache
 		const recordingDate = recording.recordingStart;
 		const events = await this.provider.fetchEvents(recordingDate, this.settings.timezone);
@@ -619,9 +619,21 @@ export class CalendarView extends ItemView {
 			});
 		}
 
-		// Refresh to update unlinked list
-		this.lastRefreshTime = 0;
-		void this.refresh();
+		// Remove the card and update the count in the header
+		card.remove();
+		this.updateUnlinkedCount();
+	}
+
+	private updateUnlinkedCount(): void {
+		if (!this.unlinkedEl) return;
+		const body = this.unlinkedEl.querySelector(".whisper-cal-unlinked-body");
+		const remaining = body?.querySelectorAll(".whisper-cal-unlinked-card").length ?? 0;
+		if (remaining === 0) {
+			this.unlinkedEl.empty();
+		} else {
+			const headerText = this.unlinkedEl.querySelector(".whisper-cal-unlinked-header span:last-child");
+			if (headerText) headerText.textContent = `Unlinked recordings (${remaining})`;
+		}
 	}
 
 	private formatRecordingDate(date: Date): string {
