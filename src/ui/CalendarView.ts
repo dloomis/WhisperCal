@@ -626,21 +626,8 @@ export class CalendarView extends ItemView {
 			});
 		}
 
-		// Remove the card and update the count in the header
-		card.remove();
-		this.updateUnlinkedCount();
-	}
-
-	private updateUnlinkedCount(): void {
-		if (!this.unlinkedEl) return;
-		const body = this.unlinkedEl.querySelector(".whisper-cal-unlinked-body");
-		const remaining = body?.querySelectorAll(".whisper-cal-unlinked-card").length ?? 0;
-		if (remaining === 0) {
-			this.unlinkedEl.empty();
-		} else {
-			const headerText = this.unlinkedEl.querySelector(".whisper-cal-unlinked-header span:last-child");
-			if (headerText) headerText.textContent = `Unlinked recordings (${remaining})`;
-		}
+		// Rebuild the unlinked section from truth (frontmatter now has session ID)
+		void this.loadAndRenderUnlinkedSection();
 	}
 
 	private formatRecordingDate(date: Date): string {
