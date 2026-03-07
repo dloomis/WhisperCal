@@ -111,9 +111,8 @@ export function renderMeetingCard(
 	const actions = card.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Read meeting note frontmatter for state detection
-	const notePath = noteCreator.getNotePath(event);
-	const noteAbstract = app.vault.getAbstractFileByPath(notePath);
-	const noteFile = noteAbstract instanceof TFile ? noteAbstract : null;
+	const noteFile = noteCreator.findNote(event);
+	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
 	const noteExists = noteFile !== null;
 	const noteFm: Record<string, unknown> = noteFile
 		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})

@@ -563,9 +563,8 @@ export class CalendarView extends ItemView {
 
 		// Exclude events whose notes already have a recording linked
 		const unlinkedCandidates = candidates.filter(e => {
-			const notePath = this.noteCreator.getNotePath(e);
-			const noteFile = this.app.vault.getAbstractFileByPath(notePath);
-			if (!(noteFile instanceof TFile)) return true;
+			const noteFile = this.noteCreator.findNote(e);
+			if (!noteFile) return true;
 			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
 			return !fm?.["macwhisper_session_id"];
 		});

@@ -24,15 +24,60 @@ export class NoteCreator {
 		return normalizePath(`${this.settings.noteFolderPath}/${filename}.md`);
 	}
 
+	/**
+	 * Find the meeting note for an event by frontmatter, not filename.
+	 * Tries the canonical template path first (fast), then scans the note
+	 * folder for a file whose frontmatter `calendar_event_id` or
+	 * `meeting_subject` + `meeting_date` match the event.
+	 */
+	findNote(event: CalendarEvent): TFile | null {
+		// Fast path: canonical template path
+		const canonical = this.getNotePath(event);
+		const abs = this.app.vault.getAbstractFileByPath(canonical);
+		if (abs instanceof TFile) return abs;
+
+		// Scan note folder by frontmatter
+		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
+		if (!(folder instanceof TFolder)) return null;
+
+		const date = formatDate(event.startTime, this.settings.timezone);
+
+		for (const child of folder.children) {
+			if (!(child instanceof TFile) || child.extension !== "md") continue;
+			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
+			if (!fm) continue;
+
+			// Exact match on calendar_event_id (set by WhisperCal on creation)
+			if (fm["calendar_event_id"] === event.id) return child;
+
+			// Match on meeting_subject + meeting_date
+			if (fm["meeting_subject"] === event.subject && fm["meeting_date"] === date) {
+				return child;
+			}
+		}
+
+		// Last resort: match notes whose basename contains the subject and
+		// whose frontmatter Date (or meeting_date) falls on the same day.
+		// Catches legacy notes created outside WhisperCal.
+		const subject = sanitizeFilename(event.subject);
+		for (const child of folder.children) {
+			if (!(child instanceof TFile) || child.extension !== "md") continue;
+			if (!child.basename.includes(subject)) continue;
+			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
+			if (!fm) continue;
+			const fmDate = (fm["meeting_date"] ?? fm["Date"] ?? "") as string;
+			if (typeof fmDate === "string" && fmDate.startsWith(date)) return child;
+		}
+		return null;
+	}
+
 	noteExists(event: CalendarEvent): boolean {
-		const path = this.getNotePath(event);
-		return this.app.vault.getAbstractFileByPath(path) instanceof TFile;
+		return this.findNote(event) !== null;
 	}
 
 	async openExistingNote(event: CalendarEvent): Promise<void> {
-		const path = this.getNotePath(event);
-		const file = this.app.vault.getAbstractFileByPath(path);
-		if (file instanceof TFile) {
+		const file = this.findNote(event);
+		if (file) {
 			const leaf = this.getLeafForFile(file);
 			await leaf.openFile(file);
 		}
