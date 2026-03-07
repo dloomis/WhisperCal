@@ -7,6 +7,7 @@ import type {CacheStatus} from "../services/CalendarCache";
 import {findRecentSessions, type MacWhisperRecording} from "../services/MacWhisperDb";
 import {linkKnownRecording} from "../services/LinkRecording";
 import {EventSuggestModal} from "./EventSuggestModal";
+import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
 import {formatDate, formatDisplayDate, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -569,34 +570,34 @@ export class CalendarView extends ItemView {
 			return !fm?.["macwhisper_session_id"];
 		});
 
-		let chosenEvent: CalendarEvent | null = null;
+		const modal = new EventSuggestModal(
+			this.app, unlinkedCandidates, this.settings.timezone,
+		);
+		const choice = await modal.prompt();
+		if (!choice) return; // user cancelled
 
-		if (unlinkedCandidates.length > 0) {
-			const modal = new EventSuggestModal(this.app, unlinkedCandidates, this.settings.timezone);
-			const choice = await modal.prompt();
-			if (!choice) return; // user cancelled
-			if (choice.type === "event") {
-				chosenEvent = choice.event;
-			}
-		}
-
-		if (chosenEvent) {
+		if (choice.type === "event") {
 			// Link to existing calendar event
-			await this.noteCreator.createNote(chosenEvent);
-			const notePath = this.noteCreator.getNotePath(chosenEvent);
+			await this.noteCreator.createNote(choice.event);
+			const notePath = this.noteCreator.getNotePath(choice.event);
 			await linkKnownRecording({
 				app: this.app,
 				session: recording,
 				notePath,
-				subject: chosenEvent.subject,
+				subject: choice.event.subject,
 				timezone: this.settings.timezone,
 				transcriptFolderPath: this.settings.transcriptFolderPath,
-				attendees: chosenEvent.attendees,
-				isRecurring: chosenEvent.isRecurring,
+				attendees: choice.event.attendees,
+				isRecurring: choice.event.isRecurring,
 			});
 		} else {
-			// Create unscheduled note
-			const subject = recording.title || this.settings.unscheduledSubject;
+			// Create new meeting — prompt for a name
+			const defaultName = recording.title || this.settings.unscheduledSubject;
+			const name = await new NameInputModal(this.app, {
+				defaultValue: defaultName,
+			}).prompt();
+			if (!name) return;
+			const subject = name;
 			const event: CalendarEvent = {
 				id: "unscheduled",
 				subject,

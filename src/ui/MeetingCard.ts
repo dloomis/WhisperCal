@@ -1,6 +1,7 @@
 import {App, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
+import {NameInputModal} from "./NameInputModal";
 import {formatTime} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
@@ -149,7 +150,15 @@ export function renderMeetingCard(
 					await noteCreator.openExistingNote(event);
 				} else {
 					const isUnscheduled = event.id === "unscheduled";
-					await noteCreator.createNote(event);
+					let targetEvent = event;
+					if (isUnscheduled) {
+						const name = await new NameInputModal(app, {
+							defaultValue: event.subject,
+						}).prompt();
+						if (!name) return;
+						targetEvent = {...event, subject: name};
+					}
+					await noteCreator.createNote(targetEvent);
 					if (isUnscheduled && onNoteCreated) {
 						onNoteCreated();
 					}

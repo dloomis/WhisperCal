@@ -4,7 +4,7 @@ import {formatTime} from "../utils/time";
 
 export type EventChoice =
 	| {type: "event"; event: CalendarEvent}
-	| {type: "unscheduled"};
+	| {type: "new-meeting"};
 
 export class EventSuggestModal extends SuggestModal<EventChoice> {
 	private choices: EventChoice[];
@@ -16,10 +16,10 @@ export class EventSuggestModal extends SuggestModal<EventChoice> {
 		super(app);
 		this.choices = [
 			...events.map(event => ({type: "event" as const, event})),
-			{type: "unscheduled" as const},
+			{type: "new-meeting" as const},
 		];
 		this.timezone = timezone;
-		this.setPlaceholder("Link to calendar event or create unscheduled note");
+		this.setPlaceholder("Link to calendar event or create new meeting");
 	}
 
 	prompt(): Promise<EventChoice | null> {
@@ -33,14 +33,14 @@ export class EventSuggestModal extends SuggestModal<EventChoice> {
 		const q = query.toLowerCase();
 		if (!q) return this.choices;
 		return this.choices.filter(c => {
-			if (c.type === "unscheduled") return "unscheduled".includes(q);
+			if (c.type === "new-meeting") return true;
 			return c.event.subject.toLowerCase().includes(q);
 		});
 	}
 
 	renderSuggestion(choice: EventChoice, el: HTMLElement): void {
-		if (choice.type === "unscheduled") {
-			el.createDiv({text: "Create unscheduled note"});
+		if (choice.type === "new-meeting") {
+			el.createDiv({text: "Create new meeting"});
 			el.createDiv({cls: "suggestion-note", text: "No calendar event"});
 			return;
 		}
