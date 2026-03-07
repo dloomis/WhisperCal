@@ -22,6 +22,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
+  - [Unlinked Recordings](#unlinked-recordings)
 - [The Four-Stage Pipeline](#the-four-stage-pipeline)
   - [Stage 1 — Note](#stage-1--note)
   - [Stage 2 — Transcript](#stage-2--transcript)
@@ -29,8 +30,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Stage 4 — Summary](#stage-4--summary)
   - [Pipeline State Tracking](#pipeline-state-tracking)
 - [Meeting Note Templates](#meeting-note-templates)
-  - [Default Template](#default-template)
-  - [Custom Templates](#custom-templates)
+  - [Template Setup](#template-setup)
   - [Template Variables](#template-variables)
   - [Reserved Frontmatter Keys](#reserved-frontmatter-keys)
 - [MacWhisper Integration](#macwhisper-integration)
@@ -174,7 +174,7 @@ Cards are grouped into sections: **All day** events at the top, then **Scheduled
 
 An "Unscheduled Meeting" card always appears at the top of the calendar view. Use it to create notes for ad-hoc meetings that aren't on your calendar. The subject is configurable in settings (default: "Unscheduled Meeting").
 
-Unscheduled notes use the current timestamp as their meeting time and get a wider recording-matching window (720 minutes instead of the usual 10).
+Unscheduled notes use the current timestamp as their meeting time and get a wider recording-matching window (720 minutes instead of the usual 15).
 
 ### Active Event Highlighting
 
@@ -185,6 +185,24 @@ When viewing today's calendar:
 ### Note-Open Highlighting
 
 When you open a meeting note in any editor tab, the corresponding card in the calendar sidebar is highlighted and scrolled into view. If the note belongs to a different day, the calendar automatically navigates to that day.
+
+### Unlinked Recordings
+
+A collapsible **"Unlinked recordings"** section appears at the bottom of the calendar view when there are MacWhisper sessions that haven't been linked to any note in your vault. This helps you catch recordings you forgot to process.
+
+**How it works:**
+- Scans the MacWhisper database for sessions within a configurable lookback window (default: 30 days).
+- Skips recent recordings within a grace period (default: 48 hours) — today's recordings are expected to be unlinked during your normal workflow.
+- Cross-references against all vault notes with a `macwhisper_session_id` in frontmatter. Any session not found in the vault is shown as unlinked.
+
+**Linking an unlinked recording:**
+1. Click the **Link** button on an unlinked recording card.
+2. WhisperCal checks the calendar cache for events near the recording's start time (using the same recording match window).
+3. If matching calendar events are found, a picker shows them along with a **"Create unscheduled note"** fallback. Events whose notes already have a recording linked are filtered out.
+4. If no matches are found, an unscheduled note is created directly, dated to the recording's actual start time.
+5. The recording is linked and a transcript is generated, just like the normal flow.
+
+The section is collapsed by default and only appears when the count is greater than zero.
 
 ---
 
@@ -258,27 +276,22 @@ The state lives on the **transcript file** as its source of truth. WhisperCal au
 
 ## Meeting Note Templates
 
-### Default Template
+### Template Setup
 
-WhisperCal ships with a built-in template that creates notes with full meeting metadata in frontmatter and the event description in the body. You can preview it by clicking **"Create default template"** in settings, which writes it to a file in your vault.
+WhisperCal uses a template file to control the **body content** of meeting notes. All frontmatter is auto-injected by the plugin from calendar data — you never need to put frontmatter keys in your template.
 
-### Custom Templates
+1. Copy `samples/WhisperCal Meeting Template.md` from the plugin's GitHub repo into your vault (e.g., `Templates/WhisperCal Meeting.md`).
+2. Edit the body to your liking.
+3. Set the **"Note template"** path in WhisperCal settings.
 
-To customize your meeting notes:
-
-1. Click **"Create default template"** in settings to export the built-in template to a file (default path: `Templates/WhisperCal Meeting.md`).
-2. Edit the file to your liking.
-3. Set the **"Note template"** setting to point to your modified file.
-
-If the template file is missing or unreadable, WhisperCal falls back to the built-in default and shows a notice.
+If no template is configured, WhisperCal shows a notice and won't create notes.
 
 ### Template Variables
 
-Use `{{variableName}}` placeholders in your template. All available variables:
+Use `{{variableName}}` placeholders in your template body. All available variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `{{eventId}}` | Calendar event ID | `AAMkAG...` |
 | `{{subject}}` | Meeting subject | `Weekly Standup` |
 | `{{date}}` | Meeting date | `2026-03-07` |
 | `{{startTime}}` | Start time | `10:00 AM` |
@@ -290,39 +303,31 @@ Use `{{variableName}}` placeholders in your template. All available variables:
 | `{{attendeeCount}}` | Number of attendees | `5` |
 | `{{attendees}}` | Comma-separated wiki links | `"[[Jane Smith]]", "[[Bob Lee]]"` |
 | `{{attendeeList}}` | Bullet list of wiki links | `- [[Jane Smith]]` (one per line) |
-| `{{invitees}}` | YAML-formatted list (for frontmatter) | `  - "Jane Smith"` |
 | `{{isOnlineMeeting}}` | Whether it has an online link | `true` |
 | `{{onlineMeetingUrl}}` | Teams/Zoom join URL | `https://teams.microsoft.com/...` |
 | `{{isAllDay}}` | All-day event flag | `false` |
-| `{{isRecurring}}` | Recurring event flag | `true` |
 | `{{description}}` | Event body (HTML converted to Markdown) | Meeting agenda text |
-| `{{noteCreated}}` | ISO 8601 timestamp of note creation | `2026-03-07T09:55:00-05:00` |
 
 ### Reserved Frontmatter Keys
 
-The following keys are read and written by the plugin. **Do not rename or remove them**, or plugin features will break:
+The following keys are **auto-injected** by the plugin when creating a note. Do not add them to your template — they are managed programmatically:
 
 | Key | Purpose |
 |-----|---------|
-| `calendar_event_id` | Identifies this file as a WhisperCal meeting note |
-| `macwhisper_session_id` | Links a MacWhisper recording to the note |
+| `meeting_subject` | Display title in the calendar view; passed to transcript |
 | `meeting_date` | Calendar navigation and recording time matching |
 | `meeting_start` | Recording time matching |
-| `meeting_subject` | Display title in the calendar view; passed to transcript |
-| `note_created` | Fallback timestamp for unscheduled notes |
-| `is_recurring` | Passed to transcript creation |
-| `invitees` | Attendee list; passed to transcript creation |
-| `transcript` | Backlink to the transcript file |
-| `pipeline_state` | Workflow state; mirrored from transcript automatically |
-| `tags` | Used to distinguish meeting notes from transcript files |
-
-These keys are **informational only** (not read by the plugin) and safe to customize or remove:
-
-| Key | Purpose |
-|-----|---------|
 | `meeting_end` | Meeting end time |
 | `meeting_location` | Meeting location |
-| `organizer` | Meeting organizer |
+| `meeting_invitees` | Attendee list; passed to transcript creation |
+| `meeting_organizer` | Meeting organizer as wiki link |
+| `tags` | Used to distinguish meeting notes from transcript files |
+| `calendar_event_id` | Identifies this file as a WhisperCal meeting note |
+| `note_created` | Fallback timestamp for unscheduled notes |
+| `is_recurring` | Passed to transcript creation |
+| `macwhisper_session_id` | Links a MacWhisper recording to the note |
+| `transcript` | Backlink to the transcript file |
+| `pipeline_state` | Workflow state; mirrored from transcript automatically |
 
 ---
 
@@ -340,7 +345,7 @@ A **microphone ribbon icon** is provided to quickly launch MacWhisper.
 
 When you click the Transcript pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
 
-- **Default window:** 10 minutes before or after the meeting start.
+- **Default window:** 15 minutes before or after the meeting start.
 - **Unscheduled meetings:** 720-minute window (12 hours).
 - **Recording start time** is determined from the filesystem birthtime of the track-0 audio file, which is more accurate than MacWhisper's database timestamps.
 
@@ -358,7 +363,7 @@ Transcript files are created in your configured transcripts folder with the nami
 - `meeting_note` — Wiki link back to the meeting note
 - `speaker_count` — Number of detected speakers
 - `speakers` — List of speaker names, IDs, and line counts
-- `meeting_subject`, `is_recurring`, `invitees` — Copied from the meeting note so the transcript is self-contained (these are read by LLM prompts)
+- `meeting_subject`, `is_recurring`, `meeting_invitees` — Copied from the meeting note so the transcript is self-contained (these are read by LLM prompts)
 - `pipeline_state: titled` — Initial pipeline state
 
 **Body:**
@@ -437,7 +442,7 @@ WhisperCal can invoke an external LLM CLI tool to tag speakers in transcripts an
 
 **Prerequisite:** A transcript file must exist (Stage 2 complete).
 
-1. Create a prompt file in your vault (e.g., `Prompts/Speaker Tagging.md`) that instructs the LLM how to identify speakers.
+1. Copy `samples/Speaker Auto-Tag Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Speaker Tagging.md`).
 2. Set the **"Speaker tagging prompt"** path in settings.
 3. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command.
 4. A terminal window opens with the LLM reading your prompt and the transcript file.
@@ -448,7 +453,7 @@ WhisperCal can invoke an external LLM CLI tool to tag speakers in transcripts an
 
 **Prerequisite:** Speakers must be tagged (Stage 3 complete, `pipeline_state: tagged`).
 
-1. Create a prompt file (e.g., `Prompts/Meeting Summarizer.md`).
+1. Copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Summarizer.md`).
 2. Set the **"Summarizer prompt"** path in settings.
 3. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command.
 4. A terminal window opens with the LLM reading your prompt, the meeting note, and the transcript.
@@ -516,14 +521,16 @@ All commands are available from the command palette (`Cmd+P`):
 | **Transcripts folder** | `Transcripts` | Where transcript files are created. |
 | **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}`, `{{subject}}`. |
 | **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
-| **Note template** | *(empty = built-in)* | Path to a custom template file. Leave empty to use the default. |
+| **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
 
 ### MacWhisper
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Database path** | *(read-only)* | Shows the MacWhisper database location. |
-| **Recording match window** | `10` min | How close a recording start must be to the meeting time to appear in the picker. |
+| **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker. |
+| **Unlinked lookback** | `30` days | How far back to check for unlinked recordings. |
+| **Unlinked grace period** | `48` hours | Ignore recordings newer than this — gives time to link them normally before flagging. |
 
 ### LLM
 
@@ -581,7 +588,7 @@ The device code is valid for about 15 minutes. If it expires before you complete
 
 ### No MacWhisper recordings found
 - Ensure MacWhisper is installed and has recordings in its database.
-- Check that the recording happened within the match window (default: 10 minutes of the meeting start time). You can increase this in settings.
+- Check that the recording happened within the match window (default: 15 minutes of the meeting start time). You can increase this in settings.
 - MacWhisper must have completed transcription before a transcript file can be created.
 
 ### LLM terminal doesn't open

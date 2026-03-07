@@ -141,6 +141,7 @@ export async function findRecordingsNear(
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
 		WHERE s.isTransient = 0
 		  AND s.dateDeleted IS NULL
+		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
 		  AND mf.filename LIKE '%_track-0_%'
 		ORDER BY s.dateCreated DESC
 		LIMIT 50;
@@ -204,6 +205,7 @@ export async function findRecentSessions(
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
 		WHERE s.isTransient = 0
 		  AND s.dateDeleted IS NULL
+		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
 		  AND mf.filename LIKE '%_track-0_%'
 		ORDER BY s.dateCreated DESC
 		LIMIT 200;
