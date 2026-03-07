@@ -4,6 +4,9 @@ import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
+import {findRecentSessions, type MacWhisperRecording} from "../services/MacWhisperDb";
+import {linkKnownRecording} from "../services/LinkRecording";
+import {EventSuggestModal} from "./EventSuggestModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
 import {formatDate, formatDisplayDate, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -29,6 +32,8 @@ export class CalendarView extends ItemView {
 	private onSummarize: ((notePath: string) => void) | null = null;
 	private noteOpenPath: string | null = null;
 	private stickyHeaderEl: HTMLElement | null = null;
+	private unlinkedEl: HTMLElement | null = null;
+	private unlinkedCollapsed = true;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -106,6 +111,7 @@ export class CalendarView extends ItemView {
 
 		// Content area
 		this.contentContainer = root.createDiv();
+		this.unlinkedEl = root.createDiv({cls: "whisper-cal-unlinked-section"});
 
 		// Initial load
 		await this.refresh();
@@ -137,6 +143,7 @@ export class CalendarView extends ItemView {
 	async onClose(): Promise<void> {
 		this.stopAutoRefresh();
 		this.noteOpenPath = null;
+		this.unlinkedEl = null;
 		if (this.cardRefreshTimer !== null) {
 			window.clearTimeout(this.cardRefreshTimer);
 			this.cardRefreshTimer = null;
@@ -180,6 +187,7 @@ export class CalendarView extends ItemView {
 					this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
 					this.updateStatusIndicator();
 					this.updateTodayButtonVisibility();
+					void this.loadAndRenderUnlinkedSection();
 					return;
 				}
 			}
@@ -195,6 +203,7 @@ export class CalendarView extends ItemView {
 
 		this.updateStatusIndicator();
 		this.updateTodayButtonVisibility();
+		void this.loadAndRenderUnlinkedSection();
 	}
 
 	updateSettings(
@@ -421,7 +430,6 @@ export class CalendarView extends ItemView {
 			);
 			if (curr instanceof HTMLElement) {
 				curr.addClass(cls);
-				curr.scrollIntoView({block: "start", behavior: "smooth"});
 			}
 		}
 
@@ -457,6 +465,171 @@ export class CalendarView extends ItemView {
 		}
 
 		this.updateNoteOpenHighlight();
+	}
+
+	private async loadAndRenderUnlinkedSection(): Promise<void> {
+		if (!this.unlinkedEl) return;
+		this.unlinkedEl.empty();
+
+		if (this.settings.unlinkedLookbackDays <= 0) return;
+
+		const sessions = await findRecentSessions(
+			this.settings.unlinkedLookbackDays,
+			this.settings.unlinkedGracePeriodHours,
+		);
+
+		const linked = this.getLinkedSessionIds();
+		const unlinked = sessions.filter(s => !linked.has(s.sessionId));
+
+		if (unlinked.length === 0) return;
+
+		// Collapsible header
+		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
+		const arrow = header.createSpan({cls: "whisper-cal-unlinked-arrow", text: this.unlinkedCollapsed ? "\u25B8" : "\u25BE"});
+		header.createSpan({text: `Unlinked recordings (${unlinked.length})`});
+
+		const body = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-body"});
+		body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
+
+		header.addEventListener("click", () => {
+			this.unlinkedCollapsed = !this.unlinkedCollapsed;
+			arrow.textContent = this.unlinkedCollapsed ? "\u25B8" : "\u25BE";
+			body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
+		});
+
+		for (const recording of unlinked) {
+			this.renderUnlinkedCard(body, recording);
+		}
+	}
+
+	private getLinkedSessionIds(): Set<string> {
+		const linked = new Set<string>();
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+			const sid = fm?.["macwhisper_session_id"] as string | undefined;
+			if (sid) linked.add(sid);
+		}
+		return linked;
+	}
+
+	private renderUnlinkedCard(container: HTMLElement, recording: MacWhisperRecording): void {
+		const card = container.createDiv({cls: "whisper-cal-unlinked-card"});
+
+		const title = recording.title || "Untitled recording";
+		card.createDiv({cls: "whisper-cal-unlinked-title", text: title});
+
+		const meta = card.createDiv({cls: "whisper-cal-unlinked-meta"});
+		const dateStr = this.formatRecordingDate(recording.recordingStart);
+		const durStr = this.formatRecordingDuration(recording.durationSeconds);
+		meta.createSpan({text: durStr ? `${dateStr} \u00B7 ${durStr}` : dateStr});
+
+		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
+		linkBtn.addEventListener("click", () => {
+			linkBtn.disabled = true;
+			void this.handleLinkUnlinked(recording).finally(() => {
+				linkBtn.disabled = false;
+			});
+		});
+	}
+
+	private async handleLinkUnlinked(recording: MacWhisperRecording): Promise<void> {
+		// Try to find matching calendar events from cache
+		const recordingDate = recording.recordingStart;
+		const events = await this.provider.fetchEvents(recordingDate, this.settings.timezone);
+
+		// Filter to timed events within the recording match window
+		const windowMs = this.settings.recordingWindowMinutes * 60 * 1000;
+		const candidates = events.filter(e => {
+			if (e.isAllDay) return false;
+			const diff = Math.abs(e.startTime.getTime() - recordingDate.getTime());
+			return diff <= windowMs;
+		});
+
+		// Exclude events whose notes already have a recording linked
+		const unlinkedCandidates = candidates.filter(e => {
+			const notePath = this.noteCreator.getNotePath(e);
+			const noteFile = this.app.vault.getAbstractFileByPath(notePath);
+			if (!(noteFile instanceof TFile)) return true;
+			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+			return !fm?.["macwhisper_session_id"];
+		});
+
+		let chosenEvent: CalendarEvent | null = null;
+
+		if (unlinkedCandidates.length > 0) {
+			const modal = new EventSuggestModal(this.app, unlinkedCandidates, this.settings.timezone);
+			const choice = await modal.prompt();
+			if (!choice) return; // user cancelled
+			if (choice.type === "event") {
+				chosenEvent = choice.event;
+			}
+		}
+
+		if (chosenEvent) {
+			// Link to existing calendar event
+			await this.noteCreator.createNote(chosenEvent);
+			const notePath = this.noteCreator.getNotePath(chosenEvent);
+			await linkKnownRecording({
+				app: this.app,
+				session: recording,
+				notePath,
+				subject: chosenEvent.subject,
+				timezone: this.settings.timezone,
+				transcriptFolderPath: this.settings.transcriptFolderPath,
+				attendees: chosenEvent.attendees,
+				isRecurring: chosenEvent.isRecurring,
+			});
+		} else {
+			// Create unscheduled note
+			const subject = recording.title || this.settings.unscheduledSubject;
+			const event: CalendarEvent = {
+				id: "unscheduled",
+				subject,
+				body: "",
+				isAllDay: false,
+				isOnlineMeeting: false,
+				onlineMeetingUrl: "",
+				startTime: recording.recordingStart,
+				endTime: new Date(recording.recordingStart.getTime() + recording.durationSeconds * 1000),
+				location: "",
+				attendeeCount: 0,
+				attendees: [],
+				organizerName: "",
+				organizerEmail: "",
+				isRecurring: false,
+			};
+			await this.noteCreator.createNote(event, {preserveTimestamps: true});
+			const notePath = this.noteCreator.getNotePath(event);
+			await linkKnownRecording({
+				app: this.app,
+				session: recording,
+				notePath,
+				subject,
+				timezone: this.settings.timezone,
+				transcriptFolderPath: this.settings.transcriptFolderPath,
+			});
+		}
+
+		// Refresh to update unlinked list
+		this.lastRefreshTime = 0;
+		void this.refresh();
+	}
+
+	private formatRecordingDate(date: Date): string {
+		const now = new Date();
+		const sameYear = date.getFullYear() === now.getFullYear();
+		const opts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric"};
+		if (!sameYear) opts.year = "numeric";
+		return date.toLocaleDateString("en-US", opts);
+	}
+
+	private formatRecordingDuration(seconds: number): string {
+		if (seconds <= 0) return "";
+		const minutes = Math.floor(seconds / 60);
+		if (minutes < 60) return `${minutes} min`;
+		const hours = Math.floor(minutes / 60);
+		const rem = minutes % 60;
+		return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
 	}
 
 	private findActiveEventIds(events: CalendarEvent[]): Set<string> {

@@ -5,6 +5,7 @@
 
 .whisper-cal-container {
 	padding: 0 12px 12px;
+	min-height: 100%;
 }
 
 .whisper-cal-sticky-header {
@@ -85,7 +86,6 @@
 	padding: 12px;
 	margin-bottom: 8px;
 	border-left: 3px solid var(--interactive-accent);
-	scroll-margin-top: 80px;
 }
 
 .whisper-cal-card-active {
@@ -360,5 +360,69 @@
 .whisper-cal-pill-disabled {
 	opacity: 0.35;
 	cursor: not-allowed;
+}
+
+/* Unlinked recordings section */
+.whisper-cal-unlinked-section {
+	margin-top: 16px;
+	padding-bottom: 24px;
+}
+
+.whisper-cal-unlinked-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	padding: 4px 0;
+	user-select: none;
+}
+
+.whisper-cal-unlinked-header:hover {
+	color: var(--text-normal);
+}
+
+.whisper-cal-unlinked-arrow {
+	font-size: var(--font-ui-smaller);
+	width: 12px;
+	text-align: center;
+}
+
+.whisper-cal-unlinked-body {
+	margin-top: 4px;
+}
+
+.whisper-cal-unlinked-card {
+	background: var(--background-secondary);
+	border-radius: var(--radius-s);
+	padding: 8px 12px;
+	margin-bottom: 6px;
+	border-left: 3px solid var(--text-warning);
+}
+
+.whisper-cal-unlinked-title {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+	margin-bottom: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.whisper-cal-unlinked-meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.whisper-cal-btn-small {
+	padding: 2px 8px;
+	font-size: var(--font-ui-smaller);
 }
 

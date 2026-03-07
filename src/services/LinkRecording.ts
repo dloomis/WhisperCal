@@ -1,11 +1,94 @@
 import {App, Notice} from "obsidian";
-import {findRecordingsNear, hasTranscriptLines, setSessionTitle} from "./MacWhisperDb";
+import {findRecordingsNear, hasTranscriptLines, setSessionTitle, type MacWhisperRecording} from "./MacWhisperDb";
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {formatDate, sleep} from "../utils/time";
 import {sanitizeFilename} from "../utils/sanitize";
 import type {EventAttendee} from "../types";
+
+/**
+ * Internal helper — performs the actual recording→note link: sets MacWhisper
+ * title, writes session ID to frontmatter, and creates transcript file.
+ */
+async function performLink(opts: {
+	app: App;
+	sessionId: string;
+	recordingStart: Date;
+	notePath: string;
+	subject: string;
+	timezone: string;
+	transcriptFolderPath: string;
+	attendees: EventAttendee[];
+	isRecurring: boolean;
+}): Promise<boolean> {
+	const {app, sessionId, recordingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring} = opts;
+
+	// Set MacWhisper title to match the note filename (without folder or .md)
+	const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(recordingStart, timezone)} ${sanitizeFilename(subject)}`;
+	if (!await setSessionTitle(sessionId, title)) {
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("Failed to update MacWhisper session title");
+		return false;
+	}
+
+	// Phase 1: Write session ID to note frontmatter (fast)
+	try {
+		await updateFrontmatter(app, notePath, "macwhisper_session_id", sessionId);
+	} catch (err) {
+		console.error("[WhisperCal] Failed to update frontmatter — YAML may be malformed:", err);
+		new Notice("Failed to update note frontmatter (check for invalid YAML)");
+		return false;
+	}
+	new Notice("Recording linked to note");
+
+	// Phase 2: Create transcript file in background (fire-and-forget)
+	// Polls for transcript lines in case MacWhisper is still transcribing.
+	void (async () => {
+		const notice = new Notice("Creating transcript\u2026", 0);
+		try {
+			// Wait for MacWhisper transcription to finish
+			let ready = await hasTranscriptLines(sessionId);
+			if (!ready) {
+				notice.setMessage("Waiting for MacWhisper transcription\u2026");
+				const maxAttempts = 60; // ~3 minutes at 3s intervals
+				for (let i = 0; i < maxAttempts && !ready; i++) {
+					await sleep(3000);
+					ready = await hasTranscriptLines(sessionId);
+				}
+				if (!ready) {
+					notice.setMessage("Transcription still in progress \u2014 try linking again later");
+					setTimeout(() => notice.hide(), 6000);
+					return;
+				}
+			}
+
+			notice.setMessage("Creating transcript\u2026");
+			const transcriptPath = await createTranscriptFile({
+				app,
+				notePath,
+				sessionId,
+				transcriptFolderPath,
+				recordingStart,
+				timezone,
+				calendarEvent: subject,
+				calendarAttendees: attendees.map(a => a.name),
+				isRecurring,
+			});
+			if (transcriptPath) {
+				notice.setMessage("Transcript linked to note");
+			} else {
+				notice.hide();
+			}
+		} catch (err) {
+			console.error("[WhisperCal] Transcript creation failed:", err);
+			notice.setMessage("Transcript creation failed");
+		}
+		setTimeout(() => notice.hide(), 4000);
+	})();
+
+	return true;
+}
 
 /**
  * Search for a MacWhisper recording near a meeting start time,
@@ -38,68 +121,38 @@ export async function linkRecording(opts: {
 
 	if (!selected) return false;
 
-	// Set MacWhisper title to match the note filename (without folder or .md)
-	const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(meetingStart, timezone)} ${sanitizeFilename(subject)}`;
-	if (!await setSessionTitle(selected.sessionId, title)) {
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		new Notice("Failed to update MacWhisper session title");
-		return false;
-	}
+	return performLink({
+		app,
+		sessionId: selected.sessionId,
+		recordingStart: selected.recordingStart,
+		notePath,
+		subject,
+		timezone,
+		transcriptFolderPath,
+		attendees,
+		isRecurring,
+	});
+}
 
-	// Phase 1: Write session ID to note frontmatter (fast)
-	try {
-		await updateFrontmatter(app, notePath, "macwhisper_session_id", selected.sessionId);
-	} catch (err) {
-		console.error("[WhisperCal] Failed to update frontmatter — YAML may be malformed:", err);
-		new Notice("Failed to update note frontmatter (check for invalid YAML)");
-		return false;
-	}
-	new Notice("Recording linked to note");
-
-	// Phase 2: Create transcript file in background (fire-and-forget)
-	// Polls for transcript lines in case MacWhisper is still transcribing.
-	void (async () => {
-		const notice = new Notice("Creating transcript\u2026", 0);
-		try {
-			// Wait for MacWhisper transcription to finish
-			let ready = await hasTranscriptLines(selected.sessionId);
-			if (!ready) {
-				notice.setMessage("Waiting for MacWhisper transcription\u2026");
-				const maxAttempts = 60; // ~3 minutes at 3s intervals
-				for (let i = 0; i < maxAttempts && !ready; i++) {
-					await sleep(3000);
-					ready = await hasTranscriptLines(selected.sessionId);
-				}
-				if (!ready) {
-					notice.setMessage("Transcription still in progress \u2014 try linking again later");
-					setTimeout(() => notice.hide(), 6000);
-					return;
-				}
-			}
-
-			notice.setMessage("Creating transcript\u2026");
-			const transcriptPath = await createTranscriptFile({
-				app,
-				notePath,
-				sessionId: selected.sessionId,
-				transcriptFolderPath,
-				recordingStart: selected.recordingStart,
-				timezone,
-				calendarEvent: subject,
-				calendarAttendees: attendees.map(a => a.name),
-				isRecurring,
-			});
-			if (transcriptPath) {
-				notice.setMessage("Transcript linked to note");
-			} else {
-				notice.hide();
-			}
-		} catch (err) {
-			console.error("[WhisperCal] Transcript creation failed:", err);
-			notice.setMessage("Transcript creation failed");
-		}
-		setTimeout(() => notice.hide(), 4000);
-	})();
-
-	return true;
+/**
+ * Link a known MacWhisper recording to an existing note.
+ * Used by the "unlinked recordings" feature where the session is already identified.
+ */
+export async function linkKnownRecording(opts: {
+	app: App;
+	session: MacWhisperRecording;
+	notePath: string;
+	subject: string;
+	timezone: string;
+	transcriptFolderPath: string;
+	attendees?: EventAttendee[];
+	isRecurring?: boolean;
+}): Promise<boolean> {
+	return performLink({
+		...opts,
+		sessionId: opts.session.sessionId,
+		recordingStart: opts.session.recordingStart,
+		attendees: opts.attendees ?? [],
+		isRecurring: opts.isRecurring ?? false,
+	});
 }

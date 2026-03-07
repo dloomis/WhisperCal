@@ -5,7 +5,6 @@ import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
-import {createDefaultTemplateFile} from "./services/TemplateEngine";
 
 export interface WhisperCalSettings {
 	timezone: string;
@@ -20,6 +19,8 @@ export interface WhisperCalSettings {
 	transcriptFolderPath: string;
 	unscheduledSubject: string;
 	recordingWindowMinutes: number;
+	unlinkedLookbackDays: number;
+	unlinkedGracePeriodHours: number;
 	speakerTaggingPromptPath: string;
 	summarizerPromptPath: string;
 	microphoneUser: string;
@@ -44,7 +45,9 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
 	unscheduledSubject: "Unscheduled Meeting",
-	recordingWindowMinutes: 10,
+	recordingWindowMinutes: 15,
+	unlinkedLookbackDays: 30,
+	unlinkedGracePeriodHours: 48,
 	speakerTaggingPromptPath: "",
 	summarizerPromptPath: "",
 	microphoneUser: "",
@@ -145,7 +148,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Note template")
-			.setDesc("Vault file used as a template for meeting note content. Leave empty to use the built-in default. The template file lists which frontmatter keys are reserved and must not be renamed.")
+			.setDesc("Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.")
 			.addText(text => {
 				text.setPlaceholder("Templates/WhisperCal Meeting.md")
 					.setValue(this.plugin.settings.noteTemplatePath)
@@ -155,22 +158,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					});
 				new FileSuggest(this.app, text.inputEl);
 			});
-
-		new Setting(containerEl)
-			.setName("Create default template")
-			.setDesc("Write the default meeting note template to a file in your vault. Open it to see which frontmatter keys are reserved before customizing.")
-			.addButton(button => button
-				.setButtonText("Create template file")
-				.onClick(async () => {
-					const path = this.plugin.settings.noteTemplatePath
-						|| "Templates/WhisperCal Meeting.md";
-					await createDefaultTemplateFile(this.app, path);
-					if (!this.plugin.settings.noteTemplatePath) {
-						this.plugin.settings.noteTemplatePath = path;
-						await this.plugin.saveSettings();
-						this.display();
-					}
-				}));
 
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
@@ -193,6 +180,34 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.recordingWindowMinutes = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Unlinked lookback (days)")
+			.setDesc("How far back to check for unlinked recordings")
+			.addText(text => text
+				.setPlaceholder("30")
+				.setValue(String(this.plugin.settings.unlinkedLookbackDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.unlinkedLookbackDays = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Unlinked grace period (hours)")
+			.setDesc("Ignore recordings newer than this — gives time to link them normally before flagging")
+			.addText(text => text
+				.setPlaceholder("48")
+				.setValue(String(this.plugin.settings.unlinkedGracePeriodHours))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 0) {
+						this.plugin.settings.unlinkedGracePeriodHours = num;
 						await this.plugin.saveSettings();
 					}
 				}));

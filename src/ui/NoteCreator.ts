@@ -38,7 +38,7 @@ export class NoteCreator {
 		}
 	}
 
-	async createNote(event: CalendarEvent): Promise<void> {
+	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean}): Promise<void> {
 		const path = this.getNotePath(event);
 
 		// If note already exists, just open it
@@ -57,11 +57,12 @@ export class NoteCreator {
 		// For unscheduled events, stamp the actual creation time so
 		// frontmatter records a real meeting_start and the card can
 		// render inline at the correct time slot.
-		const effectiveEvent = event.id === "unscheduled"
+		const effectiveEvent = event.id === "unscheduled" && !opts?.preserveTimestamps
 			? {...event, startTime: noteCreated, endTime: noteCreated}
 			: event;
 
 		const content = await this.buildNoteContent(effectiveEvent, noteCreated);
+		if (!content) return;
 		const file = await this.app.vault.create(path, content);
 		const leaf = this.app.workspace.getLeaf("tab");
 		await leaf.openFile(file);
@@ -115,12 +116,49 @@ export class NoteCreator {
 		editor.focus();
 	}
 
-	private async buildNoteContent(event: CalendarEvent, noteCreated: Date): Promise<string> {
+	private async buildNoteContent(event: CalendarEvent, noteCreated: Date): Promise<string | null> {
 		const template = await loadTemplate(this.app, this.settings.noteTemplatePath);
+		if (!template) return null;
 		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
 		const peopleMatch = peopleSvc.matchAttendees(event.attendees);
 		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
 		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated);
-		return applyTemplate(template, variables);
+		const content = applyTemplate(template, variables);
+		return this.injectReservedFrontmatter(content, event, variables, noteCreated);
+	}
+
+	/**
+	 * Inject plugin-managed frontmatter keys into the note content.
+	 * These are not part of the user template — the plugin owns them.
+	 */
+	private injectReservedFrontmatter(
+		content: string,
+		event: CalendarEvent,
+		variables: Record<string, string>,
+		noteCreated: Date,
+	): string {
+		const inviteeLines = event.attendees.length > 0
+			? "\n" + variables["invitees"]
+			: "";
+		const reserved = [
+			`meeting_subject: "${event.subject}"`,
+			`meeting_date: "${variables["date"]}"`,
+			`meeting_start: "${variables["startTime"]}"`,
+			`meeting_end: "${variables["endTime"]}"`,
+			`meeting_location: "${variables["location"]}"`,
+			`meeting_invitees:${inviteeLines}`,
+			`meeting_organizer: "${variables["organizer"]}"`,
+			`tags: [meeting]`,
+			`calendar_event_id: "${event.id}"`,
+			`note_created: "${noteCreated.toISOString()}"`,
+			`is_recurring: ${event.isRecurring}`,
+			`macwhisper_session_id: ""`,
+			`transcript: ""`,
+		].join("\n");
+
+		// Insert before the closing --- of frontmatter
+		const closingIdx = content.indexOf("\n---", 1);
+		if (closingIdx === -1) return content;
+		return content.slice(0, closingIdx) + "\n" + reserved + content.slice(closingIdx);
 	}
 }

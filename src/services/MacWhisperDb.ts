@@ -186,6 +186,55 @@ export async function findRecordingsNear(
 }
 
 /**
+ * Fetch all recent MacWhisper sessions within a time window,
+ * filtered by track-0 birthtime. Returns sessions older than
+ * `gracePeriodHours` but newer than `lookbackDays`.
+ */
+export async function findRecentSessions(
+	lookbackDays: number,
+	gracePeriodHours: number,
+): Promise<MacWhisperRecording[]> {
+	const sql = `
+		SELECT hex(s.id) as sessionId,
+		       s.userChosenTitle as title,
+		       mf.filename as mediaFilename,
+		       sar.duration as duration
+		FROM session s
+		JOIN mediafile mf ON mf.sessionId = s.id
+		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
+		WHERE s.isTransient = 0
+		  AND s.dateDeleted IS NULL
+		  AND mf.filename LIKE '%_track-0_%'
+		ORDER BY s.dateCreated DESC
+		LIMIT 200;
+	`;
+	const raw = await query(sql);
+	const rows = parseRows<SessionRow>(raw);
+
+	const now = Date.now();
+	const graceMs = gracePeriodHours * 60 * 60 * 1000;
+	const lookbackMs = lookbackDays * 24 * 60 * 60 * 1000;
+	const results: MacWhisperRecording[] = [];
+
+	for (const row of rows) {
+		const birthtime = getTrack0Birthtime(row.sessionId);
+		if (!birthtime) continue;
+
+		const age = now - birthtime.getTime();
+		if (age >= graceMs && age <= lookbackMs) {
+			results.push({
+				sessionId: row.sessionId,
+				title: row.title || null,
+				recordingStart: birthtime,
+				durationSeconds: row.duration ? Math.round(row.duration) : 0,
+			});
+		}
+	}
+
+	return results;
+}
+
+/**
  * Check whether any transcript lines exist for a session.
  * Used to detect whether MacWhisper has finished transcribing.
  */
