@@ -368,6 +368,12 @@
 	padding-bottom: 24px;
 }
 
+.whisper-cal-unlinked-empty {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	padding: 8px 0;
+}
+
 .whisper-cal-unlinked-header {
 	display: flex;
 	align-items: center;

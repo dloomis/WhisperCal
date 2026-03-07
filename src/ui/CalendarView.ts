@@ -487,7 +487,13 @@ export class CalendarView extends ItemView {
 		const linked = this.getLinkedSessionIds();
 		const unlinked = sessions.filter(s => !linked.has(s.sessionId));
 
-		if (unlinked.length === 0) return;
+		if (unlinked.length === 0) {
+			this.unlinkedEl.createDiv({
+				cls: "whisper-cal-unlinked-empty",
+				text: `No unlinked MacWhisper recordings for the last ${this.settings.unlinkedLookbackDays} days`,
+			});
+			return;
+		}
 
 		// Collapsible header
 		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
