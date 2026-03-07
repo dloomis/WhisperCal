@@ -34,6 +34,7 @@ export class CalendarView extends ItemView {
 	private stickyHeaderEl: HTMLElement | null = null;
 	private unlinkedEl: HTMLElement | null = null;
 	private unlinkedCollapsed = true;
+	private unlinkedGeneration = 0;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -473,10 +474,15 @@ export class CalendarView extends ItemView {
 
 		if (this.settings.unlinkedLookbackDays <= 0) return;
 
+		const gen = ++this.unlinkedGeneration;
+
 		const sessions = await findRecentSessions(
 			this.settings.unlinkedLookbackDays,
 			this.settings.unlinkedGracePeriodHours,
 		);
+
+		// Bail if a newer call superseded us
+		if (gen !== this.unlinkedGeneration) return;
 
 		const linked = this.getLinkedSessionIds();
 		const unlinked = sessions.filter(s => !linked.has(s.sessionId));
