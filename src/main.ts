@@ -1,8 +1,6 @@
-import {EventRef, MarkdownView, Notice, Plugin, TFile, normalizePath} from "obsidian";
+import {Notice, Plugin, TFile} from "obsidian";
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import speakerAutoTagPrompt from "../prompts/Speaker Auto-Tag Prompt.md";
-import summarizerPrompt from "../prompts/Meeting Transcript Summarizer Prompt.md";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
 import {createCalendarProvider} from "./services/CalendarProvider";
@@ -27,15 +25,10 @@ export default class WhisperCalPlugin extends Plugin {
 	private provider: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
-	private micButtonEl: HTMLElement | null = null;
-	private tagSpeakersButtonEl: HTMLElement | null = null;
-	private micWatchRef: EventRef | null = null;
-	private tagSpeakersWatchRef: EventRef | null = null;
 	private tokenCache: TokenCache | null = null;
 
 	async onload() {
 		await this.loadSettings();
-		await this.ensurePromptFile();
 
 		this.auth = new MsalAuth(
 			{
@@ -149,21 +142,7 @@ export default class WhisperCalPlugin extends Plugin {
 			}),
 		);
 
-		// Show mic button in title bar for meeting notes
-		this.registerEvent(
-			this.app.workspace.on("file-open", () => this.updateTitleBarMicButton()),
-		);
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => this.updateTitleBarMicButton()),
-		);
 
-		// Show tag speakers button in title bar for transcript/meeting notes
-		this.registerEvent(
-			this.app.workspace.on("file-open", () => this.updateTagSpeakersButton()),
-		);
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => this.updateTagSpeakersButton()),
-		);
 
 		this.addCommand({
 			id: COMMAND_TAG_SPEAKERS,
@@ -202,25 +181,9 @@ export default class WhisperCalPlugin extends Plugin {
 
 	onunload() {
 		this.auth.cancelSignIn();
-		this.removeTitleBarMicButton();
-		this.removeTagSpeakersButton();
 		void this.cachedProvider?.flush();
 	}
 
-	private async ensurePromptFile(): Promise<void> {
-		await this.writePromptIfMissing(this.settings.speakerTaggingPromptPath, speakerAutoTagPrompt);
-		await this.writePromptIfMissing(this.settings.summarizerPromptPath, summarizerPrompt);
-	}
-
-	private async writePromptIfMissing(filePath: string, content: string): Promise<void> {
-		if (!filePath) return;
-		const normalized = normalizePath(filePath);
-		const exists = await this.app.vault.adapter.exists(normalized);
-		if (exists) return;
-		const dir = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : null;
-		if (dir) await this.app.vault.adapter.mkdir(dir);
-		await this.app.vault.adapter.write(normalized, content);
-	}
 
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
@@ -290,28 +253,6 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.saveData({...this.settings, tokenCache: cache});
 	}
 
-	private removeTitleBarMicButton(): void {
-		if (this.micWatchRef) {
-			this.app.metadataCache.offref(this.micWatchRef);
-			this.micWatchRef = null;
-		}
-		if (this.micButtonEl) {
-			this.micButtonEl.remove();
-			this.micButtonEl = null;
-		}
-	}
-
-	private removeTagSpeakersButton(): void {
-		if (this.tagSpeakersWatchRef) {
-			this.app.metadataCache.offref(this.tagSpeakersWatchRef);
-			this.tagSpeakersWatchRef = null;
-		}
-		if (this.tagSpeakersButtonEl) {
-			this.tagSpeakersButtonEl.remove();
-			this.tagSpeakersButtonEl = null;
-		}
-	}
-
 	private resolveTagSpeakersContext(
 		file: TFile,
 		fm: Record<string, unknown> | undefined,
@@ -333,69 +274,6 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		return null;
-	}
-
-	private updateTagSpeakersButton(): void {
-		this.removeTagSpeakersButton();
-
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (!view?.file) return;
-
-		const file = view.file;
-		const cache = this.app.metadataCache.getFileCache(file);
-
-		// File not yet indexed — retry when cache is ready
-		if (!cache) {
-			const ref = this.app.metadataCache.on("changed", (changedFile) => {
-				if (changedFile.path === file.path) {
-					this.app.metadataCache.offref(ref);
-					this.updateTagSpeakersButton();
-				}
-			});
-			window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
-			return;
-		}
-
-		const fm = cache.frontmatter;
-		const transcriptFile = this.resolveTagSpeakersContext(file, fm);
-		if (!transcriptFile) return;
-
-		// Get transcript frontmatter; retry if it's a different file not yet indexed
-		let transcriptFm: Record<string, unknown>;
-		if (transcriptFile.path === file.path) {
-			transcriptFm = fm ?? {};
-		} else {
-			const transcriptCache = this.app.metadataCache.getFileCache(transcriptFile);
-			if (!transcriptCache) {
-				const ref = this.app.metadataCache.on("changed", (changedFile) => {
-					if (changedFile.path === transcriptFile.path) {
-						this.app.metadataCache.offref(ref);
-						this.updateTagSpeakersButton();
-					}
-				});
-				window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
-				return;
-			}
-			transcriptFm = transcriptCache.frontmatter ?? {};
-		}
-
-		// Determine button state from pipeline_state
-		const pipelineState = transcriptFm["pipeline_state"] as string | undefined;
-		const isTagged = !!pipelineState && pipelineState !== "titled";
-		const icon = isTagged ? "user-check" : "users";
-		const label = isTagged ? "Speakers tagged" : "Tag speakers";
-
-		this.tagSpeakersButtonEl = view.addAction(icon, label, () => {
-			const freshFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
-			this.doTagSpeakers(transcriptFile, freshFm as Record<string, unknown>);
-		});
-
-		// Persistent watcher — flips icon when LLM writes pipeline_state to the transcript
-		this.tagSpeakersWatchRef = this.app.metadataCache.on("changed", (changedFile) => {
-			if (changedFile.path === transcriptFile.path) {
-				this.updateTagSpeakersButton();
-			}
-		});
 	}
 
 	private doTagSpeakers(
@@ -479,71 +357,6 @@ export default class WhisperCalPlugin extends Plugin {
 		new Notice("Opening Claude Code for summarization — this may take several minutes");
 	}
 
-	private updateTitleBarMicButton(): void {
-		this.removeTitleBarMicButton();
-
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		if (!view?.file) return;
-
-		const file = view.file;
-		const cache = this.app.metadataCache.getFileCache(file);
-
-		// File not yet indexed (e.g. just created) — retry when cache is ready
-		if (!cache) {
-			const ref = this.app.metadataCache.on("changed", (changedFile) => {
-				if (changedFile.path === file.path) {
-					this.app.metadataCache.offref(ref);
-					this.updateTitleBarMicButton();
-				}
-			});
-			window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
-			return;
-		}
-
-		const fm = cache.frontmatter;
-		if (!fm?.["calendar_event_id"]) return;
-
-		const alreadyLinked = !!fm["macwhisper_session_id"];
-		const icon = alreadyLinked ? "check" : "mic";
-		const label = alreadyLinked ? "MacWhisper recording linked" : "Link MacWhisper recording";
-
-		this.micButtonEl = view.addAction(icon, label, () => {
-			// Re-read frontmatter at click time to avoid stale closures
-			const freshFm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-			if (!freshFm) return;
-			if (freshFm["macwhisper_session_id"]) {
-				new Notice("Recording already linked to this note");
-				return;
-			}
-			const doLink = async () => {
-				try {
-					await this.handleLinkRecording(file, freshFm);
-					// Re-render mic button once metadataCache reflects the new frontmatter
-					const ref = this.app.metadataCache.on("changed", (changedFile) => {
-						if (changedFile.path === file.path) {
-							this.app.metadataCache.offref(ref);
-							this.updateTitleBarMicButton();
-						}
-					});
-					// Safety: clean up if the event never fires
-					window.setTimeout(() => this.app.metadataCache.offref(ref), 5000);
-				} catch (err) {
-					console.error("[WhisperCal] handleLinkRecording error:", err);
-				}
-			};
-			void doLink();
-		});
-		this.micButtonEl.addClass("whisper-cal-mic-action");
-
-		// Persistent watcher: update mic button when note frontmatter changes
-		// (e.g. when recording is linked via the calendar card's mic icon)
-		this.micWatchRef = this.app.metadataCache.on("changed", (changedFile) => {
-			if (changedFile.path === file.path) {
-				this.updateTitleBarMicButton();
-			}
-		});
-	}
-
 	private async handleLinkRecording(
 		file: TFile,
 		fm: Record<string, unknown>,
@@ -584,7 +397,7 @@ export default class WhisperCalPlugin extends Plugin {
 		const isUnscheduled = fm["calendar_event_id"] === "unscheduled";
 
 		// Extract attendee names from frontmatter (stored as wiki links or plain strings)
-		const rawAttendees = Array.isArray(fm["invitees"]) ? fm["invitees"] as string[] : [];
+		const rawAttendees = Array.isArray(fm["meeting_invitees"]) ? fm["meeting_invitees"] as string[] : [];
 		const attendees = rawAttendees.map(s => {
 			const name = String(s).replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/^"/, "").replace(/"$/, "");
 			return {name, email: ""};

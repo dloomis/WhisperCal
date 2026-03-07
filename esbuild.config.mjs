@@ -32,7 +32,6 @@ const context = await esbuild.context({
 		"@lezer/highlight",
 		"@lezer/lr",
 		...builtinModules],
-	loader: { ".md": "text" },
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",

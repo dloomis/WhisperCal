@@ -1,52 +1,8 @@
-import {App, Notice, TFile, normalizePath} from "obsidian";
+import {App, Notice, TFile} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {PeopleMatchResult} from "./PeopleMatchService";
 import {formatDate, formatTime} from "../utils/time";
 import {parseDisplayName} from "../utils/nameParser";
-
-/**
- * Default template that exactly reproduces the original hardcoded
- * NoteCreator.buildNoteContent() output.
- */
-export const DEFAULT_TEMPLATE = `---
-# WhisperCal reserved keys — the plugin reads/writes these programmatically.
-# Renaming or removing them will break plugin features:
-#   calendar_event_id    (identifies this as a WhisperCal meeting note)
-#   macwhisper_session_id (links a MacWhisper recording; written on mic-link)
-#   meeting_date         (calendar navigation + recording time matching)
-#   meeting_start        (recording time matching)
-#   meeting_subject      (display title; passed to transcript creation)
-#   note_created         (fallback timestamp for unscheduled notes)
-#   is_recurring         (passed to transcript creation)
-#   invitees             (attendee list; passed to transcript creation)
-#   transcript           (backlink to transcript file; written on transcript creation)
-#   pipeline_state       (workflow state; mirrored from transcript automatically)
-#   tags                 (used to detect transcript vs meeting note context)
-#
-# Informational keys (not read by plugin — safe to customize):
-#   meeting_end, meeting_location, organizer
-meeting_subject: "{{subject}}"
-meeting_date: "{{date}}"
-meeting_start: "{{startTime}}"
-meeting_end: "{{endTime}}"
-meeting_location: "{{location}}"
-invitees:
-{{invitees}}
-organizer: "{{organizer}}"
-calendar_event_id: "{{eventId}}"
-note_created: "{{noteCreated}}"
-is_recurring: {{isRecurring}}
-macwhisper_session_id: ""
-transcript: ""
-tags: [meeting]
----
-
-# {{subject}}
-
-{{description}}
-
-## Notes
-`;
 
 /**
  * Build a map of all template variables from a CalendarEvent.
@@ -127,44 +83,21 @@ export function applyTemplate(template: string, variables: Record<string, string
 }
 
 /**
- * Load a template from the vault. Falls back to DEFAULT_TEMPLATE if
- * the path is empty or the file is not found (with a Notice in the latter case).
+ * Load a template from the vault. Returns null with a Notice if
+ * the path is empty or the file is not found.
  */
-export async function loadTemplate(app: App, path: string): Promise<string> {
+export async function loadTemplate(app: App, path: string): Promise<string | null> {
 	if (!path) {
-		return DEFAULT_TEMPLATE;
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("No meeting note template configured — set one in WhisperCal settings");
+		return null;
 	}
 
 	const file = app.vault.getAbstractFileByPath(path);
 	if (!(file instanceof TFile)) {
-		new Notice(`Template file "${path}" not found — using default template`);
-		return DEFAULT_TEMPLATE;
+		new Notice(`Template file "${path}" not found — check WhisperCal settings`);
+		return null;
 	}
 
 	return await app.vault.cachedRead(file);
-}
-
-/**
- * Write the DEFAULT_TEMPLATE to a file in the vault.
- * Creates parent folders if needed.
- */
-export async function createDefaultTemplateFile(app: App, rawPath: string): Promise<void> {
-	const path = normalizePath(rawPath);
-	// Ensure parent folder exists
-	const folderPath = path.substring(0, path.lastIndexOf("/"));
-	if (folderPath) {
-		const folder = app.vault.getAbstractFileByPath(folderPath);
-		if (!folder) {
-			await app.vault.createFolder(folderPath);
-		}
-	}
-
-	const existing = app.vault.getAbstractFileByPath(path);
-	if (existing instanceof TFile) {
-		new Notice(`Template file already exists: ${path}`);
-		return;
-	}
-
-	await app.vault.create(path, DEFAULT_TEMPLATE);
-	new Notice(`Created template: ${path}`);
 }

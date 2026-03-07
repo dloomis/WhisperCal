@@ -521,7 +521,10 @@ export class CalendarView extends ItemView {
 		const meta = card.createDiv({cls: "whisper-cal-unlinked-meta"});
 		const dateStr = this.formatRecordingDate(recording.recordingStart);
 		const durStr = this.formatRecordingDuration(recording.durationSeconds);
-		meta.createSpan({text: durStr ? `${dateStr} \u00B7 ${durStr}` : dateStr});
+		const parts = [dateStr];
+		if (durStr) parts.push(durStr);
+		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
+		meta.createSpan({text: parts.join(" \u00B7 ")});
 
 		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {
@@ -618,9 +621,13 @@ export class CalendarView extends ItemView {
 	private formatRecordingDate(date: Date): string {
 		const now = new Date();
 		const sameYear = date.getFullYear() === now.getFullYear();
-		const opts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric"};
-		if (!sameYear) opts.year = "numeric";
-		return date.toLocaleDateString("en-US", opts);
+		const dateOpts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric"};
+		if (!sameYear) dateOpts.year = "numeric";
+		const datePart = date.toLocaleDateString("en-US", dateOpts);
+		const timePart = date.toLocaleTimeString("en-US", {
+			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone,
+		});
+		return `${datePart}, ${timePart}`;
 	}
 
 	private formatRecordingDuration(seconds: number): string {

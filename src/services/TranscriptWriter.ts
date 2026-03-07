@@ -91,7 +91,7 @@ function buildFrontmatter(opts: {
 	lines.push(`meeting_subject: "${yamlEscape(calendarEvent)}"`);
 	lines.push(`is_recurring: ${isRecurring}`);
 	if (calendarAttendees.length > 0) {
-		lines.push("invitees:");
+		lines.push("meeting_invitees:");
 		for (const name of calendarAttendees) {
 			lines.push(`  - "${yamlEscape(name)}"`);
 		}
@@ -183,9 +183,11 @@ export async function createTranscriptFile(opts: {
 
 	const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
 
-	// Idempotent — skip if file already exists
+	// If transcript file already exists, ensure backlinks are set and return
 	if (app.vault.getAbstractFileByPath(transcriptPath) instanceof TFile) {
-		return null;
+		const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
+		return transcriptPath;
 	}
 
 	const data = await getTranscript(sessionId);

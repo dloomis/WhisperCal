@@ -9,6 +9,7 @@ export interface MacWhisperRecording {
 	title: string | null;
 	recordingStart: Date;
 	durationSeconds: number;
+	speakerCount: number;
 }
 
 interface SessionRow {
@@ -16,6 +17,7 @@ interface SessionRow {
 	title: string | null;
 	mediaFilename: string;
 	duration: number | null;
+	speakerCount: number;
 }
 
 interface TranscriptLineRow {
@@ -135,7 +137,8 @@ export async function findRecordingsNear(
 		SELECT hex(s.id) as sessionId,
 		       s.userChosenTitle as title,
 		       mf.filename as mediaFilename,
-		       sar.duration as duration
+		       sar.duration as duration,
+		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
 		FROM session s
 		JOIN mediafile mf ON mf.sessionId = s.id
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
@@ -175,6 +178,7 @@ export async function findRecordingsNear(
 				title: row.title || null,
 				recordingStart: birthtime,
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
+				speakerCount: row.speakerCount,
 			});
 		} else if (diffMin < 120) {
 			debug("MacWhisperDb", "NEAR-MISS: session=%s title=%s birthtime=%s diff=%.1f min",
@@ -199,7 +203,8 @@ export async function findRecentSessions(
 		SELECT hex(s.id) as sessionId,
 		       s.userChosenTitle as title,
 		       mf.filename as mediaFilename,
-		       sar.duration as duration
+		       sar.duration as duration,
+		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
 		FROM session s
 		JOIN mediafile mf ON mf.sessionId = s.id
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
@@ -229,6 +234,7 @@ export async function findRecentSessions(
 				title: row.title || null,
 				recordingStart: birthtime,
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
+				speakerCount: row.speakerCount,
 			});
 		}
 	}
