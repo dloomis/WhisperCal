@@ -309,6 +309,7 @@ export default class WhisperCalPlugin extends Plugin {
 			llmExtraFlags: this.settings.llmExtraFlags,
 			llmSkipPermissions: this.settings.llmSkipPermissions,
 			terminalApp: this.settings.terminalApp,
+			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
 			transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 			peopleFolderPath: this.settings.peopleFolderPath || undefined,
 		});
@@ -352,6 +353,7 @@ export default class WhisperCalPlugin extends Plugin {
 			llmExtraFlags: this.settings.llmExtraFlags,
 			llmSkipPermissions: this.settings.llmSkipPermissions,
 			terminalApp: this.settings.terminalApp,
+			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
 		});
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		new Notice("Opening Claude Code for summarization — this may take several minutes");

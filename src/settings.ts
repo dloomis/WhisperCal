@@ -28,6 +28,7 @@ export interface WhisperCalSettings {
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
+	llmAutoCloseTerminal: boolean;
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmSkipPermissions: true,
 	llmExtraFlags: "",
 	terminalApp: "Terminal",
+	llmAutoCloseTerminal: false,
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -299,6 +301,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		new Setting(containerEl)
+			.setName("Auto-close terminal")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Close the terminal window after the LLM prompt completes")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.llmAutoCloseTerminal)
+				.onChange(async (value) => {
+					this.plugin.settings.llmAutoCloseTerminal = value;
+					await this.plugin.saveSettings();
+				}));
 
 		new Setting(containerEl)
 			.setName("Calendar")

@@ -12,6 +12,7 @@ export interface LlmInvokerOpts {
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
+	autoCloseTerminal: boolean;
 	// Optional parameters that skip prompt steps when provided
 	microphoneUser?: string;
 	transcriptFolderPath?: string;  // folder name for transcript files
@@ -47,6 +48,7 @@ export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 		llmSkipPermissions,
 		llmExtraFlags,
 		terminalApp,
+		autoCloseTerminal,
 		transcriptFolderPath,
 		peopleFolderPath,
 	} = opts;
@@ -82,12 +84,19 @@ export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 	// Write shellCmd to a temp script to avoid shell-quoting/AppleScript quoting conflicts.
 	// (Shell's '\'' escaping inside AppleScript double-quoted strings causes a syntax error.)
 	const tmpScript = path.join(os.tmpdir(), `whisper-cal-${Date.now()}.sh`);
-	await writeFile(tmpScript, `#!/bin/bash\n${shellCmd}\n`, {mode: 0o755});
+	// When auto-close is on, exit the shell after the CLI finishes so the terminal can close.
+	const scriptBody = autoCloseTerminal
+		? `#!/bin/bash\n${shellCmd}\nexit 0\n`
+		: `#!/bin/bash\n${shellCmd}\n`;
+	await writeFile(tmpScript, scriptBody, {mode: 0o755});
 
 	// The temp path has no special characters, so embedding it in AppleScript is safe.
 	const asCmd = asAppleScriptStr(`bash ${shellQuote(tmpScript)}`);
 	let applescript: string;
 	if (terminalApp === "iTerm2") {
+		// iTerm2: the script already has `exit 0` when auto-close is on,
+		// which ends the session. iTerm2's default "close if clean exit"
+		// profile setting handles window cleanup automatically.
 		applescript = `tell application "iTerm2"
 	create window with default profile
 	tell current session of current window
@@ -96,10 +105,25 @@ export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 	activate
 end tell`;
 	} else {
-		applescript = `tell application "Terminal"
+		if (autoCloseTerminal) {
+			// Terminal.app: run the command, then close the specific window when done.
+			// "do script" returns a tab reference; its `window` property tracks the window.
+			applescript = `tell application "Terminal"
+	set newTab to do script ${asCmd}
+	set targetWindow to window of newTab
+	activate
+	repeat
+		delay 2
+		if not busy of newTab then exit repeat
+	end repeat
+	close targetWindow
+end tell`;
+		} else {
+			applescript = `tell application "Terminal"
 	do script ${asCmd}
 	activate
 end tell`;
+		}
 	}
 
 	execFile("osascript", ["-e", applescript], (err) => {
