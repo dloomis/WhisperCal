@@ -129,6 +129,7 @@ export class CalendarView extends ItemView {
 				this.cardRefreshTimer = window.setTimeout(() => {
 					this.cardRefreshTimer = null;
 					this.renderEvents(this.cachedEvents!);
+					void this.loadAndRenderUnlinkedSection();
 				}, 500);
 			}),
 		);
