@@ -21,18 +21,15 @@ async function performLink(opts: {
 	transcriptFolderPath: string;
 	attendees: EventAttendee[];
 	isRecurring: boolean;
-	skipTitleUpdate?: boolean;
 }): Promise<boolean> {
 	const {app, sessionId, recordingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring} = opts;
 
-	// Set MacWhisper title to match the note filename (skip for user-titled imports)
-	if (!opts.skipTitleUpdate) {
-		const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(recordingStart, timezone)} ${sanitizeFilename(subject)}`;
-		if (!await setSessionTitle(sessionId, title)) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("Failed to update MacWhisper session title");
-			return false;
-		}
+	// Set MacWhisper title to match the note filename
+	const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(recordingStart, timezone)} ${sanitizeFilename(subject)}`;
+	if (!await setSessionTitle(sessionId, title)) {
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("Failed to update MacWhisper session title");
+		return false;
 	}
 
 	// Phase 1: Write session ID to note frontmatter (fast)
@@ -150,7 +147,6 @@ export async function linkKnownRecording(opts: {
 	transcriptFolderPath: string;
 	attendees?: EventAttendee[];
 	isRecurring?: boolean;
-	skipTitleUpdate?: boolean;
 }): Promise<boolean> {
 	return performLink({
 		...opts,
@@ -158,6 +154,5 @@ export async function linkKnownRecording(opts: {
 		recordingStart: opts.session.recordingStart,
 		attendees: opts.attendees ?? [],
 		isRecurring: opts.isRecurring ?? false,
-		skipTitleUpdate: opts.skipTitleUpdate,
 	});
 }

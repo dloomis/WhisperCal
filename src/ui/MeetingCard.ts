@@ -1,11 +1,10 @@
 import {App, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
-import type {MacWhisperRecording} from "../services/MacWhisperDb";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
 import {formatTime} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
-import {linkRecording, linkKnownRecording} from "../services/LinkRecording";
+import {linkRecording} from "../services/LinkRecording";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
@@ -22,7 +21,6 @@ export interface MeetingCardOpts {
 	onNoteCreated?: () => void;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
-	macwhisperSession?: MacWhisperRecording;
 }
 
 type PillState = "incomplete" | "complete" | "disabled";
@@ -50,7 +48,6 @@ export function renderMeetingCard(
 		transcriptFolderPath = "Transcripts",
 		recordingWindowMinutes = 10,
 		onNoteCreated, onTagSpeakers, onSummarize,
-		macwhisperSession,
 	} = opts;
 	const isActive = opts.isActive ?? false;
 
@@ -174,7 +171,6 @@ export function renderMeetingCard(
 					await noteCreator.openExistingNote(event);
 				} else {
 					const isUnscheduled = event.id.startsWith("unscheduled");
-					const isMacWhisper = event.id.startsWith("macwhisper-");
 					let targetEvent = event;
 					if (isUnscheduled) {
 						const name = await new NameInputModal(app, {
@@ -183,20 +179,8 @@ export function renderMeetingCard(
 						if (!name) return;
 						targetEvent = {...event, subject: name};
 					}
-					await noteCreator.createNote(targetEvent, isMacWhisper ? {preserveTimestamps: true} : undefined);
-					if (isMacWhisper && macwhisperSession) {
-						const createdNotePath = noteCreator.getNotePath(targetEvent);
-						await linkKnownRecording({
-							app,
-							session: macwhisperSession,
-							notePath: createdNotePath,
-							subject: targetEvent.subject,
-							timezone,
-							transcriptFolderPath,
-							skipTitleUpdate: true,
-						});
-					}
-					if ((isUnscheduled || isMacWhisper) && onNoteCreated) {
+					await noteCreator.createNote(targetEvent);
+					if (isUnscheduled && onNoteCreated) {
 						onNoteCreated();
 					}
 				}

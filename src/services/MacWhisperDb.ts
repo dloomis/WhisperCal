@@ -201,7 +201,6 @@ export async function findRecordingsNear(
  */
 export async function findRecentSessions(
 	lookbackDays: number,
-	gracePeriodHours: number,
 ): Promise<MacWhisperRecording[]> {
 	const sql = `
 		SELECT hex(s.id) as sessionId,
@@ -228,7 +227,6 @@ export async function findRecentSessions(
 	const rows = parseRows<SessionRow>(raw);
 
 	const now = Date.now();
-	const graceMs = gracePeriodHours * 60 * 60 * 1000;
 	const lookbackMs = lookbackDays * 24 * 60 * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
@@ -237,86 +235,7 @@ export async function findRecentSessions(
 		if (!birthtime) continue;
 
 		const age = now - birthtime.getTime();
-		if (age >= graceMs && age <= lookbackMs) {
-			results.push({
-				sessionId: row.sessionId,
-				title: row.title || null,
-				recordingStart: birthtime,
-				durationSeconds: row.duration ? Math.round(row.duration) : 0,
-				speakerCount: row.speakerCount,
-			});
-		}
-	}
-
-	return results;
-}
-
-/**
- * Find titled MacWhisper sessions whose media birthtime falls on a given
- * calendar date (in the caller's timezone).  Used to surface imported or
- * independently-titled recordings as timeline cards.
- */
-export async function findSessionsForDate(
-	targetDate: Date,
-	timezone: string,
-): Promise<MacWhisperRecording[]> {
-	// Narrow the SQL window to ±1 day around the target date to avoid
-	// scanning the entire session table.
-	const dayStart = new Date(targetDate);
-	dayStart.setHours(0, 0, 0, 0);
-	const prevDay = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
-	const nextDay = new Date(dayStart.getTime() + 2 * 24 * 60 * 60 * 1000);
-	const fmtSql = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
-
-	const sql = `
-		SELECT hex(s.id) as sessionId,
-		       s.userChosenTitle as title,
-		       mf.filename as mediaFilename,
-		       sar.duration as duration,
-		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
-		FROM session s
-		JOIN mediafile mf ON mf.sessionId = s.id
-			AND mf.id = (
-				SELECT id FROM mediafile m2
-				WHERE m2.sessionId = s.id
-				ORDER BY (m2.filename LIKE '%_track-0_%') DESC
-				LIMIT 1
-			)
-		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
-		WHERE s.isTransient = 0
-		  AND s.dateDeleted IS NULL
-		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
-		  AND s.userChosenTitle IS NOT NULL AND s.userChosenTitle != ''
-		  AND s.dateCreated >= '${fmtSql(prevDay)}'
-		  AND s.dateCreated <  '${fmtSql(nextDay)}'
-		ORDER BY s.dateCreated DESC
-		LIMIT 50;
-	`;
-	const raw = await query(sql);
-	const rows = parseRows<SessionRow>(raw);
-
-	// Format target date in the user's timezone for comparison
-	const targetDateStr = new Intl.DateTimeFormat("en-CA", {
-		timeZone: timezone,
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-	}).format(targetDate);
-
-	const results: MacWhisperRecording[] = [];
-	for (const row of rows) {
-		const birthtime = getMediaBirthtime(row.sessionId);
-		if (!birthtime) continue;
-
-		// Compare the birthtime's date in the user's timezone
-		const birthdateStr = new Intl.DateTimeFormat("en-CA", {
-			timeZone: timezone,
-			year: "numeric",
-			month: "2-digit",
-			day: "2-digit",
-		}).format(birthtime);
-
-		if (birthdateStr === targetDateStr) {
+		if (age <= lookbackMs) {
 			results.push({
 				sessionId: row.sessionId,
 				title: row.title || null,

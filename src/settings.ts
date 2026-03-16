@@ -20,7 +20,6 @@ export interface WhisperCalSettings {
 	unscheduledSubject: string;
 	recordingWindowMinutes: number;
 	unlinkedLookbackDays: number;
-	unlinkedGracePeriodHours: number;
 	speakerTaggingPromptPath: string;
 	summarizerPromptPath: string;
 	microphoneUser: string;
@@ -48,7 +47,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	unscheduledSubject: "Unscheduled Meeting",
 	recordingWindowMinutes: 15,
 	unlinkedLookbackDays: 30,
-	unlinkedGracePeriodHours: 48,
 	speakerTaggingPromptPath: "",
 	summarizerPromptPath: "",
 	microphoneUser: "",
@@ -196,20 +194,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.unlinkedLookbackDays = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Unlinked grace period (hours)")
-			.setDesc("Ignore recordings newer than this — gives time to link them normally before flagging")
-			.addText(text => text
-				.setPlaceholder("48")
-				.setValue(String(this.plugin.settings.unlinkedGracePeriodHours))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 0) {
-						this.plugin.settings.unlinkedGracePeriodHours = num;
 						await this.plugin.saveSettings();
 					}
 				}));

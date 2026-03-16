@@ -102,6 +102,7 @@ export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 	tell current session of current window
 		write text ${asCmd}
 	end tell
+	delay 0.5
 	activate
 end tell`;
 	} else {
@@ -111,6 +112,7 @@ end tell`;
 			applescript = `tell application "Terminal"
 	set newTab to do script ${asCmd}
 	set targetWindow to window of newTab
+	delay 0.5
 	activate
 	repeat
 		delay 2
@@ -121,6 +123,7 @@ end tell`;
 		} else {
 			applescript = `tell application "Terminal"
 	do script ${asCmd}
+	delay 0.5
 	activate
 end tell`;
 		}
