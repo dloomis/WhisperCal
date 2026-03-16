@@ -4,7 +4,7 @@ import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
-import {findRecentSessions, type MacWhisperRecording} from "../services/MacWhisperDb";
+import {findRecentSessions, findSessionsForDate, type MacWhisperRecording} from "../services/MacWhisperDb";
 import {linkKnownRecording} from "../services/LinkRecording";
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
@@ -36,6 +36,8 @@ export class CalendarView extends ItemView {
 	private unlinkedEl: HTMLElement | null = null;
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
+	private cachedMacWhisperSessions: MacWhisperRecording[] = [];
+	private macwhisperSessionMap = new Map<string, MacWhisperRecording>();
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -181,7 +183,15 @@ export class CalendarView extends ItemView {
 		this.renderLoading();
 
 		try {
-			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
+			const [events, macwhisperSessions] = await Promise.all([
+				this.provider.fetchEvents(this.selectedDate, this.settings.timezone),
+				findSessionsForDate(this.selectedDate, this.settings.timezone),
+			]);
+			this.cachedMacWhisperSessions = macwhisperSessions;
+			this.macwhisperSessionMap.clear();
+			for (const s of macwhisperSessions) {
+				this.macwhisperSessionMap.set(s.sessionId, s);
+			}
 			if (events.length === 0) {
 				// Check if we're truly disconnected with no cache
 				const status = this.getCacheStatus?.();
@@ -301,13 +311,31 @@ export class CalendarView extends ItemView {
 			return;
 		}
 
-		// Merge any previously-created unscheduled notes into the timeline
+		// Merge unscheduled notes and unlinked MacWhisper sessions into the timeline
 		const unscheduledNotes = this.findUnscheduledNotes();
-		const merged = [...events, ...unscheduledNotes];
+		const macwhisperEvents = this.buildMacWhisperEvents();
+		const merged = [...events, ...unscheduledNotes, ...macwhisperEvents];
 
 		const allDay = merged.filter(e => e.isAllDay);
 		const timed = merged.filter(e => !e.isAllDay);
 		timed.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+		const renderCard = (parent: HTMLElement, event: CalendarEvent) => {
+			const sessionId = event.id.startsWith("macwhisper-") ? event.id.slice(11) : undefined;
+			renderMeetingCard(parent, {
+				event,
+				timezone: this.settings.timezone,
+				noteCreator: this.noteCreator,
+				app: this.app,
+				isActive: activeEventIds.has(event.id),
+				transcriptFolderPath: this.settings.transcriptFolderPath,
+				recordingWindowMinutes: this.settings.recordingWindowMinutes,
+				onNoteCreated,
+				onTagSpeakers: this.onTagSpeakers ?? undefined,
+				onSummarize: this.onSummarize ?? undefined,
+				macwhisperSession: sessionId ? this.macwhisperSessionMap.get(sessionId) : undefined,
+			});
+		};
 
 		if (allDay.length > 0) {
 			this.contentContainer.createDiv({
@@ -315,18 +343,7 @@ export class CalendarView extends ItemView {
 				text: "All day",
 			});
 			for (const event of allDay) {
-				renderMeetingCard(this.contentContainer, {
-					event,
-					timezone: this.settings.timezone,
-					noteCreator: this.noteCreator,
-					app: this.app,
-					isActive: activeEventIds.has(event.id),
-					transcriptFolderPath: this.settings.transcriptFolderPath,
-					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					onNoteCreated,
-					onTagSpeakers: this.onTagSpeakers ?? undefined,
-					onSummarize: this.onSummarize ?? undefined,
-				});
+				renderCard(this.contentContainer, event);
 			}
 		}
 
@@ -336,18 +353,7 @@ export class CalendarView extends ItemView {
 				text: isToday ? "Today" : "Scheduled",
 			});
 			for (const event of timed) {
-				renderMeetingCard(this.contentContainer, {
-					event,
-					timezone: this.settings.timezone,
-					noteCreator: this.noteCreator,
-					app: this.app,
-					isActive: activeEventIds.has(event.id),
-					transcriptFolderPath: this.settings.transcriptFolderPath,
-					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					onNoteCreated,
-					onTagSpeakers: this.onTagSpeakers ?? undefined,
-					onSummarize: this.onSummarize ?? undefined,
-				});
+				renderCard(this.contentContainer, event);
 			}
 		}
 
@@ -399,6 +405,40 @@ export class CalendarView extends ItemView {
 				onlineMeetingUrl: "",
 				startTime,
 				endTime: startTime,
+				location: "",
+				attendeeCount: 0,
+				attendees: [],
+				organizerName: "",
+				organizerEmail: "",
+				isRecurring: false,
+			});
+		}
+		return results;
+	}
+
+	/**
+	 * Convert cached MacWhisper sessions into CalendarEvent objects for the
+	 * timeline, excluding any that are already linked to a note.
+	 */
+	private buildMacWhisperEvents(): CalendarEvent[] {
+		const linked = this.getLinkedSessionIds();
+		const results: CalendarEvent[] = [];
+		for (const session of this.cachedMacWhisperSessions) {
+			if (linked.has(session.sessionId)) continue;
+
+			const endTime = session.durationSeconds > 0
+				? new Date(session.recordingStart.getTime() + session.durationSeconds * 1000)
+				: session.recordingStart;
+
+			results.push({
+				id: `macwhisper-${session.sessionId}`,
+				subject: session.title || "Untitled recording",
+				body: "",
+				isAllDay: false,
+				isOnlineMeeting: false,
+				onlineMeetingUrl: "",
+				startTime: session.recordingStart,
+				endTime,
 				location: "",
 				attendeeCount: 0,
 				attendees: [],
