@@ -96,7 +96,10 @@ function buildFrontmatter(opts: {
 			lines.push(`  - "${yamlEscape(name)}"`);
 		}
 	}
-	lines.push("pipeline_state: titled");
+	// If all speakers are non-stub (real names, not generic "Speaker N"),
+	// the session was independently tagged — skip to "tagged" state.
+	const allSpeakersNamed = speakers.length > 0 && speakers.every(sp => !sp.isStub);
+	lines.push(`pipeline_state: ${allSpeakersNamed ? "tagged" : "titled"}`);
 	lines.push("---");
 
 	return lines.join("\n");
@@ -214,10 +217,11 @@ export async function createTranscriptFile(opts: {
 
 	await app.vault.create(transcriptPath, content);
 
-	// Update meeting note frontmatter with link to transcript and initial pipeline state
+	// Update meeting note frontmatter with link to transcript and pipeline state
 	const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 	await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
-	await updateFrontmatter(app, notePath, "pipeline_state", "titled");
+	const allSpeakersNamed = data.speakers.length > 0 && data.speakers.every(sp => !sp.isStub);
+	await updateFrontmatter(app, notePath, "pipeline_state", allSpeakersNamed ? "tagged" : "titled");
 
 	return transcriptPath;
 }
