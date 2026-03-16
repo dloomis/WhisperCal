@@ -193,6 +193,7 @@ export function renderMeetingCard(
 							subject: targetEvent.subject,
 							timezone,
 							transcriptFolderPath,
+							skipTitleUpdate: true,
 						});
 					}
 					if ((isUnscheduled || isMacWhisper) && onNoteCreated) {
