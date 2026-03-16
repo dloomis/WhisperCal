@@ -91,7 +91,10 @@ export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {
 	await writeFile(tmpScript, scriptBody, {mode: 0o755});
 
 	// The temp path has no special characters, so embedding it in AppleScript is safe.
-	const asCmd = asAppleScriptStr(`bash ${shellQuote(tmpScript)}`);
+	// Use exec so bash replaces the login shell — when the script exits,
+	// Terminal.app sees the tab as "not busy" and the close logic works.
+	const runPrefix = autoCloseTerminal ? "exec " : "";
+	const asCmd = asAppleScriptStr(`${runPrefix}bash ${shellQuote(tmpScript)}`);
 	let applescript: string;
 	if (terminalApp === "iTerm2") {
 		// iTerm2: the script already has `exit 0` when auto-close is on,
