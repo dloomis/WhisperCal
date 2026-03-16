@@ -375,13 +375,16 @@ export class CalendarView extends ItemView {
 			const fm = cache?.frontmatter;
 			if (!fm) continue;
 
-			// Identify unscheduled notes by frontmatter, not filename
-			if (fm["calendar_event_id"] !== "unscheduled") continue;
+			// Include notes created as unscheduled or from MacWhisper sessions
+			const eventId = fm["calendar_event_id"] as string | undefined;
+			if (eventId !== "unscheduled" && !eventId?.startsWith("macwhisper-")) continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
 			const meetingStart = fm["meeting_start"] as string | undefined;
 			const meetingDate = fm["meeting_date"] as string | undefined;
 			const meetingSubject = fm["meeting_subject"] as string | undefined;
+
+			const meetingEnd = fm["meeting_end"] as string | undefined;
 
 			let startTime: Date;
 			if (meetingDate && meetingStart) {
@@ -391,20 +394,29 @@ export class CalendarView extends ItemView {
 				startTime = this.selectedDate;
 			}
 
+			let endTime = startTime;
+			if (meetingDate && meetingEnd) {
+				const parsed = parseDateTime(meetingDate, meetingEnd);
+				if (parsed) endTime = parsed;
+			}
+
 			// Prefer basename over frontmatter subject (user may rename the note)
 			const displaySubject = child.basename.startsWith(`${datePrefix} - `)
 				? child.basename.slice(datePrefix.length + 3)
 				: meetingSubject ?? child.basename;
 
+			// Use the original event id so findNote() matches on calendar_event_id
+			const cardId = eventId?.startsWith("macwhisper-") ? eventId : `unscheduled-${child.path}`;
+
 			results.push({
-				id: `unscheduled-${child.path}`,
+				id: cardId,
 				subject: displaySubject,
 				body: "",
 				isAllDay: false,
 				isOnlineMeeting: false,
 				onlineMeetingUrl: "",
 				startTime,
-				endTime: startTime,
+				endTime,
 				location: "",
 				attendeeCount: 0,
 				attendees: [],
