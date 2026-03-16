@@ -103,19 +103,18 @@ function hexToUuid(hex: string): string {
 }
 
 /**
- * Get the filesystem birthtime of the track-0 media file for a session.
- * ExternalMedia is a flat directory with files named:
- *   {UUID}_track-0_{hash}.m4a
- *   {UUID}_merged-audio_{hash}.m4a
- *   etc.
- * Track-0 birthtime = actual recording start time.
+ * Get the filesystem birthtime of a media file for a session.
+ * Prefers track-0 (actual recording start for MacWhisper-recorded sessions),
+ * but falls back to any media file (e.g. _transcription_ for imports).
  */
-function getTrack0Birthtime(sessionId: string): Date | null {
+function getMediaBirthtime(sessionId: string): Date | null {
 	const uuid = hexToUuid(sessionId);
-	const prefix = `${uuid}_track-0_`;
+	const sessionPrefix = `${uuid}_`;
 	try {
 		const files = readdirSync(MACWHISPER_MEDIA_PATH);
-		const match = files.find(f => f.startsWith(prefix) && f.endsWith(".m4a"));
+		const sessionFiles = files.filter(f => f.startsWith(sessionPrefix) && f.endsWith(".m4a"));
+		// Prefer track-0, fall back to any media file
+		const match = sessionFiles.find(f => f.includes("_track-0_")) ?? sessionFiles[0];
 		if (!match) return null;
 		const stats = statSync(join(MACWHISPER_MEDIA_PATH, match));
 		return stats.birthtime;
@@ -132,7 +131,7 @@ export async function findRecordingsNear(
 	meetingStart: Date,
 	windowMinutes = 10,
 ): Promise<MacWhisperRecording[]> {
-	// Join session → mediafile for track-0, and session → SAR for duration
+	// Join session → one mediafile per session, prefer track-0 but accept any
 	const sql = `
 		SELECT hex(s.id) as sessionId,
 		       s.userChosenTitle as title,
@@ -141,11 +140,16 @@ export async function findRecordingsNear(
 		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
 		FROM session s
 		JOIN mediafile mf ON mf.sessionId = s.id
+			AND mf.id = (
+				SELECT id FROM mediafile m2
+				WHERE m2.sessionId = s.id
+				ORDER BY (m2.filename LIKE '%_track-0_%') DESC
+				LIMIT 1
+			)
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
 		WHERE s.isTransient = 0
 		  AND s.dateDeleted IS NULL
 		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
-		  AND mf.filename LIKE '%_track-0_%'
 		ORDER BY s.dateCreated DESC
 		LIMIT 50;
 	`;
@@ -158,7 +162,7 @@ export async function findRecordingsNear(
 	const windowMs = windowMinutes * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
-	const birthtimes = rows.map(row => getTrack0Birthtime(row.sessionId));
+	const birthtimes = rows.map(row => getMediaBirthtime(row.sessionId));
 
 	const nullCount = birthtimes.filter(b => b === null).length;
 	debug("MacWhisperDb", "findRecordingsNear: resolved %d birthtimes, %d null", birthtimes.length, nullCount);
@@ -207,11 +211,16 @@ export async function findRecentSessions(
 		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
 		FROM session s
 		JOIN mediafile mf ON mf.sessionId = s.id
+			AND mf.id = (
+				SELECT id FROM mediafile m2
+				WHERE m2.sessionId = s.id
+				ORDER BY (m2.filename LIKE '%_track-0_%') DESC
+				LIMIT 1
+			)
 		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
 		WHERE s.isTransient = 0
 		  AND s.dateDeleted IS NULL
 		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
-		  AND mf.filename LIKE '%_track-0_%'
 		ORDER BY s.dateCreated DESC
 		LIMIT 200;
 	`;
@@ -224,7 +233,7 @@ export async function findRecentSessions(
 	const results: MacWhisperRecording[] = [];
 
 	for (const row of rows) {
-		const birthtime = getTrack0Birthtime(row.sessionId);
+		const birthtime = getMediaBirthtime(row.sessionId);
 		if (!birthtime) continue;
 
 		const age = now - birthtime.getTime();
