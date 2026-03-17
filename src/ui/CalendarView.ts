@@ -301,9 +301,11 @@ export class CalendarView extends ItemView {
 			return;
 		}
 
-		// Merge any previously-created unscheduled notes into the timeline
-		const unscheduledNotes = this.findUnscheduledNotes();
-		const merged = [...events, ...unscheduledNotes];
+		// Merge notes not backed by a Graph API event into the timeline
+		// (covers "unscheduled", "macwhisper-*", and any other local-only notes)
+		const calendarEventIds = new Set(events.map(e => e.id));
+		const localNotes = this.findLocalNotes(calendarEventIds);
+		const merged = [...events, ...localNotes];
 
 		const allDay = merged.filter(e => e.isAllDay);
 		const timed = merged.filter(e => !e.isAllDay);
@@ -355,7 +357,12 @@ export class CalendarView extends ItemView {
 		this.updateNoteOpenHighlight();
 	}
 
-	private findUnscheduledNotes(): CalendarEvent[] {
+	/**
+	 * Find meeting notes for the selected date that aren't backed by a
+	 * Graph API calendar event.  Covers "unscheduled", "macwhisper-*",
+	 * and any other locally-created meeting notes.
+	 */
+	private findLocalNotes(calendarEventIds: Set<string>): CalendarEvent[] {
 		const datePrefix = formatDate(this.selectedDate, this.settings.timezone);
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
 		if (!(folder instanceof TFolder)) return [];
@@ -370,7 +377,10 @@ export class CalendarView extends ItemView {
 			if (!fm) continue;
 
 			const eventId = fm["calendar_event_id"] as string | undefined;
-			if (eventId !== "unscheduled") continue;
+			if (!eventId || calendarEventIds.has(eventId)) continue;
+
+			// Only show local notes that are already linked to a MacWhisper recording
+			if (!fm["macwhisper_session_id"]) continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
 			const meetingStart = fm["meeting_start"] as string | undefined;
