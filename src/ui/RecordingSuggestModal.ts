@@ -1,5 +1,6 @@
 import {App, SuggestModal} from "obsidian";
 import type {MacWhisperRecording} from "../services/MacWhisperDb";
+import {formatRecordingDuration} from "../utils/time";
 
 export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 	private recordings: MacWhisperRecording[];
@@ -41,9 +42,7 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 			month: "short",
 			day: "numeric",
 		});
-		const duration = recording.durationSeconds > 0
-			? `${Math.round(recording.durationSeconds / 60)} min`
-			: "";
+		const duration = formatRecordingDuration(recording.durationSeconds);
 
 		el.createDiv({text: title});
 		const meta = [date, time, duration].filter(Boolean).join(" \u00B7 ");

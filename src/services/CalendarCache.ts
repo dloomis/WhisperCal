@@ -37,6 +37,7 @@ export interface CacheStatus {
 
 const CACHE_FILENAME = "calendar-cache.json";
 const SAVE_DEBOUNCE_MS = 1000;
+const PREFETCH_FRESHNESS_MS = 60 * 60 * 1000; // 1 hour
 
 /**
  * Wraps an upstream CalendarProvider with a persistent local cache.
@@ -187,7 +188,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 
 			// Skip if already cached recently (within 1 hour)
 			const existing = this.cache.days[key];
-			if (existing && Date.now() - existing.fetchedAt < 3600000) continue;
+			if (existing && Date.now() - existing.fetchedAt < PREFETCH_FRESHNESS_MS) continue;
 
 			try {
 				const events = await this.upstream.fetchEvents(futureDate, timezone);

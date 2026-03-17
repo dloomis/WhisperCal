@@ -53,6 +53,9 @@ export interface TranscriptData {
 	speakers: SpeakerInfo[];
 }
 
+const RECORDING_MATCH_LIMIT = 50;
+const RECENT_SESSION_LIMIT = 200;
+
 /** Validate that a string is a hex-encoded session ID (safe for SQL interpolation). */
 function isValidHexId(id: string): boolean {
 	return /^[0-9A-Fa-f]+$/.test(id) && id.length > 0;
@@ -63,8 +66,8 @@ function isValidHexId(id: string): boolean {
  * Uses `sqlite3` CLI — no npm dependencies needed.
  */
 
-function query(sql: string, readonly = true): Promise<string> {
-	const flags = readonly ? ["-readonly", "-json"] : ["-json"];
+function query(sql: string): Promise<string> {
+	const flags = ["-readonly", "-json"];
 	// Collapse newlines/tabs to spaces for clean SQL
 	const flat = sql.replace(/[\n\t]+/g, " ").trim();
 	return new Promise((resolve) => {
@@ -123,6 +126,34 @@ function getMediaBirthtime(sessionId: string): Date | null {
 	}
 }
 
+/** Shared SQL for fetching session rows with media file and speaker count. */
+const SESSION_LIST_SQL = `
+	SELECT hex(s.id) as sessionId,
+	       s.userChosenTitle as title,
+	       mf.filename as mediaFilename,
+	       sar.duration as duration,
+	       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
+	FROM session s
+	JOIN mediafile mf ON mf.sessionId = s.id
+		AND mf.id = (
+			SELECT id FROM mediafile m2
+			WHERE m2.sessionId = s.id
+			ORDER BY (m2.filename LIKE '%_track-0_%') DESC
+			LIMIT 1
+		)
+	LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
+	WHERE s.isTransient = 0
+	  AND s.dateDeleted IS NULL
+	  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
+	ORDER BY s.dateCreated DESC
+`;
+
+async function fetchSessionRows(limit: number): Promise<SessionRow[]> {
+	const sql = `${SESSION_LIST_SQL} LIMIT ${limit};`;
+	const raw = await query(sql);
+	return parseRows<SessionRow>(raw);
+}
+
 /**
  * Find MacWhisper recordings whose track-0 birthtime is within
  * ±windowMinutes of the given meeting start time.
@@ -131,30 +162,7 @@ export async function findRecordingsNear(
 	meetingStart: Date,
 	windowMinutes = 10,
 ): Promise<MacWhisperRecording[]> {
-	// Join session → one mediafile per session, prefer track-0 but accept any
-	const sql = `
-		SELECT hex(s.id) as sessionId,
-		       s.userChosenTitle as title,
-		       mf.filename as mediaFilename,
-		       sar.duration as duration,
-		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
-		FROM session s
-		JOIN mediafile mf ON mf.sessionId = s.id
-			AND mf.id = (
-				SELECT id FROM mediafile m2
-				WHERE m2.sessionId = s.id
-				ORDER BY (m2.filename LIKE '%_track-0_%') DESC
-				LIMIT 1
-			)
-		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
-		WHERE s.isTransient = 0
-		  AND s.dateDeleted IS NULL
-		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
-		ORDER BY s.dateCreated DESC
-		LIMIT 50;
-	`;
-	const raw = await query(sql);
-	const rows = parseRows<SessionRow>(raw);
+	const rows = await fetchSessionRows(RECORDING_MATCH_LIMIT);
 
 	debug("MacWhisperDb", "findRecordingsNear: meetingStart=%s (%d), window=%d min, rows=%d",
 		meetingStart.toISOString(), meetingStart.getTime(), windowMinutes, rows.length);
@@ -202,29 +210,7 @@ export async function findRecordingsNear(
 export async function findRecentSessions(
 	lookbackDays: number,
 ): Promise<MacWhisperRecording[]> {
-	const sql = `
-		SELECT hex(s.id) as sessionId,
-		       s.userChosenTitle as title,
-		       mf.filename as mediaFilename,
-		       sar.duration as duration,
-		       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
-		FROM session s
-		JOIN mediafile mf ON mf.sessionId = s.id
-			AND mf.id = (
-				SELECT id FROM mediafile m2
-				WHERE m2.sessionId = s.id
-				ORDER BY (m2.filename LIKE '%_track-0_%') DESC
-				LIMIT 1
-			)
-		LEFT JOIN systemaudiorecording sar ON s.systemAudioRecordingID = sar.id
-		WHERE s.isTransient = 0
-		  AND s.dateDeleted IS NULL
-		  AND (sar.dateDeleted IS NULL OR s.systemAudioRecordingID IS NULL)
-		ORDER BY s.dateCreated DESC
-		LIMIT 200;
-	`;
-	const raw = await query(sql);
-	const rows = parseRows<SessionRow>(raw);
+	const rows = await fetchSessionRows(RECENT_SESSION_LIMIT);
 
 	const now = Date.now();
 	const lookbackMs = lookbackDays * 24 * 60 * 60 * 1000;
@@ -259,32 +245,6 @@ export async function hasTranscriptLines(sessionId: string): Promise<boolean> {
 	const raw = await query(sql);
 	const rows = parseRows<{cnt: number}>(raw);
 	return (rows[0]?.cnt ?? 0) > 0;
-}
-
-/**
- * Set the user-chosen title on a MacWhisper session.
- * Returns true if the update succeeded, false on error.
- */
-export async function setSessionTitle(sessionId: string, title: string): Promise<boolean> {
-	if (!isValidHexId(sessionId)) return false;
-	const escaped = title.replace(/'/g, "''");
-	const sql = `UPDATE session SET userChosenTitle = '${escaped}' WHERE hex(id) = '${sessionId}';`;
-	const flat = sql.replace(/[\n\t]+/g, " ").trim();
-	return new Promise((resolve) => {
-		execFile(
-			"sqlite3",
-			[MACWHISPER_DB_PATH, flat],
-			{encoding: "utf-8", timeout: 5000},
-			(err) => {
-				if (err) {
-					console.error("[WhisperCal] setSessionTitle failed:", err);
-					resolve(false);
-				} else {
-					resolve(true);
-				}
-			},
-		);
-	});
 }
 
 /**

@@ -132,6 +132,19 @@ export function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Format a duration in seconds as a human-readable string (e.g. "45 min", "1h 30m").
+ * Returns empty string for non-positive values.
+ */
+export function formatRecordingDuration(seconds: number): string {
+	if (seconds <= 0) return "";
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes} min`;
+	const hours = Math.floor(minutes / 60);
+	const rem = minutes % 60;
+	return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
+}
+
 export function formatDateTimeWithOffset(date: Date, timezone: string): string {
 	const fmt = new Intl.DateTimeFormat("en-US", {
 		timeZone: timezone,

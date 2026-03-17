@@ -10,7 +10,7 @@ import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard} from "./MeetingCard";
-import {formatDate, formatDisplayDate, getTodayString, isSameDay, parseDateTime} from "../utils/time";
+import {formatDate, formatDisplayDate, formatRecordingDuration, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
 export class CalendarView extends ItemView {
@@ -550,7 +550,7 @@ export class CalendarView extends ItemView {
 
 		const meta = card.createDiv({cls: "whisper-cal-unlinked-meta"});
 		const dateStr = this.formatRecordingDate(recording.recordingStart);
-		const durStr = this.formatRecordingDuration(recording.durationSeconds);
+		const durStr = formatRecordingDuration(recording.durationSeconds);
 		const parts = [dateStr];
 		if (durStr) parts.push(durStr);
 		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
@@ -656,15 +656,6 @@ export class CalendarView extends ItemView {
 			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone,
 		});
 		return `${datePart}, ${timePart}`;
-	}
-
-	private formatRecordingDuration(seconds: number): string {
-		if (seconds <= 0) return "";
-		const minutes = Math.floor(seconds / 60);
-		if (minutes < 60) return `${minutes} min`;
-		const hours = Math.floor(minutes / 60);
-		const rem = minutes % 60;
-		return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
 	}
 
 	private findActiveEventIds(events: CalendarEvent[]): Set<string> {

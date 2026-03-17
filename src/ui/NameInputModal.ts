@@ -33,7 +33,6 @@ export class NameInputModal extends Modal {
 			attr: {placeholder: this.placeholder},
 		});
 		input.value = this.defaultValue;
-		input.style.width = "100%";
 
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") {
@@ -44,10 +43,6 @@ export class NameInputModal extends Modal {
 		});
 
 		const btnRow = contentEl.createDiv({cls: "whisper-cal-name-input-buttons"});
-		btnRow.style.display = "flex";
-		btnRow.style.justifyContent = "flex-end";
-		btnRow.style.gap = "8px";
-		btnRow.style.marginTop = "12px";
 
 		const cancelBtn = btnRow.createEl("button", {text: "Cancel"});
 		cancelBtn.addEventListener("click", () => this.close());

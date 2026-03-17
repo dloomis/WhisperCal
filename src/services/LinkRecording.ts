@@ -1,10 +1,9 @@
 import {App, Notice} from "obsidian";
-import {findRecordingsNear, hasTranscriptLines, setSessionTitle, type MacWhisperRecording} from "./MacWhisperDb";
+import {findRecordingsNear, hasTranscriptLines, type MacWhisperRecording} from "./MacWhisperDb";
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {formatDate, sleep} from "../utils/time";
-import {sanitizeFilename} from "../utils/sanitize";
+import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
 
 /**
@@ -24,15 +23,7 @@ async function performLink(opts: {
 }): Promise<boolean> {
 	const {app, sessionId, recordingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring} = opts;
 
-	// Set MacWhisper title to match the note filename
-	const title = notePath.split("/").pop()?.replace(/\.md$/i, "") ?? `${formatDate(recordingStart, timezone)} ${sanitizeFilename(subject)}`;
-	if (!await setSessionTitle(sessionId, title)) {
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		new Notice("Failed to update MacWhisper session title");
-		return false;
-	}
-
-	// Phase 1: Write session ID to note frontmatter (fast)
+	// Write session ID to note frontmatter
 	try {
 		await updateFrontmatter(app, notePath, "macwhisper_session_id", sessionId);
 	} catch (err) {
@@ -48,12 +39,13 @@ async function performLink(opts: {
 		const notice = new Notice("Creating transcript\u2026", 0);
 		try {
 			// Wait for MacWhisper transcription to finish
+			const TRANSCRIPTION_POLL_INTERVAL_MS = 3000;
+			const TRANSCRIPTION_MAX_ATTEMPTS = 60; // ~3 minutes
 			let ready = await hasTranscriptLines(sessionId);
 			if (!ready) {
 				notice.setMessage("Waiting for MacWhisper transcription\u2026");
-				const maxAttempts = 60; // ~3 minutes at 3s intervals
-				for (let i = 0; i < maxAttempts && !ready; i++) {
-					await sleep(3000);
+				for (let i = 0; i < TRANSCRIPTION_MAX_ATTEMPTS && !ready; i++) {
+					await sleep(TRANSCRIPTION_POLL_INTERVAL_MS);
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {

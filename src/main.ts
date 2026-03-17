@@ -3,7 +3,7 @@ import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
 import {CalendarView} from "./ui/CalendarView";
-import {createCalendarProvider} from "./services/CalendarProvider";
+import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
 import {invokeLlmPrompt} from "./services/LlmInvoker";
 import {parseDateTime} from "./utils/time";
@@ -45,7 +45,7 @@ export default class WhisperCalPlugin extends Plugin {
 		);
 		this.auth.initialize();
 
-		const upstream = createCalendarProvider(this.auth);
+		const upstream = new GraphApiProvider(this.auth);
 		this.cachedProvider = new CachedCalendarProvider(
 			this.app,
 			upstream,
@@ -141,8 +141,6 @@ export default class WhisperCalPlugin extends Plugin {
 				});
 			}),
 		);
-
-
 
 		this.addCommand({
 			id: COMMAND_TAG_SPEAKERS,
