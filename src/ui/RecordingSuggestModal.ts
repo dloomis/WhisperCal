@@ -45,9 +45,12 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 			day: "numeric",
 		});
 		const duration = formatRecordingDuration(recording.durationSeconds);
+		const speakers = recording.speakerCount > 0
+			? `${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`
+			: "";
 
 		el.createDiv({text: title});
-		const meta = [date, time, duration].filter(Boolean).join(" \u00B7 ");
+		const meta = [date, time, duration, speakers].filter(Boolean).join(" \u00B7 ");
 		el.createDiv({cls: "suggestion-note", text: meta});
 	}
 
