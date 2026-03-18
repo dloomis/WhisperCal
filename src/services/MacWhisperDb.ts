@@ -8,6 +8,8 @@ export interface MacWhisperRecording {
 	sessionId: string; // hex
 	title: string | null;
 	recordingStart: Date;
+	/** session.dateCreated — matches the timestamp MacWhisper displays in its UI. */
+	dateCreated: Date | null;
 	durationSeconds: number;
 	speakerCount: number;
 }
@@ -15,6 +17,7 @@ export interface MacWhisperRecording {
 interface SessionRow {
 	sessionId: string;
 	title: string | null;
+	dateCreated: string | null;
 	mediaFilename: string;
 	duration: number | null;
 	speakerCount: number;
@@ -51,6 +54,17 @@ export interface TranscriptData {
 	lines: TranscriptLineRow[];
 	metadata: SessionMetadataRow | null;
 	speakers: SpeakerInfo[];
+}
+
+/**
+ * Parse a MacWhisper dateCreated string (UTC, e.g. "2026-03-18 18:12:42.251")
+ * into a JS Date. Returns null if the string is missing or unparseable.
+ */
+function parseDateCreated(raw: string | null): Date | null {
+	if (!raw) return null;
+	// Append "Z" so Date.parse treats it as UTC
+	const d = new Date(raw.replace(" ", "T") + "Z");
+	return isNaN(d.getTime()) ? null : d;
 }
 
 const RECORDING_MATCH_LIMIT = 50;
@@ -130,6 +144,7 @@ function getMediaBirthtime(sessionId: string): Date | null {
 const SESSION_LIST_SQL = `
 	SELECT hex(s.id) as sessionId,
 	       s.userChosenTitle as title,
+	       s.dateCreated as dateCreated,
 	       mf.filename as mediaFilename,
 	       sar.duration as duration,
 	       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
@@ -189,6 +204,7 @@ export async function findRecordingsNear(
 				sessionId: row.sessionId,
 				title: row.title || null,
 				recordingStart: birthtime,
+				dateCreated: parseDateCreated(row.dateCreated),
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 				speakerCount: row.speakerCount,
 			});
@@ -226,6 +242,7 @@ export async function findRecentSessions(
 				sessionId: row.sessionId,
 				title: row.title || null,
 				recordingStart: birthtime,
+				dateCreated: parseDateCreated(row.dateCreated),
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 				speakerCount: row.speakerCount,
 			});

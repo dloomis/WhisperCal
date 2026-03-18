@@ -33,12 +33,14 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 
 	renderSuggestion(recording: MacWhisperRecording, el: HTMLElement): void {
 		const title = recording.title || "Untitled recording";
-		const time = recording.recordingStart.toLocaleTimeString("en-US", {
+		// Use dateCreated (matches MacWhisper UI timestamp), fall back to recordingStart
+		const displayDate = recording.dateCreated ?? recording.recordingStart;
+		const time = displayDate.toLocaleTimeString("en-US", {
 			hour: "numeric",
 			minute: "2-digit",
 			hour12: true,
 		});
-		const date = recording.recordingStart.toLocaleDateString("en-US", {
+		const date = displayDate.toLocaleDateString("en-US", {
 			month: "short",
 			day: "numeric",
 		});
