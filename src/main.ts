@@ -347,7 +347,6 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		summarizeJobs.add(notePath);
-		console.debug("[WhisperCal] summarizeJobs after add:", [...summarizeJobs]);
 		this.refreshCalendarCards();
 		new Notice("Summarization started");
 
@@ -375,12 +374,9 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private refreshCalendarCards(): void {
-		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR);
-		console.debug("[WhisperCal] refreshCalendarCards: found", leaves.length, "calendar leaves");
-		for (const leaf of leaves) {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				console.debug("[WhisperCal] calling rerenderCards");
 				view.rerenderCards();
 			}
 		}
