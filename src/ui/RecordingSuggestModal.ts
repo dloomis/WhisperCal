@@ -2,6 +2,13 @@ import {App, SuggestModal} from "obsidian";
 import type {MacWhisperRecording} from "../services/MacWhisperDb";
 import {formatRecordingDuration} from "../utils/time";
 
+/** Ceil a Date to the next minute (matches MacWhisper's display rounding). */
+function ceilToMinute(d: Date): Date {
+	const ms = d.getTime();
+	const remainder = ms % 60000;
+	return remainder === 0 ? d : new Date(ms + 60000 - remainder);
+}
+
 export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 	private recordings: MacWhisperRecording[];
 	private resolve: ((value: MacWhisperRecording | null) => void) | null = null;
@@ -33,24 +40,31 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 
 	renderSuggestion(recording: MacWhisperRecording, el: HTMLElement): void {
 		const title = recording.title || "Untitled recording";
-		// Use dateCreated (matches MacWhisper UI timestamp), fall back to recordingStart
-		const displayDate = recording.dateCreated ?? recording.recordingStart;
-		const time = displayDate.toLocaleTimeString("en-US", {
+		const timeOpts: Intl.DateTimeFormatOptions = {
 			hour: "numeric",
 			minute: "2-digit",
 			hour12: true,
-		});
-		const date = displayDate.toLocaleDateString("en-US", {
+		};
+		const dateOpts: Intl.DateTimeFormatOptions = {
 			month: "short",
 			day: "numeric",
-		});
-		const duration = formatRecordingDuration(recording.durationSeconds);
+		};
+		const displayEnd = ceilToMinute(recording.dateCreated ?? recording.recordingStart);
+		const displayStart = recording.durationSeconds > 0
+			? ceilToMinute(new Date(displayEnd.getTime() - recording.durationSeconds * 1000))
+			: displayEnd;
+		const startDate = displayStart.toLocaleDateString("en-US", dateOpts);
+		const startTime = displayStart.toLocaleTimeString("en-US", timeOpts);
+		const endTime = recording.dateCreated
+			? recording.dateCreated.toLocaleTimeString("en-US", timeOpts)
+			: "";
 		const speakers = recording.speakerCount > 0
 			? `${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`
 			: "";
+		const timeRange = endTime ? `${startTime} – ${endTime}` : startTime;
 
 		el.createDiv({text: title});
-		const meta = [date, time, duration, speakers].filter(Boolean).join(" \u00B7 ");
+		const meta = [startDate, timeRange, speakers].filter(Boolean).join(" \u00B7 ");
 		el.createDiv({cls: "suggestion-note", text: meta});
 	}
 

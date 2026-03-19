@@ -18,6 +18,7 @@ interface SessionRow {
 	sessionId: string;
 	title: string | null;
 	dateCreated: string | null;
+	recordingStartUtc: string | null;
 	mediaFilename: string;
 	duration: number | null;
 	speakerCount: number;
@@ -145,6 +146,9 @@ const SESSION_LIST_SQL = `
 	SELECT hex(s.id) as sessionId,
 	       s.userChosenTitle as title,
 	       s.dateCreated as dateCreated,
+	       CASE WHEN sar.date IS NOT NULL AND sar.duration IS NOT NULL
+	            THEN datetime(sar.date, '-' || printf('%.3f', sar.duration) || ' seconds')
+	            ELSE NULL END as recordingStartUtc,
 	       mf.filename as mediaFilename,
 	       sar.duration as duration,
 	       (SELECT COUNT(*) FROM session_speaker ss2 WHERE ss2.sessionID = s.id) as speakerCount
@@ -185,32 +189,34 @@ export async function findRecordingsNear(
 	const windowMs = windowMinutes * 60 * 1000;
 	const results: MacWhisperRecording[] = [];
 
-	const birthtimes = rows.map(row => getMediaBirthtime(row.sessionId));
+	const startTimes = rows.map(row =>
+		parseDateCreated(row.recordingStartUtc) ?? getMediaBirthtime(row.sessionId)
+	);
 
-	const nullCount = birthtimes.filter(b => b === null).length;
-	debug("MacWhisperDb", "findRecordingsNear: resolved %d birthtimes, %d null", birthtimes.length, nullCount);
+	const nullCount = startTimes.filter(b => b === null).length;
+	debug("MacWhisperDb", "findRecordingsNear: resolved %d start times, %d null", startTimes.length, nullCount);
 
 	for (let i = 0; i < rows.length; i++) {
-		const birthtime = birthtimes[i];
-		if (!birthtime) continue;
+		const startTime = startTimes[i];
+		if (!startTime) continue;
 
 		const row = rows[i]!;
-		const diff = Math.abs(birthtime.getTime() - meetingStart.getTime());
+		const diff = Math.abs(startTime.getTime() - meetingStart.getTime());
 		const diffMin = diff / 60000;
 		if (diff <= windowMs) {
-			debug("MacWhisperDb", "MATCH: session=%s title=%s birthtime=%s diff=%.1f min",
-				row.sessionId, row.title, birthtime.toISOString(), diffMin);
+			debug("MacWhisperDb", "MATCH: session=%s title=%s start=%s diff=%.1f min",
+				row.sessionId, row.title, startTime.toISOString(), diffMin);
 			results.push({
 				sessionId: row.sessionId,
 				title: row.title || null,
-				recordingStart: birthtime,
+				recordingStart: startTime,
 				dateCreated: parseDateCreated(row.dateCreated),
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 				speakerCount: row.speakerCount,
 			});
 		} else if (diffMin < 120) {
-			debug("MacWhisperDb", "NEAR-MISS: session=%s title=%s birthtime=%s diff=%.1f min",
-				row.sessionId, row.title, birthtime.toISOString(), diffMin);
+			debug("MacWhisperDb", "NEAR-MISS: session=%s title=%s start=%s diff=%.1f min",
+				row.sessionId, row.title, startTime.toISOString(), diffMin);
 		}
 	}
 
@@ -233,15 +239,15 @@ export async function findRecentSessions(
 	const results: MacWhisperRecording[] = [];
 
 	for (const row of rows) {
-		const birthtime = getMediaBirthtime(row.sessionId);
-		if (!birthtime) continue;
+		const startTime = parseDateCreated(row.recordingStartUtc) ?? getMediaBirthtime(row.sessionId);
+		if (!startTime) continue;
 
-		const age = now - birthtime.getTime();
+		const age = now - startTime.getTime();
 		if (age <= lookbackMs) {
 			results.push({
 				sessionId: row.sessionId,
 				title: row.title || null,
-				recordingStart: birthtime,
+				recordingStart: startTime,
 				dateCreated: parseDateCreated(row.dateCreated),
 				durationSeconds: row.duration ? Math.round(row.duration) : 0,
 				speakerCount: row.speakerCount,
