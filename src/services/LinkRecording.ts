@@ -101,7 +101,15 @@ export async function linkRecording(opts: {
 }): Promise<boolean> {
 	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, windowMinutes} = opts;
 
-	const recordings = await findRecordingsNear(meetingStart, windowMinutes);
+	const allRecordings = await findRecordingsNear(meetingStart, windowMinutes);
+
+	// Exclude recordings already linked to any note in the vault
+	const linked = new Set<string>();
+	for (const file of app.vault.getMarkdownFiles()) {
+		const sid = app.metadataCache.getFileCache(file)?.frontmatter?.["macwhisper_session_id"] as string | undefined;
+		if (sid) linked.add(sid);
+	}
+	const recordings = allRecordings.filter(r => !linked.has(r.sessionId));
 
 	if (recordings.length === 0) {
 		new Notice("No matching recording found");
