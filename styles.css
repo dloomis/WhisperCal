@@ -364,6 +364,38 @@
 	font-weight: var(--font-semibold);
 }
 
+.whisper-cal-pill-running {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+	cursor: wait;
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes whisper-cal-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.4; }
+}
+
+/* Status line below action pills */
+.whisper-cal-card-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 4px;
+	font-size: var(--font-ui-smaller);
+	color: var(--interactive-accent);
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-card-status-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	flex-shrink: 0;
+}
+
 .whisper-cal-pill-disabled {
 	opacity: 0.35;
 	cursor: not-allowed;

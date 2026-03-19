@@ -5,7 +5,8 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMA
 import {CalendarView} from "./ui/CalendarView";
 import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
-import {invokeLlmPrompt} from "./services/LlmInvoker";
+import {invokeLlmPrompt, spawnLlmPrompt} from "./services/LlmInvoker";
+import {summarizeJobs} from "./state";
 import {parseDateTime} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
 import {resolveWikiLink} from "./utils/vault";
@@ -340,9 +341,18 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Summarizer prompt not configured — set it in WhisperCal settings");
 			return;
 		}
+		if (summarizeJobs.has(notePath)) {
+			new Notice("Summarization already in progress for this meeting");
+			return;
+		}
+
+		summarizeJobs.add(notePath);
+		console.debug("[WhisperCal] summarizeJobs after add:", [...summarizeJobs]);
+		this.refreshCalendarCards();
+		new Notice("Summarization started");
 
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		void invokeLlmPrompt({
+		void spawnLlmPrompt({
 			targetPath: notePath,
 			targetLabel: "Meeting note",
 			vaultPath,
@@ -352,9 +362,28 @@ export default class WhisperCalPlugin extends Plugin {
 			llmSkipPermissions: this.settings.llmSkipPermissions,
 			terminalApp: this.settings.terminalApp,
 			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
+		}).then(({exitCode, stderr}) => {
+			summarizeJobs.delete(notePath);
+			if (exitCode === 0) {
+				new Notice("Summarization complete");
+			} else {
+				const excerpt = stderr.trim().slice(0, 200);
+				new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
+			}
+			this.refreshCalendarCards();
 		});
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		new Notice("Opening Claude Code for summarization — this may take several minutes");
+	}
+
+	private refreshCalendarCards(): void {
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR);
+		console.debug("[WhisperCal] refreshCalendarCards: found", leaves.length, "calendar leaves");
+		for (const leaf of leaves) {
+			const view = leaf.view;
+			if (view instanceof CalendarView) {
+				console.debug("[WhisperCal] calling rerenderCards");
+				view.rerenderCards();
+			}
+		}
 	}
 
 	private async handleLinkRecording(

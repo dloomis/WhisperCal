@@ -1,4 +1,4 @@
-import {execFile} from "child_process";
+import {execFile, spawn} from "child_process";
 import {writeFile} from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -35,6 +35,83 @@ function asAppleScriptStr(s: string): string {
 	const parts = s.split('"');
 	if (parts.length === 1) return `"${s}"`;
 	return parts.map(p => `"${p}"`).join(' & quote & ');
+}
+
+/**
+ * Spawn the LLM CLI as a background child process (no terminal window).
+ * Returns the exit code and any stderr output when the process finishes.
+ */
+export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number; stderr: string}> {
+	const {
+		targetPath,
+		targetLabel = "Transcript",
+		vaultPath,
+		promptPath,
+		microphoneUser,
+		llmCli,
+		llmSkipPermissions,
+		llmExtraFlags,
+		transcriptFolderPath,
+		peopleFolderPath,
+	} = opts;
+
+	// Resolve prompt path to absolute
+	let resolvedPromptPath: string;
+	if (promptPath.startsWith("/")) {
+		resolvedPromptPath = promptPath;
+	} else if (promptPath.startsWith("~/")) {
+		resolvedPromptPath = path.join(os.homedir(), promptPath.slice(2));
+	} else {
+		resolvedPromptPath = path.join(vaultPath, promptPath);
+	}
+
+	// Build trigger string
+	const parts: string[] = [
+		`Follow the instructions in '${resolvedPromptPath}'.`,
+		`${targetLabel}: ${targetPath}.`,
+	];
+	if (microphoneUser) parts.push(`Microphone user: ${microphoneUser}.`);
+	if (transcriptFolderPath) parts.push(`Transcripts Folder: ${transcriptFolderPath}.`);
+	if (peopleFolderPath) parts.push(`People Folder: ${peopleFolderPath}.`);
+	const trigger = parts.join(" ");
+
+	// Build CLI flags and full shell command
+	const flags = [
+		llmSkipPermissions ? "--dangerously-skip-permissions" : "",
+		llmExtraFlags.trim(),
+	].filter(Boolean).join(" ");
+	const cmd = `${llmCli}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
+
+	// Use a login shell so the user's PATH (e.g. Homebrew) is available.
+	const userShell = os.userInfo().shell || "/bin/zsh";
+
+	return new Promise((resolve) => {
+		const child = spawn(userShell, ["-l", "-c", cmd], {
+			cwd: vaultPath,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		const stderrChunks: string[] = [];
+
+		child.stdout.on("data", (data: {toString(): string}) => {
+			console.debug("[WhisperCal] LLM stdout:", data.toString());
+		});
+
+		child.stderr.on("data", (data: {toString(): string}) => {
+			const text = data.toString();
+			stderrChunks.push(text);
+			console.error("[WhisperCal] LLM stderr:", text);
+		});
+
+		child.on("error", (err) => {
+			console.error("[WhisperCal] LLM spawn error:", err);
+			resolve({exitCode: 1, stderr: err.message});
+		});
+
+		child.on("close", (code) => {
+			resolve({exitCode: code ?? 1, stderr: stderrChunks.join("")});
+		});
+	});
 }
 
 export async function invokeLlmPrompt(opts: LlmInvokerOpts): Promise<void> {

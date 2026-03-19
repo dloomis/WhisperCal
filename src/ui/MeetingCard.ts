@@ -5,6 +5,7 @@ import {NameInputModal} from "./NameInputModal";
 import {formatTime} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
+import {summarizeJobs} from "../state";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
@@ -23,7 +24,7 @@ export interface MeetingCardOpts {
 	onSummarize?: (notePath: string) => void;
 }
 
-type PillState = "incomplete" | "complete" | "disabled";
+type PillState = "incomplete" | "complete" | "disabled" | "running";
 
 function renderPill(container: HTMLElement, label: string, state: PillState): HTMLButtonElement {
 	const btn = container.createEl("button", {
@@ -33,7 +34,7 @@ function renderPill(container: HTMLElement, label: string, state: PillState): HT
 		btn.createSpan({cls: "whisper-cal-pill-check", text: "✓"});
 	}
 	btn.createSpan({text: label});
-	if (state === "disabled") {
+	if (state === "disabled" || state === "running") {
 		btn.disabled = true;
 	}
 	return btn;
@@ -154,7 +155,9 @@ export function renderMeetingCard(
 
 	const summaryState: PillState = speakersState !== "complete"
 		? "disabled"
-		: pipelineState === "summarized" ? "complete" : "incomplete";
+		: pipelineState === "summarized" ? "complete"
+		: summarizeJobs.has(notePath) ? "running"
+		: "incomplete";
 
 	// Highlight card when workflow is started but not yet complete
 	if (noteExists && summaryState !== "complete") {
@@ -259,6 +262,13 @@ export function renderMeetingCard(
 		summaryPill.addEventListener("click", () => {
 			void app.workspace.openLinkText(notePath, "", false);
 		});
+	}
+
+	// Status line below actions
+	if (summaryState === "running") {
+		const status = card.createDiv({cls: "whisper-cal-card-status"});
+		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		status.createSpan({text: "Summarizing\u2026"});
 	}
 
 	return {el: card};

@@ -232,6 +232,12 @@ export class CalendarView extends ItemView {
 		void this.refresh();
 	}
 
+	rerenderCards(): void {
+		if (this.cachedEvents !== null) {
+			this.renderEvents(this.cachedEvents);
+		}
+	}
+
 	private renderLoading(): void {
 		if (!this.contentContainer) return;
 		this.contentContainer.empty();
