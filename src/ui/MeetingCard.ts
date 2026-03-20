@@ -5,7 +5,7 @@ import {NameInputModal} from "./NameInputModal";
 import {formatTime} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
-import {summarizeJobs} from "../state";
+import {summarizeJobs, speakerTagJobs} from "../state";
 
 export interface MeetingCardHandle {
 	el: HTMLElement;
@@ -149,9 +149,18 @@ export function renderMeetingCard(
 		: noteFm["transcript"] ? "complete" : "incomplete";
 
 	const pipelineState = noteFm["pipeline_state"] as string | undefined;
+	// Resolve transcript path for job tracking
+	const transcriptLink = noteFm["transcript"] as string | undefined;
+	const transcriptFile = transcriptLink
+		? resolveWikiLink(app, noteFm, "transcript", notePath)
+		: null;
+	const transcriptPath = transcriptFile?.path ?? "";
+
 	const speakersState: PillState = transcriptState !== "complete"
 		? "disabled"
-		: (pipelineState && pipelineState !== "titled") ? "complete" : "incomplete";
+		: (pipelineState && pipelineState !== "titled") ? "complete"
+		: speakerTagJobs.has(transcriptPath) ? "running"
+		: "incomplete";
 
 	const summaryState: PillState = speakersState !== "complete"
 		? "disabled"
@@ -264,7 +273,12 @@ export function renderMeetingCard(
 		});
 	}
 
-	// Status line below actions
+	// Status lines below actions
+	if (speakersState === "running") {
+		const status = card.createDiv({cls: "whisper-cal-card-status"});
+		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		status.createSpan({text: "Tagging speakers\u2026"});
+	}
 	if (summaryState === "running") {
 		const status = card.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});

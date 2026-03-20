@@ -497,3 +497,118 @@
 	margin-top: 12px;
 }
 
+/* Speaker Tag Modal */
+.whisper-cal-speaker-tag-modal {
+	max-width: 520px;
+}
+
+.whisper-cal-speaker-tag-subtitle {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: -8px;
+	margin-bottom: 12px;
+}
+
+.whisper-cal-speaker-tag-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 16px;
+}
+
+.whisper-cal-speaker-tag-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.whisper-cal-speaker-tag-row:last-child {
+	border-bottom: none;
+}
+
+.whisper-cal-speaker-tag-left {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 140px;
+	flex-shrink: 0;
+}
+
+.whisper-cal-speaker-tag-stub {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+}
+
+.whisper-cal-speaker-tag-lines {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+.whisper-cal-speaker-tag-right {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+	min-width: 0;
+}
+
+.whisper-cal-speaker-tag-arrow {
+	color: var(--text-faint);
+	flex-shrink: 0;
+}
+
+.whisper-cal-speaker-tag-input {
+	flex: 1;
+	min-width: 120px;
+	padding: 4px 8px;
+	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-speaker-tag-detail {
+	width: 100%;
+	padding-left: 146px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	margin-top: -4px;
+}
+
+.whisper-cal-speaker-tag-badge {
+	display: inline-block;
+	padding: 0 5px;
+	border-radius: var(--radius-s);
+	font-size: 0.75em;
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.whisper-cal-badge-certain {
+	background: color-mix(in srgb, var(--text-success) 20%, transparent);
+	color: var(--text-success);
+}
+
+.whisper-cal-badge-high {
+	background: color-mix(in srgb, var(--text-warning) 20%, transparent);
+	color: var(--text-warning);
+}
+
+.whisper-cal-badge-low {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+.whisper-cal-speaker-tag-evidence {
+	color: var(--text-faint);
+}
+
+.whisper-cal-speaker-tag-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+

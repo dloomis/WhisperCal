@@ -17,6 +17,7 @@ export interface LlmInvokerOpts {
 	microphoneUser?: string;
 	transcriptFolderPath?: string;  // folder name for transcript files
 	peopleFolderPath?: string;      // folder name for People notes
+	batch?: boolean;                // when true, appends "batch: true." to trigger
 }
 
 // Escape a string for use in a single-quoted shell argument: replace ' with '\''
@@ -41,7 +42,7 @@ function asAppleScriptStr(s: string): string {
  * Spawn the LLM CLI as a background child process (no terminal window).
  * Returns the exit code and any stderr output when the process finishes.
  */
-export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number; stderr: string}> {
+export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
 	const {
 		targetPath,
 		targetLabel = "Transcript",
@@ -53,6 +54,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 		llmExtraFlags,
 		transcriptFolderPath,
 		peopleFolderPath,
+		batch,
 	} = opts;
 
 	// Resolve prompt path to absolute
@@ -73,6 +75,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 	if (microphoneUser) parts.push(`Microphone user: ${microphoneUser}.`);
 	if (transcriptFolderPath) parts.push(`Transcripts Folder: ${transcriptFolderPath}.`);
 	if (peopleFolderPath) parts.push(`People Folder: ${peopleFolderPath}.`);
+	if (batch) parts.push("batch: true.");
 	const trigger = parts.join(" ");
 
 	// Build CLI flags and full shell command
@@ -91,10 +94,13 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
+		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
 
 		child.stdout.on("data", (data: {toString(): string}) => {
-			console.debug("[WhisperCal] LLM stdout:", data.toString());
+			const text = data.toString();
+			stdoutChunks.push(text);
+			console.debug("[WhisperCal] LLM stdout:", text);
 		});
 
 		child.stderr.on("data", (data: {toString(): string}) => {
@@ -105,11 +111,11 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 		child.on("error", (err) => {
 			console.error("[WhisperCal] LLM spawn error:", err);
-			resolve({exitCode: 1, stderr: err.message});
+			resolve({exitCode: 1, stdout: "", stderr: err.message});
 		});
 
 		child.on("close", (code) => {
-			resolve({exitCode: code ?? 1, stderr: stderrChunks.join("")});
+			resolve({exitCode: code ?? 1, stdout: stdoutChunks.join(""), stderr: stderrChunks.join("")});
 		});
 	});
 }

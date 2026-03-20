@@ -5,8 +5,11 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMA
 import {CalendarView} from "./ui/CalendarView";
 import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
-import {invokeLlmPrompt, spawnLlmPrompt} from "./services/LlmInvoker";
-import {summarizeJobs} from "./state";
+import {spawnLlmPrompt} from "./services/LlmInvoker";
+import {summarizeJobs, speakerTagJobs} from "./state";
+import {parseSpeakerTagOutput} from "./services/SpeakerTagParser";
+import {SpeakerTagModal} from "./ui/SpeakerTagModal";
+import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
 import {resolveWikiLink} from "./utils/vault";
@@ -284,6 +287,7 @@ export default class WhisperCalPlugin extends Plugin {
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
 	): void {
+		const transcriptPath = transcriptFile.path;
 		const state = transcriptFm["pipeline_state"] as string | undefined;
 		if (state && state !== "titled") {
 			new Notice("Speakers already tagged for this transcript");
@@ -299,12 +303,20 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
 			return;
 		}
+		if (speakerTagJobs.has(transcriptPath)) {
+			new Notice("Speaker tagging already in progress for this transcript");
+			return;
+		}
+
+		speakerTagJobs.add(transcriptPath);
+		this.refreshCalendarCards();
+		new Notice("Speaker tagging started");
 
 		// basePath is undocumented but stable on desktop — no Vault API alternative
 		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		void invokeLlmPrompt({
-			targetPath: transcriptFile.path,
+		void spawnLlmPrompt({
+			targetPath: transcriptPath,
 			targetLabel: "Transcript",
 			vaultPath,
 			promptPath: this.settings.speakerTaggingPromptPath,
@@ -316,9 +328,34 @@ export default class WhisperCalPlugin extends Plugin {
 			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
 			transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 			peopleFolderPath: this.settings.peopleFolderPath || undefined,
+			batch: true,
+		}).then(async ({exitCode, stdout, stderr}) => {
+			speakerTagJobs.delete(transcriptPath);
+			this.refreshCalendarCards();
+
+			if (exitCode !== 0) {
+				const excerpt = stderr.trim().slice(0, 200);
+				new Notice(`Speaker tagging failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
+				return;
+			}
+
+			// Parse LLM output and show approval modal
+			const mappings = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
+			const title = transcriptFile.basename;
+			const decisions = await new SpeakerTagModal(this.app, mappings, title).prompt();
+			if (!decisions) return; // cancelled
+
+			// Check if any speakers were actually tagged
+			const hasTagged = decisions.some(d => d.confirmedName);
+			if (!hasTagged) {
+				new Notice("No speakers tagged — no changes made");
+				return;
+			}
+
+			await applySpeakerTags(this.app, transcriptPath, decisions);
+			new Notice("Speaker tags applied");
+			this.refreshCalendarCards();
 		});
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		new Notice("Opening Claude Code for speaker tagging — this may take several minutes");
 	}
 
 	private doSummarize(notePath: string): void {
