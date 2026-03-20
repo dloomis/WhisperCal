@@ -22,8 +22,14 @@ export class SpeakerTagModal extends Modal {
 
 	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string) {
 		super(app);
-		// Sort by line count descending
-		this.mappings = [...mappings].sort((a, b) => b.lineCount - a.lineCount);
+		// Sort by confidence (CERTAIN > HIGH > LOW > empty), then by index
+		const confidenceOrder: Record<string, number> = {CERTAIN: 0, HIGH: 1, LOW: 2};
+		this.mappings = [...mappings].sort((a, b) => {
+			const ca = confidenceOrder[a.confidence] ?? 3;
+			const cb = confidenceOrder[b.confidence] ?? 3;
+			if (ca !== cb) return ca - cb;
+			return a.index - b.index;
+		});
 		this.title = title;
 	}
 
