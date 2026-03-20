@@ -1,4 +1,4 @@
-import {Notice, Plugin, TFile} from "obsidian";
+import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
@@ -175,6 +175,11 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
+		// Show/hide summarize banner when switching between notes
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.updateAllSummarizeBanners()),
+		);
+
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
@@ -348,6 +353,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		summarizeJobs.add(notePath);
 		this.refreshCalendarCards();
+		this.updateSummarizeBanners(notePath);
 		new Notice("Summarization started");
 
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
@@ -370,6 +376,7 @@ export default class WhisperCalPlugin extends Plugin {
 				new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
 			}
 			this.refreshCalendarCards();
+			this.updateSummarizeBanners(notePath);
 		});
 	}
 
@@ -380,6 +387,53 @@ export default class WhisperCalPlugin extends Plugin {
 				view.rerenderCards();
 			}
 		}
+	}
+
+	private static readonly BANNER_CLS = "whisper-cal-summarize-banner";
+
+	/** Add or remove the summarize banner for all leaves showing the given note. */
+	private updateSummarizeBanners(notePath: string): void {
+		const running = summarizeJobs.has(notePath);
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file?.path === notePath) {
+				if (running) {
+					this.ensureBanner(view);
+				} else {
+					this.removeBanner(view);
+				}
+			}
+		}
+	}
+
+	/** Refresh banners for all open markdown leaves (e.g. on tab switch). */
+	private updateAllSummarizeBanners(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file) {
+				if (summarizeJobs.has(view.file.path)) {
+					this.ensureBanner(view);
+				} else {
+					this.removeBanner(view);
+				}
+			}
+		}
+	}
+
+	private ensureBanner(view: MarkdownView): void {
+		const container = view.contentEl;
+		if (container.querySelector(`.${WhisperCalPlugin.BANNER_CLS}`)) return;
+		const banner = container.createDiv({cls: WhisperCalPlugin.BANNER_CLS});
+		banner.createSpan({cls: "whisper-cal-card-status-dot"});
+		banner.createSpan({text: "Summarizing\u2026"});
+		// Move to top of container
+		container.prepend(banner);
+	}
+
+	private removeBanner(view: MarkdownView): void {
+		view.contentEl
+			.querySelectorAll(`.${WhisperCalPlugin.BANNER_CLS}`)
+			.forEach(el => el.remove());
 	}
 
 	private async handleLinkRecording(
