@@ -283,6 +283,9 @@ export default class WhisperCalPlugin extends Plugin {
 		return null;
 	}
 
+	// Queue for serializing speaker tag modal presentations
+	private speakerTagModalQueue: Promise<void> = Promise.resolve();
+
 	private doTagSpeakers(
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
@@ -329,7 +332,7 @@ export default class WhisperCalPlugin extends Plugin {
 			transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 			peopleFolderPath: this.settings.peopleFolderPath || undefined,
 			batch: true,
-		}).then(async ({exitCode, stdout, stderr}) => {
+		}).then(({exitCode, stdout, stderr}) => {
 			speakerTagJobs.delete(transcriptPath);
 			this.refreshCalendarCards();
 
@@ -339,22 +342,23 @@ export default class WhisperCalPlugin extends Plugin {
 				return;
 			}
 
-			// Parse LLM output and show approval modal
-			const mappings = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
-			const title = transcriptFile.basename;
-			const decisions = await new SpeakerTagModal(this.app, mappings, title).prompt();
-			if (!decisions) return; // cancelled
+			// Queue the modal so parallel completions are presented one at a time
+			this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
+				const mappings = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
+				const title = transcriptFile.basename;
+				const decisions = await new SpeakerTagModal(this.app, mappings, title).prompt();
+				if (!decisions) return;
 
-			// Check if any speakers were actually tagged
-			const hasTagged = decisions.some(d => d.confirmedName);
-			if (!hasTagged) {
-				new Notice("No speakers tagged — no changes made");
-				return;
-			}
+				const hasTagged = decisions.some(d => d.confirmedName);
+				if (!hasTagged) {
+					new Notice("No speakers tagged — no changes made");
+					return;
+				}
 
-			await applySpeakerTags(this.app, transcriptPath, decisions);
-			new Notice("Speaker tags applied");
-			this.refreshCalendarCards();
+				await applySpeakerTags(this.app, transcriptPath, decisions);
+				new Notice("Speaker tags applied");
+				this.refreshCalendarCards();
+			});
 		});
 	}
 
