@@ -137,6 +137,7 @@ export class CalendarView extends ItemView {
 		// Highlight card when its meeting note is the active file
 		this.registerEvent(this.app.workspace.on("file-open", () => this.onActiveFileChanged()));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.onActiveFileChanged()));
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.updateNoteOpenHighlight()));
 
 		// Start auto-refresh
 		this.startAutoRefresh();
@@ -362,8 +363,9 @@ export class CalendarView extends ItemView {
 			}
 		}
 
+		// Reset so updateNoteOpenHighlight re-applies to the new DOM
 		this.noteOpenPath = null;
-		this.updateNoteOpenHighlight();
+		this.applyNoteOpenHighlight();
 	}
 
 	/**
@@ -453,6 +455,24 @@ export class CalendarView extends ItemView {
 		}
 
 		// Add to current
+		if (activePath !== null) {
+			const curr = this.contentContainer.querySelector(
+				`[data-note-path="${CSS.escape(activePath)}"]`,
+			);
+			if (curr instanceof HTMLElement) {
+				curr.addClass(cls);
+			}
+		}
+
+		this.noteOpenPath = activePath;
+	}
+
+	/** Apply highlight to freshly-built DOM (no early-return guard). */
+	private applyNoteOpenHighlight(): void {
+		if (!this.contentContainer) return;
+		const activePath = this.app.workspace.getActiveFile()?.path ?? null;
+		const cls = "whisper-cal-card-note-open";
+
 		if (activePath !== null) {
 			const curr = this.contentContainer.querySelector(
 				`[data-note-path="${CSS.escape(activePath)}"]`,
