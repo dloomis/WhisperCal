@@ -235,10 +235,9 @@ export class CalendarView extends ItemView {
 	rerenderCards(): void {
 		if (this.cachedEvents !== null) {
 			// Preserve scroll position across pill-state rerenders
-			const scrollParent = this.contentContainer?.parentElement;
-			const scrollTop = scrollParent?.scrollTop ?? 0;
+			const scrollTop = this.contentEl.scrollTop;
 			this.renderEvents(this.cachedEvents);
-			if (scrollParent) scrollParent.scrollTop = scrollTop;
+			this.contentEl.scrollTop = scrollTop;
 		}
 	}
 
