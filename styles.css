@@ -331,17 +331,23 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 3px;
-	flex: 1 1 0;
-	padding: 2px 8px;
+	gap: 2px;
+	padding: 4px 8px;
 	border-radius: var(--radius-s);
-	font-size: var(--font-ui-smaller);
 	border: 1px solid var(--background-modifier-border);
 	background: none;
 	color: var(--text-muted);
 	cursor: pointer;
-	line-height: 1.4;
-	white-space: nowrap;
+}
+
+.whisper-cal-pill-icon {
+	display: flex;
+	align-items: center;
+}
+
+.whisper-cal-pill-icon svg {
+	width: 16px;
+	height: 16px;
 }
 
 .whisper-cal-pill:hover:not(:disabled) {
@@ -360,8 +366,9 @@
 }
 
 .whisper-cal-pill-check {
-	font-size: 0.85em;
+	font-size: 10px;
 	font-weight: var(--font-semibold);
+	line-height: 1;
 }
 
 .whisper-cal-pill-running {

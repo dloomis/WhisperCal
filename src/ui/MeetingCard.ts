@@ -26,14 +26,23 @@ export interface MeetingCardOpts {
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
 
-function renderPill(container: HTMLElement, label: string, state: PillState): HTMLButtonElement {
+const stateLabels: Record<PillState, string> = {
+	incomplete: "",
+	complete: " (done)",
+	disabled: " (locked)",
+	running: " (running)",
+};
+
+function renderPill(container: HTMLElement, icon: string, label: string, state: PillState): HTMLButtonElement {
 	const btn = container.createEl("button", {
 		cls: `whisper-cal-pill whisper-cal-pill-${state}`,
+		attr: {"aria-label": label + stateLabels[state]},
 	});
 	if (state === "complete") {
 		btn.createSpan({cls: "whisper-cal-pill-check", text: "✓"});
 	}
-	btn.createSpan({text: label});
+	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
+	setIcon(iconEl, icon);
 	if (state === "disabled" || state === "running") {
 		btn.disabled = true;
 	}
@@ -113,7 +122,7 @@ export function renderMeetingCard(
 
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
 	if (event.id === "unscheduled") {
-		const notePill = renderPill(actions, "Note", "incomplete");
+		const notePill = renderPill(actions, "file-text", "Note", "incomplete");
 		notePill.addEventListener("click", () => {
 			notePill.disabled = true;
 			const handleClick = async () => {
@@ -174,7 +183,7 @@ export function renderMeetingCard(
 	}
 
 	// Note pill
-	const notePill = renderPill(actions, "Note", noteState);
+	const notePill = renderPill(actions, "file-text", "Note", noteState);
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
@@ -192,7 +201,7 @@ export function renderMeetingCard(
 						targetEvent = {...event, subject: name};
 					}
 					await noteCreator.createNote(targetEvent);
-					if (isUnscheduled && onNoteCreated) {
+					if (onNoteCreated) {
 						onNoteCreated();
 					}
 				}
@@ -204,7 +213,7 @@ export function renderMeetingCard(
 	});
 
 	// Transcript pill
-	const transcriptPill = renderPill(actions, "Transcript", transcriptState);
+	const transcriptPill = renderPill(actions, "mic", "Transcript", transcriptState);
 	if (transcriptState !== "disabled") {
 		transcriptPill.addEventListener("click", () => {
 			if (transcriptState === "complete") {
@@ -244,7 +253,7 @@ export function renderMeetingCard(
 	}
 
 	// Speakers pill
-	const speakersPill = renderPill(actions, "Speakers", speakersState);
+	const speakersPill = renderPill(actions, "user-check", "Speakers", speakersState);
 	if (speakersState === "incomplete" && onTagSpeakers) {
 		speakersPill.addEventListener("click", () => {
 			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
@@ -262,7 +271,7 @@ export function renderMeetingCard(
 	}
 
 	// Summary pill
-	const summaryPill = renderPill(actions, "Summary", summaryState);
+	const summaryPill = renderPill(actions, "sparkles", "Summary", summaryState);
 	if (summaryState === "incomplete" && onSummarize) {
 		summaryPill.addEventListener("click", () => {
 			onSummarize(notePath);
