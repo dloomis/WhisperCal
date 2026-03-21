@@ -41,7 +41,11 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 - [People Matching](#people-matching)
 - [LLM Integration](#llm-integration)
   - [Speaker Tagging](#speaker-tagging)
+    - [Required LLM Output Format](#required-llm-output-format)
+    - [What Happens When You Apply](#what-happens-when-you-apply)
   - [Summarization](#summarization)
+  - [How Invocation Works](#how-invocation-works)
+  - [Concurrency and Timeouts](#concurrency-and-timeouts)
   - [LLM Settings](#llm-settings)
 - [Calendar Caching](#calendar-caching)
 - [Commands](#commands)
@@ -58,8 +62,8 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 - **Calendar sidebar** — Browse your Outlook calendar day by day inside Obsidian, with automatic refresh and offline caching.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
 - **MacWhisper recording linking** — Match MacWhisper recordings to meetings by timestamp, link them to the note, and auto-generate a transcript file.
-- **Speaker tagging** — Send the transcript to an LLM (via Claude Code) to identify and label speakers.
-- **Meeting summarization** — Send the tagged transcript to an LLM to produce an executive summary.
+- **Speaker tagging** — Run an LLM in the background to identify speakers, then review and approve proposed names in an in-Obsidian confirmation modal.
+- **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **People matching** — Attendees are automatically matched to notes in a People folder and rendered as `[[wiki links]]`.
 
 ---
@@ -70,7 +74,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 - A **Microsoft 365** account with calendar access
 - An **Azure AD app registration** (see [Setup](#azure-ad-app-registration))
 - **MacWhisper** (optional — needed for transcript features)
-- **Claude Code** CLI or another LLM CLI tool (optional — needed for speaker tagging and summarization)
+- An **LLM CLI tool** (optional — needed for speaker tagging and summarization; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
 
 ---
 
@@ -248,21 +252,22 @@ Once the transcript exists, clicking the pill opens it.
 
 ### Stage 3 — Speakers
 
-**Click the "Speakers" pill** to launch an LLM session that identifies and labels speakers in the transcript.
+**Click the "Speakers" pill** to run LLM speaker tagging in the background.
 
-- Opens a Terminal (or iTerm2) window running your configured LLM CLI (default: `claude`).
-- The LLM reads your speaker tagging prompt file and the transcript, then tags each speaker.
-- When finished, the LLM sets `pipeline_state: tagged` in the transcript frontmatter.
+- The LLM reads your speaker tagging prompt and the transcript, then outputs proposed speaker identities.
+- A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, and evidence.
+- Review the proposals, edit names as needed, and click **Apply** to commit.
+- WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
-Once speakers are tagged, clicking the pill opens the transcript.
+The pill shows a spinning indicator while the LLM is running. Once speakers are tagged, clicking the pill opens the transcript.
 
 ### Stage 4 — Summary
 
-**Click the "Summary" pill** to launch an LLM session that summarizes the meeting.
+**Click the "Summary" pill** to run LLM summarization in the background.
 
-- Opens a Terminal (or iTerm2) window running your configured LLM CLI.
-- The LLM reads your summarizer prompt file along with the meeting note and transcript.
-- When finished, the LLM sets `pipeline_state: summarized`.
+- A "Summarizing…" banner appears at the top of the meeting note editor.
+- The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
+- When finished, the LLM sets `pipeline_state: summarized` and the banner disappears.
 
 Once the summary is complete, clicking the pill opens the meeting note.
 
@@ -442,46 +447,125 @@ Role: Engineering Manager
 
 ## LLM Integration
 
-WhisperCal can invoke an external LLM CLI tool to tag speakers in transcripts and summarize meetings. It launches a terminal window where the LLM runs interactively.
+WhisperCal invokes an external LLM CLI tool as a background process to tag speakers in transcripts and summarize meetings. The LLM runs headlessly inside Obsidian — no terminal window is required. Progress and errors are reported via Obsidian notices.
 
 ### Speaker Tagging
 
-**Prerequisite:** A transcript file must exist (Stage 2 complete).
+**Prerequisite:** A transcript file must exist (Stage 2 complete, `pipeline_state: titled`).
+
+**Setup:**
 
 1. Copy `samples/Speaker Auto-Tag Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Speaker Tagging.md`).
-2. Set the **"Speaker tagging prompt"** path in settings.
-3. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command.
-4. A terminal window opens with the LLM reading your prompt and the transcript file.
-5. The LLM identifies speakers and updates the transcript.
-6. When done, the LLM writes `pipeline_state: tagged` to the transcript frontmatter.
+2. Set the **"Speaker tagging prompt"** path in WhisperCal settings.
+3. Set the **"Microphone user"** field to your full name as it appears in meetings.
+
+**Usage:**
+
+1. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command.
+2. The pill shows a spinning indicator while the LLM runs in the background.
+3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
+4. Review the proposed mappings, edit any names, and click **Apply**.
+5. WhisperCal replaces speaker labels in the transcript body and sets `pipeline_state: tagged`.
+
+**The confirmation modal** shows each speaker from the transcript with:
+- The **original stub name** (e.g., "Speaker 1") and how many transcript lines they have.
+- The **proposed real name** pre-filled from the LLM output (editable).
+- A **confidence badge** (CERTAIN, HIGH, or LOW) and the LLM's evidence for its guess.
+- Speakers are sorted by confidence (highest first) so you can quickly approve high-confidence matches and focus attention on uncertain ones.
+
+You can clear a name field to leave that speaker untagged, or type a different name. Click **Cancel** to discard all changes.
+
+#### Required LLM Output Format
+
+For the confirmation modal to work, the LLM's **stdout** must contain a section with the header `Proposed Mapping:` followed by one line per speaker in this exact format:
+
+```
+Proposed Mapping:
+- #0: "Microphone" → "Jane Smith" | CERTAIN | microphone user
+- #1: "Speaker 1" → "Bob Lee" | HIGH | introduced himself at 00:02:15
+- #2: "Speaker 2" → (unresolved) | | no matching attendee
+```
+
+**Line format:** `- #<index>: "<original>" → "<proposed>" | <confidence> | <evidence>`
+
+| Field | Description |
+|-------|-------------|
+| `#<index>` | Zero-based index matching the order of speakers in the transcript's frontmatter `speakers` array. |
+| `"<original>"` | The stub name from the transcript (e.g., "Microphone", "Speaker 1"). Must match the frontmatter speaker name exactly. |
+| `"<proposed>"` | The real name the LLM believes this speaker is. Use `(unresolved)` (no quotes) if the LLM cannot determine the identity. |
+| `<confidence>` | One of `CERTAIN`, `HIGH`, or `LOW`. May be empty for unresolved speakers. |
+| `<evidence>` | Free-text explanation of why the LLM made this identification (e.g., "microphone user", "introduced themselves at 00:05:12"). |
+
+**Important notes:**
+- The parser looks for the literal string `Proposed Mapping:` in the LLM's stdout. Everything before that header is ignored, so the LLM can include reasoning or other output above it.
+- If the header is missing or no lines match the expected format, WhisperCal falls back to showing the transcript's frontmatter speakers without AI suggestions. The user can still manually type names in the modal.
+- If the LLM returns empty output, speakers are shown without proposals and a warning notice is displayed.
+
+#### What Happens When You Apply
+
+When you click **Apply** in the modal, WhisperCal:
+
+1. Updates each speaker entry in the transcript's frontmatter `speakers` array — sets `name` to the confirmed name, saves the original as `original_name`, and records `confidence` and `evidence`.
+2. Adds a `confirmed_speakers` frontmatter key with wiki links to all confirmed names (e.g., `["[[Jane Smith]]", "[[Bob Lee]]"]`).
+3. Sets `pipeline_state: tagged` in the transcript frontmatter (and mirrors it to the meeting note).
+4. Replaces all occurrences of `**Original Name**` with `**Confirmed Name**` in the transcript body text.
 
 ### Summarization
 
 **Prerequisite:** Speakers must be tagged (Stage 3 complete, `pipeline_state: tagged`).
 
+**Setup:**
+
 1. Copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Summarizer.md`).
-2. Set the **"Summarizer prompt"** path in settings.
-3. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command.
-4. A terminal window opens with the LLM reading your prompt, the meeting note, and the transcript.
-5. The LLM generates a summary and writes `pipeline_state: summarized`.
+2. Set the **"Summarizer prompt"** path in WhisperCal settings.
+
+**Usage:**
+
+1. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command.
+2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
+3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
+4. The banner disappears and the Summary pill fills in.
+
+The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
+
+### How Invocation Works
+
+WhisperCal spawns the LLM CLI as a child process using your login shell (so your PATH includes tools installed via Homebrew, nvm, etc.). The process runs in the background with no terminal window. The working directory is set to your vault root.
+
+The LLM receives a single prompt string constructed from:
+
+- The path to your prompt file: `Follow the instructions in '<prompt-path>'.`
+- The target file: `Transcript: <path>.` (speaker tagging) or `Meeting note: <path>.` (summarization)
+- Optional context: `Microphone user: <name>.`, `Transcripts Folder: <folder>.`, `People Folder: <folder>.`
+- For speaker tagging: `batch: true.` (signals the prompt to output structured results to stdout instead of editing files directly)
+
+**Pre-flight checks:** Before spawning the LLM, WhisperCal validates that:
+- The CLI command exists on your PATH.
+- The prompt file exists on disk.
+- The concurrency limit hasn't been reached.
+
+If any check fails, an Obsidian notice explains the problem.
+
+### Concurrency and Timeouts
+
+- **Concurrency limit** — A maximum number of LLM processes can run simultaneously (default: 2). If you try to start another job while at the limit, a notice tells you to wait. This prevents overloading your machine or hitting API rate limits.
+- **Timeout** — Each LLM process is killed if it runs longer than the configured timeout (default: 5 minutes). The process receives SIGTERM, then SIGKILL after 5 seconds if it doesn't exit. A timed-out job shows a notice with the duration.
+- **Plugin unload** — When you disable the plugin or quit Obsidian, all running LLM processes are terminated (SIGTERM) and job tracking is cleared.
 
 ### LLM Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **CLI command** | `claude` | The command to invoke the LLM. Change this if you use a different CLI tool. |
-| **Skip permissions** | On | Passes `--dangerously-skip-permissions` so the LLM can read/write files without per-operation prompts. Safe for trusted prompts. |
-| **Additional flags** | (empty) | Extra CLI flags appended to every LLM invocation. |
-| **Terminal app** | Terminal | Which macOS terminal to open: **Terminal** or **iTerm2**. |
-| **Microphone user** | (empty) | Your full name as it appears in meetings. Passed to the LLM to help identify your voice in recordings. |
-
-### How Invocation Works
-
-WhisperCal builds a shell command, writes it to a temporary script, and uses AppleScript to execute it in a new terminal window. The command changes directory to your vault root and runs the LLM CLI with:
-
-- The path to your prompt file
-- The path to the target file (transcript or meeting note)
-- Context parameters: your name, transcript folder, and People folder path
+| **Speaker tagging prompt** | *(empty)* | Path to your speaker tagging prompt file (vault-relative, absolute, or `~/`-relative). |
+| **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
+| **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
+| **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
+| **Skip permissions** | On | Passes `--dangerously-skip-permissions` so the LLM can read/write files without per-operation prompts. Required for background operation. |
+| **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation (e.g., `--model sonnet` to select a specific model). |
+| **Terminal app** | Terminal | Which macOS terminal to use when running LLM prompts in terminal mode (legacy; background mode does not use a terminal). |
+| **Auto-close terminal** | Off | Close the terminal window after the LLM finishes (only applies to terminal mode). |
+| **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
+| **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 
 ---
 
@@ -545,10 +629,13 @@ All commands are available from the command palette (`Cmd+P`):
 | **Speaker tagging prompt** | *(empty)* | Path to your speaker tagging prompt file. |
 | **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
 | **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
-| **CLI command** | `claude` | LLM CLI executable name. |
-| **Skip permissions** | On | Allow the LLM to read/write files without prompting. |
-| **Additional flags** | *(empty)* | Extra CLI flags for the LLM command. |
-| **Terminal app** | Terminal | Terminal application to open (Terminal or iTerm2). |
+| **CLI command** | `claude` | LLM CLI executable name or path. |
+| **Skip permissions** | On | Passes `--dangerously-skip-permissions` to the LLM CLI. |
+| **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation. |
+| **Terminal app** | Terminal | Terminal application for legacy terminal mode. |
+| **Auto-close terminal** | Off | Close terminal window after LLM finishes (terminal mode only). |
+| **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
+| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 
 ### Calendar
 
@@ -574,7 +661,7 @@ All commands are available from the command palette (`Cmd+P`):
 
 - **Remote services:** This plugin connects to the **Microsoft Graph API** to fetch calendar events. Authentication uses the OAuth 2.0 Device Code Flow. OAuth tokens are stored locally in the plugin's `data.json` file within your vault.
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
-- **LLM invocation:** When you use the speaker tagging or summarization features, WhisperCal launches an external CLI tool (default: `claude`) in a terminal window. Your transcript and meeting note content are passed to that tool. Review your LLM provider's privacy policy to understand how your data is handled.
+- **LLM invocation:** When you use the speaker tagging or summarization features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
 - **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
 
 ---
@@ -597,10 +684,20 @@ The device code is valid for about 15 minutes. If it expires before you complete
 - Check that the recording happened within the match window (default: 15 minutes of the meeting start time). You can increase this in settings.
 - MacWhisper must have completed transcription before a transcript file can be created.
 
-### LLM terminal doesn't open
-- Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`).
-- Ensure your **Speaker tagging prompt** or **Summarizer prompt** path points to an existing file.
-- If using iTerm2, make sure it's installed and set as the terminal app in settings.
+### LLM job fails immediately
+- Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
+- Ensure your **Speaker tagging prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
+- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail.
+
+### Speaker tagging modal shows no AI suggestions
+- The LLM's stdout must contain a `Proposed Mapping:` header followed by lines in the expected format (see [Required LLM Output Format](#required-llm-output-format)). If the format doesn't match, speakers are shown without proposals.
+- Check the developer console for the raw LLM output to debug prompt issues.
+
+### "LLM concurrency limit reached"
+- The default limit is 2 simultaneous LLM processes. Wait for a running job to finish, or increase **Max concurrent LLM processes** in settings.
+
+### LLM process timed out
+- The default timeout is 5 minutes. For long transcripts, increase the **LLM timeout** setting. Set to `0` to disable the timeout entirely.
 
 ### Pipeline pills are grayed out
 Pills are disabled when their prerequisites aren't met:
