@@ -30,6 +30,7 @@ export interface WhisperCalSettings {
 	llmAutoCloseTerminal: boolean;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
+	autoSummarizeAfterTagging: boolean;
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -59,6 +60,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmAutoCloseTerminal: false,
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
+	autoSummarizeAfterTagging: false,
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -329,6 +331,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.plugin.settings.llmMaxConcurrent = n;
 						await this.plugin.saveSettings();
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Auto-summarize after tagging")
+			.setDesc("Automatically start summarization after speaker tagging completes")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
+				.onChange(async (value) => {
+					this.plugin.settings.autoSummarizeAfterTagging = value;
+					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)

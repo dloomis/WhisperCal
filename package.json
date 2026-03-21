@@ -1,6 +1,6 @@
 {
 	"name": "whisper-cal",
-	"version": "0.3.9",
+	"version": "0.3.10",
 	"description": "WhisperCal Obsidian plugin",
 	"main": "main.js",
 	"type": "module",
@@ -10,7 +10,18 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint ."
 	},
-	"keywords": ["obsidian", "obsidian-plugin", "calendar", "microsoft-365", "outlook", "meeting-notes", "macwhisper", "transcription", "speaker-tagging", "llm"],
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"calendar",
+		"microsoft-365",
+		"outlook",
+		"meeting-notes",
+		"macwhisper",
+		"transcription",
+		"speaker-tagging",
+		"llm"
+	],
 	"license": "0-BSD",
 	"devDependencies": {
 		"@types/node": "^16.11.6",

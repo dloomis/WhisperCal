@@ -415,6 +415,19 @@ export default class WhisperCalPlugin extends Plugin {
 				try {
 					await applySpeakerTags(this.app, transcriptPath, decisions);
 					new Notice("Speaker tags applied");
+
+					// Auto-summarize if enabled
+					if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
+						const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
+						const meetingLink = tFm?.["meeting_note"] as string | undefined;
+						if (meetingLink) {
+							const linktext = meetingLink.replace(/^\[\[/, "").replace(/\]\]$/, "");
+							const meetingFile = this.app.metadataCache.getFirstLinkpathDest(linktext, transcriptPath);
+							if (meetingFile) {
+								this.doSummarize(meetingFile.path);
+							}
+						}
+					}
 				} catch (e) {
 					const msg = e instanceof Error ? e.message : String(e);
 					new Notice(`Failed to apply speaker tags: ${msg}`);

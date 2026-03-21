@@ -528,6 +528,8 @@ When you click **Apply** in the modal, WhisperCal:
 
 The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
 
+**Auto-summarize:** If **"Auto-summarize after tagging"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no need to click the Summary pill. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
+
 ### How Invocation Works
 
 WhisperCal spawns the LLM CLI as a child process using your login shell (so your PATH includes tools installed via Homebrew, nvm, etc.). The process runs in the background with no terminal window. The working directory is set to your vault root.
@@ -566,6 +568,7 @@ If any check fails, an Obsidian notice explains the problem.
 | **Auto-close terminal** | Off | Close the terminal window after the LLM finishes (only applies to terminal mode). |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
+| **Auto-summarize after tagging** | Off | Automatically start summarization after speaker tagging completes. Requires a summarizer prompt to be configured. |
 
 ---
 
@@ -620,7 +623,6 @@ All commands are available from the command palette (`Cmd+P`):
 | **Database path** | *(read-only)* | Shows the MacWhisper database location. |
 | **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker. |
 | **Unlinked lookback** | `30` days | How far back to check for unlinked recordings. |
-| **Unlinked grace period** | `48` hours | Ignore recordings newer than this — gives time to link them normally before flagging. |
 
 ### LLM
 
@@ -636,6 +638,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Auto-close terminal** | Off | Close terminal window after LLM finishes (terminal mode only). |
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
+| **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |
 
 ### Calendar
 
