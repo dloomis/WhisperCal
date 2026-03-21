@@ -40,7 +40,7 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	});
 	btn.createSpan({
 		cls: "whisper-cal-pill-check",
-		text: state === "complete" ? "✓" : "",
+		text: state === "complete" ? "✓" : "·",
 	});
 	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
 	setIcon(iconEl, icon);
