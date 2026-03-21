@@ -3,7 +3,7 @@
 	"name": "WhisperCal",
 	"version": "0.3.9",
 	"minAppVersion": "1.4.10",
-	"description": "Daily calendar view with Outlook integration. Create meeting notes with one click. Links MacWhisper recordings and transcripts to meeting notes.",
+	"description": "Microsoft 365 calendar sidebar with one-click meeting notes, MacWhisper transcript linking, LLM-powered speaker tagging, and meeting summarization.",
 	"author": "Dan Loomis",
 	"authorUrl": "https://github.com/dloomis",
 	"isDesktopOnly": true
