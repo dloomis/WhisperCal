@@ -28,6 +28,8 @@ export interface WhisperCalSettings {
 	llmExtraFlags: string;
 	terminalApp: "Terminal" | "iTerm2";
 	llmAutoCloseTerminal: boolean;
+	llmTimeoutMinutes: number;
+	llmMaxConcurrent: number;
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -55,6 +57,8 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmExtraFlags: "",
 	terminalApp: "Terminal",
 	llmAutoCloseTerminal: false,
+	llmTimeoutMinutes: 5,
+	llmMaxConcurrent: 2,
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -295,6 +299,36 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.llmAutoCloseTerminal = value;
 					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setName("LLM timeout (minutes)")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Kill the LLM process if it runs longer than this (0 = no timeout)")
+			.addText(text => text
+				.setValue(String(this.plugin.settings.llmTimeoutMinutes))
+				.onChange(async (value) => {
+					const n = parseInt(value);
+					if (!isNaN(n) && n >= 0) {
+						this.plugin.settings.llmTimeoutMinutes = n;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setName("Max concurrent LLM processes")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Maximum number of LLM processes that can run simultaneously")
+			.addText(text => text
+				.setValue(String(this.plugin.settings.llmMaxConcurrent))
+				.onChange(async (value) => {
+					const n = parseInt(value);
+					if (!isNaN(n) && n >= 1) {
+						this.plugin.settings.llmMaxConcurrent = n;
+						await this.plugin.saveSettings();
+					}
 				}));
 
 		new Setting(containerEl)

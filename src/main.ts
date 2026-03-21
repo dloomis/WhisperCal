@@ -5,9 +5,10 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMA
 import {CalendarView} from "./ui/CalendarView";
 import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
-import {spawnLlmPrompt} from "./services/LlmInvoker";
+import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
 import {summarizeJobs, speakerTagJobs} from "./state";
 import {parseSpeakerTagOutput} from "./services/SpeakerTagParser";
+import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime} from "./utils/time";
@@ -189,6 +190,13 @@ export default class WhisperCalPlugin extends Plugin {
 	onunload() {
 		this.auth.cancelSignIn();
 		void this.cachedProvider?.flush();
+		// Kill any running LLM processes and clean up job tracking
+		for (const proc of activeProcesses) {
+			proc.kill("SIGTERM");
+		}
+		activeProcesses.clear();
+		speakerTagJobs.clear();
+		summarizeJobs.clear();
 	}
 
 
@@ -286,6 +294,9 @@ export default class WhisperCalPlugin extends Plugin {
 	// Queue for serializing speaker tag modal presentations
 	private speakerTagModalQueue: Promise<void> = Promise.resolve();
 
+	/** Count of currently running LLM processes (speaker tagging + summarization). */
+	private activeLlmCount = 0;
+
 	private doTagSpeakers(
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
@@ -310,41 +321,87 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speaker tagging already in progress for this transcript");
 			return;
 		}
+		if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("LLM concurrency limit reached — try again when a running job finishes");
+			return;
+		}
 
-		speakerTagJobs.add(transcriptPath);
-		this.refreshCalendarCards();
-		new Notice("Speaker tagging started");
+		void this.runTagSpeakers(transcriptFile, transcriptPath);
+	}
 
+	private async runTagSpeakers(transcriptFile: TFile, transcriptPath: string): Promise<void> {
 		// basePath is undocumented but stable on desktop — no Vault API alternative
 		// exists for obtaining the absolute filesystem path to the vault root.
 		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		void spawnLlmPrompt({
-			targetPath: transcriptPath,
-			targetLabel: "Transcript",
-			vaultPath,
-			promptPath: this.settings.speakerTaggingPromptPath,
-			microphoneUser: this.settings.microphoneUser,
-			llmCli: this.settings.llmCli,
-			llmExtraFlags: this.settings.llmExtraFlags,
-			llmSkipPermissions: this.settings.llmSkipPermissions,
-			terminalApp: this.settings.terminalApp,
-			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
-			transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
-			peopleFolderPath: this.settings.peopleFolderPath || undefined,
-			batch: true,
-		}).then(({exitCode, stdout, stderr}) => {
-			speakerTagJobs.delete(transcriptPath);
-			this.refreshCalendarCards();
+
+		// Validate CLI exists
+		if (!await validateLlmCli(this.settings.llmCli)) {
+			new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+			return;
+		}
+
+		// Validate prompt file exists
+		const resolvedPrompt = resolvePromptPath(this.settings.speakerTaggingPromptPath, vaultPath);
+		try {
+			await access(resolvedPrompt);
+		} catch {
+			new Notice(`Speaker tagging prompt file not found: ${resolvedPrompt}`);
+			return;
+		}
+
+		speakerTagJobs.add(transcriptPath);
+		this.activeLlmCount++;
+		this.refreshCalendarCards();
+		new Notice("Speaker tagging started");
+
+		const timeoutMs = this.settings.llmTimeoutMinutes > 0
+			? this.settings.llmTimeoutMinutes * 60000 : 0;
+
+		try {
+			const {exitCode, stdout, stderr} = await spawnLlmPrompt({
+				targetPath: transcriptPath,
+				targetLabel: "Transcript",
+				vaultPath,
+				promptPath: this.settings.speakerTaggingPromptPath,
+				microphoneUser: this.settings.microphoneUser,
+				llmCli: this.settings.llmCli,
+				llmExtraFlags: this.settings.llmExtraFlags,
+				llmSkipPermissions: this.settings.llmSkipPermissions,
+				terminalApp: this.settings.terminalApp,
+				autoCloseTerminal: this.settings.llmAutoCloseTerminal,
+				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
+				peopleFolderPath: this.settings.peopleFolderPath || undefined,
+				batch: true,
+				timeoutMs,
+			});
 
 			if (exitCode !== 0) {
-				const excerpt = stderr.trim().slice(0, 200);
+				const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
 				new Notice(`Speaker tagging failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
 				return;
 			}
 
+			// Verify the transcript file still exists after the LLM run
+			if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
+				new Notice("Transcript was deleted while speaker tagging was running");
+				return;
+			}
+
+			const {mappings, warning} = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
+			if (warning) {
+				console.warn("[WhisperCal]", warning);
+			}
+			if (mappings.length === 0) {
+				new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
+				return;
+			}
+			if (warning) {
+				new Notice(warning);
+			}
+
 			// Queue the modal so parallel completions are presented one at a time
 			this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
-				const mappings = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
 				const title = transcriptFile.basename;
 				const decisions = await new SpeakerTagModal(this.app, mappings, title).prompt();
 				if (!decisions) return;
@@ -355,11 +412,24 @@ export default class WhisperCalPlugin extends Plugin {
 					return;
 				}
 
-				await applySpeakerTags(this.app, transcriptPath, decisions);
-				new Notice("Speaker tags applied");
+				try {
+					await applySpeakerTags(this.app, transcriptPath, decisions);
+					new Notice("Speaker tags applied");
+				} catch (e) {
+					const msg = e instanceof Error ? e.message : String(e);
+					new Notice(`Failed to apply speaker tags: ${msg}`);
+				}
 				this.refreshCalendarCards();
 			});
-		});
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			new Notice(`Speaker tagging encountered an unexpected error: ${msg}`);
+			console.error("[WhisperCal] Speaker tagging error:", e);
+		} finally {
+			speakerTagJobs.delete(transcriptPath);
+			this.activeLlmCount--;
+			this.refreshCalendarCards();
+		}
 	}
 
 	private doSummarize(notePath: string): void {
@@ -391,34 +461,77 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Summarization already in progress for this meeting");
 			return;
 		}
+		if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("LLM concurrency limit reached — try again when a running job finishes");
+			return;
+		}
+
+		void this.runSummarize(notePath);
+	}
+
+	private async runSummarize(notePath: string): Promise<void> {
+		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
+
+		// Validate CLI exists
+		if (!await validateLlmCli(this.settings.llmCli)) {
+			new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+			return;
+		}
+
+		// Validate prompt file exists
+		const resolvedPrompt = resolvePromptPath(this.settings.summarizerPromptPath, vaultPath);
+		try {
+			await access(resolvedPrompt);
+		} catch {
+			new Notice(`Summarizer prompt file not found: ${resolvedPrompt}`);
+			return;
+		}
 
 		summarizeJobs.add(notePath);
+		this.activeLlmCount++;
 		this.refreshCalendarCards();
 		this.updateSummarizeBanners(notePath);
 		new Notice("Summarization started");
 
-		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-		void spawnLlmPrompt({
-			targetPath: notePath,
-			targetLabel: "Meeting note",
-			vaultPath,
-			promptPath: this.settings.summarizerPromptPath,
-			llmCli: this.settings.llmCli,
-			llmExtraFlags: this.settings.llmExtraFlags,
-			llmSkipPermissions: this.settings.llmSkipPermissions,
-			terminalApp: this.settings.terminalApp,
-			autoCloseTerminal: this.settings.llmAutoCloseTerminal,
-		}).then(({exitCode, stderr}) => {
-			summarizeJobs.delete(notePath);
+		const timeoutMs = this.settings.llmTimeoutMinutes > 0
+			? this.settings.llmTimeoutMinutes * 60000 : 0;
+
+		try {
+			const {exitCode, stderr} = await spawnLlmPrompt({
+				targetPath: notePath,
+				targetLabel: "Meeting note",
+				vaultPath,
+				promptPath: this.settings.summarizerPromptPath,
+				llmCli: this.settings.llmCli,
+				llmExtraFlags: this.settings.llmExtraFlags,
+				llmSkipPermissions: this.settings.llmSkipPermissions,
+				terminalApp: this.settings.terminalApp,
+				autoCloseTerminal: this.settings.llmAutoCloseTerminal,
+				timeoutMs,
+			});
+
 			if (exitCode === 0) {
-				new Notice("Summarization complete");
+				// Verify note still exists
+				if (!this.app.vault.getAbstractFileByPath(notePath)) {
+					new Notice("Meeting note was deleted while summarization was running");
+				} else {
+					new Notice("Summarization complete");
+				}
 			} else {
-				const excerpt = stderr.trim().slice(0, 200);
+				const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
 				new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
 			}
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			new Notice(`Summarization encountered an unexpected error: ${msg}`);
+			console.error("[WhisperCal] Summarization error:", e);
+		} finally {
+			summarizeJobs.delete(notePath);
+			this.activeLlmCount--;
 			this.refreshCalendarCards();
 			this.updateSummarizeBanners(notePath);
-		});
+		}
 	}
 
 	private refreshCalendarCards(): void {

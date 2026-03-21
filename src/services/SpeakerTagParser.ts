@@ -11,6 +11,12 @@ export interface ProposedSpeakerMapping {
 	lineCount: number;
 }
 
+export interface ParseResult {
+	mappings: ProposedSpeakerMapping[];
+	/** Explains why the result is empty/degraded, if applicable. */
+	warning?: string;
+}
+
 interface FrontmatterSpeaker {
 	id?: string;
 	name?: string;
@@ -26,8 +32,19 @@ export function parseSpeakerTagOutput(
 	stdout: string,
 	app: App,
 	transcriptPath: string,
-): ProposedSpeakerMapping[] {
+): ParseResult {
 	const speakers = getFrontmatterSpeakers(app, transcriptPath);
+
+	// Empty or whitespace-only output
+	if (!stdout.trim()) {
+		if (speakers.length === 0) {
+			return {mappings: [], warning: "LLM returned no output and transcript has no speakers"};
+		}
+		return {
+			mappings: buildFallbackMappings(speakers),
+			warning: "LLM returned no output — showing speakers without AI suggestions",
+		};
+	}
 
 	// Try to find and parse the structured "Proposed Mapping:" section
 	const headerIdx = stdout.indexOf("Proposed Mapping:");
@@ -55,10 +72,27 @@ export function parseSpeakerTagOutput(
 				lineCount: speaker?.line_count ?? 0,
 			});
 		}
-		if (parsed.length > 0) return parsed;
+		if (parsed.length > 0) return {mappings: parsed};
+
+		// Header found but no lines parsed — malformed output
+		console.warn("[WhisperCal] 'Proposed Mapping:' header found but no lines matched the expected format");
+		if (speakers.length === 0) {
+			return {mappings: [], warning: "LLM output was malformed — no speakers found in transcript"};
+		}
+		return {
+			mappings: buildFallbackMappings(speakers),
+			warning: "LLM output was malformed — showing speakers without AI suggestions",
+		};
 	}
 
-	// Fallback: build from frontmatter speakers with empty proposals
+	// No header at all — fallback to frontmatter speakers
+	if (speakers.length === 0) {
+		return {mappings: [], warning: "LLM returned no speaker mappings and transcript has no speakers"};
+	}
+	return {mappings: buildFallbackMappings(speakers)};
+}
+
+function buildFallbackMappings(speakers: FrontmatterSpeaker[]): ProposedSpeakerMapping[] {
 	return speakers.map((s, i) => ({
 		index: i,
 		originalName: s.name ?? `Speaker ${i}`,

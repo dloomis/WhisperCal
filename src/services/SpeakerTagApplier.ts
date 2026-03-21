@@ -16,6 +16,8 @@ interface FrontmatterSpeaker {
  * Apply approved speaker tag decisions to the transcript file:
  * 1. Update frontmatter speakers array + pipeline_state + confirmed_speakers
  * 2. Replace stub labels in the body text
+ *
+ * Throws on file-not-found or write failures so the caller can show a Notice.
  */
 export async function applySpeakerTags(
 	app: App,
@@ -23,7 +25,9 @@ export async function applySpeakerTags(
 	decisions: SpeakerTagDecision[],
 ): Promise<void> {
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
-	if (!(file instanceof TFile)) return;
+	if (!(file instanceof TFile)) {
+		throw new Error(`Transcript file not found: ${transcriptPath}`);
+	}
 
 	// Build lookup from speakerId to decision
 	const decisionMap = new Map<string, SpeakerTagDecision>();
@@ -61,6 +65,12 @@ export async function applySpeakerTags(
 	});
 
 	// 2. Replace stub labels in body text
+	// Verify file still exists after frontmatter update
+	const fileCheck = app.vault.getAbstractFileByPath(transcriptPath);
+	if (!(fileCheck instanceof TFile)) {
+		throw new Error(`Transcript file was deleted during processing: ${transcriptPath}`);
+	}
+
 	// Collect replacements, process longer names first to avoid substring collisions
 	const replacements: Array<{from: string; to: string}> = [];
 	for (const d of decisions) {
@@ -71,7 +81,7 @@ export async function applySpeakerTags(
 	replacements.sort((a, b) => b.from.length - a.from.length);
 
 	if (replacements.length > 0) {
-		await app.vault.process(file, (content) => {
+		await app.vault.process(fileCheck, (content) => {
 			for (const {from, to} of replacements) {
 				// Replace **Original** → **Confirmed**
 				content = content.split(`**${from}**`).join(`**${to}**`);
