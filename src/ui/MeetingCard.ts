@@ -38,9 +38,10 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 		cls: `whisper-cal-pill whisper-cal-pill-${state}`,
 		attr: {"aria-label": label + stateLabels[state]},
 	});
-	if (state === "complete") {
-		btn.createSpan({cls: "whisper-cal-pill-check", text: "✓"});
-	}
+	btn.createSpan({
+		cls: "whisper-cal-pill-check",
+		text: state === "complete" ? "✓" : "",
+	});
 	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
 	setIcon(iconEl, icon);
 	if (state === "disabled" || state === "running") {

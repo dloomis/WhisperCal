@@ -369,6 +369,9 @@
 	font-size: 10px;
 	font-weight: var(--font-semibold);
 	line-height: 1;
+	display: inline-block;
+	width: 10px;
+	text-align: center;
 }
 
 .whisper-cal-pill-running {
