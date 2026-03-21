@@ -26,8 +26,6 @@ export interface WhisperCalSettings {
 	llmCli: string;
 	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
-	terminalApp: "Terminal" | "iTerm2";
-	llmAutoCloseTerminal: boolean;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	autoSummarizeAfterTagging: boolean;
@@ -56,8 +54,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmCli: "claude",
 	llmSkipPermissions: true,
 	llmExtraFlags: "",
-	terminalApp: "Terminal",
-	llmAutoCloseTerminal: false,
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	autoSummarizeAfterTagging: false,
@@ -278,30 +274,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
-			.setName("Terminal app")
-			.setDesc("Terminal application to open for LLM prompts")
-			.addDropdown(dropdown => {
-				dropdown.addOption("Terminal", "Terminal");
-				dropdown.addOption("iTerm2", "iTerm2");
-				dropdown.setValue(this.plugin.settings.terminalApp);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.terminalApp = value as "Terminal" | "iTerm2";
-					await this.plugin.saveSettings();
-				});
-			});
 		/* eslint-enable obsidianmd/ui/sentence-case */
-
-		new Setting(containerEl)
-			.setName("Auto-close terminal")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Close the terminal window after the LLM prompt completes")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.llmAutoCloseTerminal)
-				.onChange(async (value) => {
-					this.plugin.settings.llmAutoCloseTerminal = value;
-					await this.plugin.saveSettings();
-				}));
 
 		new Setting(containerEl)
 			// eslint-disable-next-line obsidianmd/ui/sentence-case

@@ -566,8 +566,6 @@ If any check fails, an Obsidian notice explains the problem.
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Skip permissions** | On | Passes `--dangerously-skip-permissions` so the LLM can read/write files without per-operation prompts. Required for background operation. |
 | **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation (e.g., `--model sonnet` to select a specific model). |
-| **Terminal app** | Terminal | Which macOS terminal to use when running LLM prompts in terminal mode (legacy; background mode does not use a terminal). |
-| **Auto-close terminal** | Off | Close the terminal window after the LLM finishes (only applies to terminal mode). |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization after speaker tagging completes. Requires a summarizer prompt to be configured. |
@@ -636,8 +634,6 @@ All commands are available from the command palette (`Cmd+P`):
 | **CLI command** | `claude` | LLM CLI executable name or path. |
 | **Skip permissions** | On | Passes `--dangerously-skip-permissions` to the LLM CLI. |
 | **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation. |
-| **Terminal app** | Terminal | Terminal application for legacy terminal mode. |
-| **Auto-close terminal** | Off | Close terminal window after LLM finishes (terminal mode only). |
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |

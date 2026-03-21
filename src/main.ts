@@ -368,9 +368,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
 				llmSkipPermissions: this.settings.llmSkipPermissions,
-				terminalApp: this.settings.terminalApp,
-				autoCloseTerminal: this.settings.llmAutoCloseTerminal,
-				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
+					transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				batch: true,
 				timeoutMs,
@@ -519,9 +517,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
 				llmSkipPermissions: this.settings.llmSkipPermissions,
-				terminalApp: this.settings.terminalApp,
-				autoCloseTerminal: this.settings.llmAutoCloseTerminal,
-				timeoutMs,
+					timeoutMs,
 			});
 
 			if (exitCode === 0) {
