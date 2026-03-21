@@ -367,7 +367,6 @@ export default class WhisperCalPlugin extends Plugin {
 				microphoneUser: this.settings.microphoneUser,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-				llmSkipPermissions: this.settings.llmSkipPermissions,
 					transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				batch: true,
@@ -516,7 +515,6 @@ export default class WhisperCalPlugin extends Plugin {
 				promptPath: this.settings.summarizerPromptPath,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-				llmSkipPermissions: this.settings.llmSkipPermissions,
 					timeoutMs,
 			});
 

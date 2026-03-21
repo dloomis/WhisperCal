@@ -564,8 +564,7 @@ If any check fails, an Obsidian notice explains the problem.
 | **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
-| **Skip permissions** | On | Passes `--dangerously-skip-permissions` so the LLM can read/write files without per-operation prompts. Required for background operation. |
-| **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation (e.g., `--model sonnet` to select a specific model). |
+| **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization after speaker tagging completes. Requires a summarizer prompt to be configured. |
@@ -632,8 +631,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
 | **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
 | **CLI command** | `claude` | LLM CLI executable name or path. |
-| **Skip permissions** | On | Passes `--dangerously-skip-permissions` to the LLM CLI. |
-| **Additional flags** | *(empty)* | Extra CLI flags appended to every LLM invocation. |
+| **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |

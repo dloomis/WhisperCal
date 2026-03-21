@@ -24,7 +24,6 @@ export interface WhisperCalSettings {
 	summarizerPromptPath: string;
 	microphoneUser: string;
 	llmCli: string;
-	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
@@ -52,8 +51,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	summarizerPromptPath: "",
 	microphoneUser: "",
 	llmCli: "claude",
-	llmSkipPermissions: true,
-	llmExtraFlags: "",
+	llmExtraFlags: "--dangerously-skip-permissions",
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	autoSummarizeAfterTagging: false,
@@ -250,16 +248,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.llmCli)
 				.onChange(async (value) => {
 					this.plugin.settings.llmCli = value.trim() || "claude";
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName("Skip permissions")
-			.setDesc("Allows the LLM to read/write files without per-operation prompts (safe for trusted prompts)")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.llmSkipPermissions)
-				.onChange(async (value) => {
-					this.plugin.settings.llmSkipPermissions = value;
 					await this.plugin.saveSettings();
 				}));
 

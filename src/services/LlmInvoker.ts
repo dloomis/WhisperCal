@@ -8,7 +8,6 @@ export interface LlmInvokerOpts {
 	vaultPath: string;        // absolute path to vault root
 	promptPath: string;       // absolute or vault-relative path to the prompt file
 	llmCli: string;
-	llmSkipPermissions: boolean;
 	llmExtraFlags: string;
 	timeoutMs?: number;       // kill the process after this many ms (0 = no timeout)
 	// Optional parameters that skip prompt steps when provided
@@ -74,7 +73,6 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 		promptPath,
 		microphoneUser,
 		llmCli,
-		llmSkipPermissions,
 		llmExtraFlags,
 		transcriptFolderPath,
 		peopleFolderPath,
@@ -97,7 +95,6 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	// Build CLI flags and full shell command
 	const flags = [
-		llmSkipPermissions ? "--dangerously-skip-permissions" : "",
 		llmExtraFlags.trim(),
 	].filter(Boolean).join(" ");
 	const cmd = `${llmCli}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
