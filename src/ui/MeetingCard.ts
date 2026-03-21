@@ -165,6 +165,9 @@ export function renderMeetingCard(
 		? resolveWikiLink(app, noteFm, "transcript", notePath)
 		: null;
 	const transcriptPath = transcriptFile?.path ?? "";
+	if (transcriptPath) {
+		card.dataset.transcriptPath = transcriptPath;
+	}
 
 	const speakersState: PillState = transcriptState !== "complete"
 		? "disabled"

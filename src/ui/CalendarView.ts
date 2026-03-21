@@ -122,7 +122,8 @@ export class CalendarView extends ItemView {
 		this.registerEvent(
 			this.app.metadataCache.on("changed", (file) => {
 				if (this.cachedEvents === null) return;
-				if (!file.path.startsWith(this.settings.noteFolderPath + "/")) return;
+				if (!file.path.startsWith(this.settings.noteFolderPath + "/")
+				&& !file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
 				if (this.cardRefreshTimer !== null) {
 					window.clearTimeout(this.cardRefreshTimer);
 				}
@@ -439,6 +440,16 @@ export class CalendarView extends ItemView {
 		return results;
 	}
 
+	/** Find card whose note or transcript matches the given path. */
+	private findCardByPath(path: string): HTMLElement | null {
+		if (!this.contentContainer) return null;
+		const escaped = CSS.escape(path);
+		const el = this.contentContainer.querySelector(
+			`[data-note-path="${escaped}"], [data-transcript-path="${escaped}"]`,
+		);
+		return el instanceof HTMLElement ? el : null;
+	}
+
 	private updateNoteOpenHighlight(): void {
 		if (!this.contentContainer) return;
 		const activePath = this.app.workspace.getActiveFile()?.path ?? null;
@@ -448,20 +459,12 @@ export class CalendarView extends ItemView {
 
 		// Remove from previous
 		if (this.noteOpenPath !== null) {
-			const prev = this.contentContainer.querySelector(
-				`[data-note-path="${CSS.escape(this.noteOpenPath)}"]`,
-			);
-			prev?.removeClass(cls);
+			this.findCardByPath(this.noteOpenPath)?.removeClass(cls);
 		}
 
 		// Add to current
 		if (activePath !== null) {
-			const curr = this.contentContainer.querySelector(
-				`[data-note-path="${CSS.escape(activePath)}"]`,
-			);
-			if (curr instanceof HTMLElement) {
-				curr.addClass(cls);
-			}
+			this.findCardByPath(activePath)?.addClass(cls);
 		}
 
 		this.noteOpenPath = activePath;
@@ -474,12 +477,7 @@ export class CalendarView extends ItemView {
 		const cls = "whisper-cal-card-note-open";
 
 		if (activePath !== null) {
-			const curr = this.contentContainer.querySelector(
-				`[data-note-path="${CSS.escape(activePath)}"]`,
-			);
-			if (curr instanceof HTMLElement) {
-				curr.addClass(cls);
-			}
+			this.findCardByPath(activePath)?.addClass(cls);
 		}
 
 		this.noteOpenPath = activePath;
