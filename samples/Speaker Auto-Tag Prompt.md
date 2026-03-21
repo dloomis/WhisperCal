@@ -122,6 +122,24 @@ Sort by date prefix (descending), take top 2 (excluding the current transcript).
 
 Collect all unique names from: stub speakers (frontmatter), calendar attendees (Step 5), and recurring meeting speakers (6b).
 
+#### 6c-cache: Roster Cache Check
+
+**Priority order:** `People Roster:` parameter (highest — skips 6a-6c entirely) > cache hit (skips Phase 1+2 Globs/Reads below) > full rebuild (existing behavior).
+
+Before running the expensive Phase 1+2 Glob/Read cycle, check for a cached roster:
+
+1. **Eligibility:** Transcript has `meeting_subject` AND (`is_recurring: true` OR the Step 2 Glob returned 2+ prior transcripts for this series).
+2. **Lookup:** Glob `Caches/Speaker Rosters/{sanitized_subject}.md` where `sanitized_subject` replaces filesystem-unsafe characters (`/`, `\`, `:`) with hyphens.
+3. **If found, Read it.** Check the `generated` frontmatter field:
+   - **Fresh (< 14 days old):** Compare current candidate names (from stubs + calendar + prior speakers collected above) against the cached roster's `Full Name` column.
+     - **All present** → use the cached table as the People context table. **Skip Phase 1 + Phase 2 entirely.** Proceed to Step 7.
+     - **New names found** → run Phase 1 + Phase 2 below for **only the new names** (delta resolution). Merge results into the cached table. Use the merged table as the People context table.
+   - **Stale (≥ 14 days old)** → treat as cache miss; fall through to full Phase 1 + Phase 2 below.
+4. **If not found** → fall through to full Phase 1 + Phase 2 below.
+5. **Not eligible (non-recurring)** → skip cache entirely; fall through.
+
+#### Phase 1+2: Full People Note Resolution
+
 For each unique name, resolve the People note using **last-name-first Glob patterns** (`{People Folder}` from invocation parameters):
 - **Full name known:** Use `{People Folder}/*[LastName]*.md` — this catches nickname-based filenames (e.g., "Kep Brown.md" for Kenneth Brown). If multiple results, disambiguate by first name.
 - **Single name only:** Use `{People Folder}/*[Name]*.md`
@@ -129,16 +147,16 @@ For each unique name, resolve the People note using **last-name-first Glob patte
 **Two-phase execution (MANDATORY — do not interleave):**
 
 1. **Phase 1 — Glob all:** Issue ALL People note Glob calls in a single parallel tool-call batch. Do not read any People note until all Glob results are collected.
-2. **Phase 2 — Read all:** Issue ALL resulting Read calls in a single parallel tool-call batch. Extract `full_name` and `nickname` from each.
+2. **Phase 2 — Read all:** Issue ALL resulting Read calls in a single parallel tool-call batch. Extract `full_name`, `nickname`, `role_title`, and `company/org` from each. Build a `Context` value per person: `{role_title}, {company/org}` (omit the comma if one field is empty; leave blank if both are empty).
 
 Build the People context table (the `People Note Filename` column is reused in Step 8 — no re-Globbing):
 
 ```
-| Full Name | Nickname | People Note Filename | Source |
-|-----------|----------|---------------------|--------|
-| Michael Chen | Mike | Michael Chen | calendar |
-| Tom Wilson | Tom | Tom Wilson | prior_transcript |
-| Jane Smith | Jane | Jane Smith | microphone_user |
+| Full Name | Nickname | Context | People Note Filename | Source |
+|-----------|----------|---------|---------------------|--------|
+| Michael Chen | Mike | Platform Engineer, C2E | Michael Chen | calendar |
+| Tom Wilson | Tom | | Tom Wilson | prior_transcript |
+| Jane Smith | Jane | Iris Technical Lead, KSPIL6 | Jane Smith | microphone_user |
 ```
 
 ---
@@ -155,7 +173,7 @@ Run the inline LLM analysis using all data gathered in Steps 2-6.
 | Speaker stubs | `speakers` array from frontmatter (name, stub flag, line_count) |
 | Calendar attendees | From Step 5 (names, emails, People note matches) |
 | Recurring meeting speakers | From Step 6b (`confirmed_speakers` from prior transcripts) |
-| People context | From Step 6c (full_name, nickname, People Note filename for all candidates) |
+| People context | From Step 6c (full_name, nickname, context, People Note filename for all candidates) |
 
 ### 7 Priority Rules
 
@@ -215,7 +233,11 @@ When a first name is identified (from vocative or other evidence), resolve to fu
 1. Check calendar attendees first — if exactly one attendee has that first name, use them (calendar context takes precedence for this session)
 2. Check People context table (Step 6c) — `Full Name` and `Nickname` columns
 
-**Ambiguity:** Multiple people sharing a first name → flag as LOW confidence with candidates listed; do not auto-resolve.
+**Ambiguity — first-name collision:** When multiple candidates share a first name, attempt disambiguation in order:
+
+1. **Context match:** Check the `Context` column for each candidate. If the transcript discusses a program, team, or organization that matches exactly one candidate's context → resolve to that candidate at **HIGH** confidence (not CERTAIN — circumstantial evidence). **Evidence:** `context_match: "{context value}" aligns with transcript topic "{topic}"`
+2. **Calendar attendee preference:** If exactly one candidate is a calendar attendee for this session → resolve to that candidate (existing Rule 2 logic applies).
+3. **Neither resolves:** Flag as LOW confidence with all candidates **and their Context values** listed for faster manual resolution. Example: `"John" — candidates: John Keith (Iris Technical Lead, KSPIL6), John Washburn (Network Engineer, C2E)`
 
 #### Rule 7: Alias / Transcription Error Handling
 
@@ -234,13 +256,15 @@ For each unresolved stub, check `Nickname` column from the People context table 
 After applying all 7 rules, build the proposed mapping table:
 
 ```
-| Stub Name | Proposed Name | Confidence | Evidence |
-|-----------|---------------|------------|----------|
-| Microphone | Jane Smith | CERTAIN | microphone |
-| Speaker 1 | Tom Wilson | CERTAIN | calendar + vocative ("Tom, go ahead" at 05:23) |
-| Speaker 2 | Michael Chen | HIGH | calendar + recurring_speaker |
-| Speaker 3 | (unresolved) | - | No matching signals |
+| # | Stub Name | Proposed Name | Confidence | Evidence |
+|---|-----------|---------------|------------|----------|
+| 0 | Microphone | Jane Smith | CERTAIN | microphone |
+| 1 | Speaker 1 | Tom Wilson | CERTAIN | calendar + vocative ("Tom, go ahead" at 05:23) |
+| 2 | Speaker 2 | Michael Chen | HIGH | calendar + recurring_speaker |
+| 3 | Speaker 3 | (unresolved) | - | No matching signals |
 ```
+
+**Numbering rule:** `#0` = Microphone, `#N` = Speaker N. This keeps proposal numbers aligned with stub labels for quick user corrections (e.g., "2: John Davis" means Speaker 2).
 
 ---
 
@@ -250,7 +274,7 @@ After applying all 7 rules, build the proposed mapping table:
 
 Present the full mapping table to the user in a single message. Then use **one AskUserQuestion** with options:
 - **"Approve all"** — proceed to Step 8 as-is
-- **"Approve with edits"** — user provides numbered corrections (e.g., "2: John Davis") in a single response
+- **"Approve with edits"** — user provides numbered corrections matching the `#` column (e.g., "2: John Davis" = Speaker 2) in a single response
 
 LOW-confidence and unresolved speakers are flagged in the table but do not trigger separate prompts.
 
@@ -266,10 +290,10 @@ Run the full analysis (Steps 1-7), build the proposed mapping, but:
 ```
 Transcript: [filename]
 Proposed Mapping:
-- Stub: "Microphone" → "Jane Smith" | CERTAIN | microphone
-- Stub: "Speaker 1" → "Tom Wilson" | CERTAIN | calendar + vocative
-- Stub: "Speaker 2" → "Michael Chen" | HIGH | calendar + recurring_speaker
-- Stub: "Speaker 3" → (unresolved) | - | No matching signals
+- #0: "Microphone" → "Jane Smith" | CERTAIN | microphone
+- #1: "Speaker 1" → "Tom Wilson" | CERTAIN | calendar + vocative
+- #2: "Speaker 2" → "Michael Chen" | HIGH | calendar + recurring_speaker
+- #3: "Speaker 3" → (unresolved) | - | No matching signals
 Calendar Event: [matched event title or "none"]
 Calendar Attendees: [list]
 ```
@@ -296,7 +320,20 @@ The replacement block must include:
 
 **Technique:** Use the original `speakers:` block start through `pipeline_state: titled` (or current value) as the `old_string`, and replace with the fully-built block containing all updates. One edit, one file write.
 
-### 8b. Body Label Replacement
+### 8b. Update Roster Cache
+
+If the transcript has `meeting_subject` AND is recurring (same eligibility as 6c-cache):
+
+1. Build the roster table from the People context table already in memory (the same table used in Step 7) — no extra tool calls for data.
+2. Write to `Caches/Speaker Rosters/{sanitized_subject}.md` (replace `/`, `\`, `:` with hyphens in filename) with:
+   - **Frontmatter:** `meeting_subject`, `generated` (current ISO 8601 timestamp with timezone), `source_transcript` (current transcript filename), `invitee_count` (number of calendar invitees), `roster_count` (number of resolved People entries)
+   - **Body:** The People context table in the same `| Full Name | Nickname | Context | People Note Filename | Source |` format consumed by Step 7
+
+This is 1 Write call — all data is already resolved in context.
+
+If not recurring → skip.
+
+### 8c. Body Label Replacement
 
 Using the approved mapping from Step 7 (no need to rebuild), replace stub labels in the transcript body:
 - Bold format: `**Speaker 1**` → `**Tom Wilson**`
