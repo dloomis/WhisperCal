@@ -449,13 +449,15 @@ Role: Engineering Manager
 
 WhisperCal invokes an external LLM CLI tool as a background process to tag speakers in transcripts and summarize meetings. The LLM runs headlessly inside Obsidian — no terminal window is required. Progress and errors are reported via Obsidian notices.
 
+**Included prompts:** The plugin ships with two ready-to-use prompt files in the `samples/` directory — one for speaker tagging and one for summarization. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
+
 ### Speaker Tagging
 
 **Prerequisite:** A transcript file must exist (Stage 2 complete, `pipeline_state: titled`).
 
 **Setup:**
 
-1. Copy `samples/Speaker Auto-Tag Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Speaker Tagging.md`).
+1. Copy `samples/Speaker Auto-Tag Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Speaker Tagging.md`). This prompt works as a ready-to-use default — customize it if needed.
 2. Set the **"Speaker tagging prompt"** path in WhisperCal settings.
 3. Set the **"Microphone user"** field to your full name as it appears in meetings.
 
@@ -516,7 +518,7 @@ When you click **Apply** in the modal, WhisperCal:
 
 **Setup:**
 
-1. Copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Summarizer.md`).
+1. Copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Summarizer.md`). This prompt works as a ready-to-use default — customize it if needed.
 2. Set the **"Summarizer prompt"** path in WhisperCal settings.
 
 **Usage:**
