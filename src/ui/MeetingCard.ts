@@ -66,8 +66,7 @@ export function renderMeetingCard(
 	// Time gutter — left column
 	const gutter = card.createDiv({cls: "whisper-cal-card-gutter"});
 	if (event.isAllDay) {
-		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All"});
-		gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: "day"});
+		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "Ad"});
 		gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: "hoc"});

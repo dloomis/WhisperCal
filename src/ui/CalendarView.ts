@@ -322,10 +322,6 @@ export class CalendarView extends ItemView {
 		timed.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
 		if (allDay.length > 0) {
-			this.contentContainer.createDiv({
-				cls: "whisper-cal-section-title",
-				text: "All day",
-			});
 			for (const event of allDay) {
 				renderMeetingCard(this.contentContainer, {
 					event,
@@ -343,10 +339,6 @@ export class CalendarView extends ItemView {
 		}
 
 		if (timed.length > 0) {
-			this.contentContainer.createDiv({
-				cls: "whisper-cal-section-title",
-				text: isToday ? "Today" : "Scheduled",
-			});
 			for (const event of timed) {
 				renderMeetingCard(this.contentContainer, {
 					event,
