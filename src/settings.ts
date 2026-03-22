@@ -262,9 +262,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Additional flags")
-			.setDesc("Extra CLI flags appended to the LLM command (optional)")
+			.setDesc("Extra CLI flags appended to the LLM command. " +
+				"⚠️ The default --dangerously-skip-permissions is required for " +
+				"non-interactive LLM usage — removing it will break speaker tagging " +
+				"and summarization.")
 			.addText(text => text
-				.setPlaceholder("")
+				.setPlaceholder("--dangerously-skip-permissions")
 				.setValue(this.plugin.settings.llmExtraFlags)
 				.onChange(async (value) => {
 					this.plugin.settings.llmExtraFlags = value;

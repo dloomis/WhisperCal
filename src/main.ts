@@ -211,6 +211,10 @@ export default class WhisperCalPlugin extends Plugin {
 				this.settings.importantOrganizers = oldEmails.map(e => ({name: e, email: e}));
 			}
 		}
+		// Backfill llmExtraFlags for installs that saved before the default existed
+		if (!this.settings.llmExtraFlags) {
+			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
+		}
 		// Auto-populate microphoneUser from macOS account on first install
 		if (!this.settings.microphoneUser) {
 			try {
