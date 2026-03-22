@@ -52,6 +52,10 @@ export class GraphApiProvider implements CalendarProvider {
 		return allEvents.map(e => parseGraphEvent(e, userEmail));
 	}
 
+	getUserEmail(): string {
+		return this.userEmail ?? "";
+	}
+
 	private async fetchUserEmail(token: string): Promise<void> {
 		try {
 			const graphBase = this.auth.getGraphBaseUrl();

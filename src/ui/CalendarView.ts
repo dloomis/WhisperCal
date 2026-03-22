@@ -31,6 +31,7 @@ export class CalendarView extends ItemView {
 	private getCacheStatus: (() => CacheStatus | null) | null = null;
 	private onTagSpeakers: ((transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void) | null = null;
 	private onSummarize: ((notePath: string) => void) | null = null;
+	private getUserEmail: (() => string) | null = null;
 	private noteOpenPath: string | null = null;
 	private stickyHeaderEl: HTMLElement | null = null;
 	private unlinkedEl: HTMLElement | null = null;
@@ -41,6 +42,7 @@ export class CalendarView extends ItemView {
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
+		getUserEmail?: () => string,
 		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
 		onSummarize?: (notePath: string) => void,
 	) {
@@ -51,6 +53,7 @@ export class CalendarView extends ItemView {
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
 		this.getCacheStatus = getCacheStatus ?? null;
+		this.getUserEmail = getUserEmail ?? null;
 		this.onTagSpeakers = onTagSpeakers ?? null;
 		this.onSummarize = onSummarize ?? null;
 	}
@@ -214,6 +217,7 @@ export class CalendarView extends ItemView {
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
 		getCacheStatus?: () => CacheStatus | null,
+		getUserEmail?: () => string,
 		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
 		onSummarize?: (notePath: string) => void,
 	): void {
@@ -221,6 +225,9 @@ export class CalendarView extends ItemView {
 		this.provider = provider;
 		if (getCacheStatus) {
 			this.getCacheStatus = getCacheStatus;
+		}
+		if (getUserEmail) {
+			this.getUserEmail = getUserEmail;
 		}
 		if (onTagSpeakers) {
 			this.onTagSpeakers = onTagSpeakers;
@@ -263,6 +270,15 @@ export class CalendarView extends ItemView {
 
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
+		// Backfill isOrganizer for cached events that predate the field
+		const userEmail = this.getUserEmail?.()?.toLowerCase() ?? "";
+		if (userEmail) {
+			for (const e of events) {
+				if (!e.isOrganizer && e.organizerEmail) {
+					e.isOrganizer = e.organizerEmail.toLowerCase() === userEmail;
+				}
+			}
+		}
 		this.cachedEvents = events;
 		this.contentContainer.empty();
 

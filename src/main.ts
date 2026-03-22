@@ -27,6 +27,7 @@ interface PluginData extends WhisperCalSettings {
 export default class WhisperCalPlugin extends Plugin {
 	settings: WhisperCalSettings;
 	auth: MsalAuth;
+	private upstream: GraphApiProvider;
 	private provider: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
@@ -50,10 +51,10 @@ export default class WhisperCalPlugin extends Plugin {
 		);
 		this.auth.initialize();
 
-		const upstream = new GraphApiProvider(this.auth);
+		this.upstream = new GraphApiProvider(this.auth);
 		this.cachedProvider = new CachedCalendarProvider(
 			this.app,
-			upstream,
+			this.upstream,
 			this.manifest.dir!,
 			this.settings.cacheFutureDays,
 			this.settings.cacheRetentionDays,
@@ -72,8 +73,10 @@ export default class WhisperCalPlugin extends Plugin {
 			this.doSummarize(notePath);
 		};
 
+		const getUserEmail = () => this.upstream.getUserEmail();
+
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, onTagSpeakers, onSummarize)
+			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, getUserEmail, onTagSpeakers, onSummarize)
 		);
 
 		// Mirror pipeline_state from transcript files back to their meeting notes
@@ -241,7 +244,7 @@ export default class WhisperCalPlugin extends Plugin {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider, getCacheStatus, onTagSpeakers, onSummarize);
+				view.updateSettings(this.settings, this.provider, getCacheStatus, () => this.upstream.getUserEmail(), onTagSpeakers, onSummarize);
 			}
 		}
 	}
