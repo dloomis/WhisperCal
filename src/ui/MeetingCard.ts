@@ -81,6 +81,20 @@ export function renderMeetingCard(
 		} else {
 			gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: timeStr});
 		}
+		// Duration below the time
+		if (event.startTime.getTime() !== event.endTime.getTime()) {
+			const durationMs = event.endTime.getTime() - event.startTime.getTime();
+			const durationMin = Math.round(durationMs / 60_000);
+			let durText: string;
+			if (durationMin >= 60) {
+				const hours = Math.floor(durationMin / 60);
+				const mins = durationMin % 60;
+				durText = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+			} else {
+				durText = `${durationMin}m`;
+			}
+			gutter.createDiv({cls: "whisper-cal-card-gutter-duration", text: durText});
+		}
 	}
 
 	// Content — right column
@@ -118,21 +132,6 @@ export function renderMeetingCard(
 		const attIcon = attEl.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(attIcon, "users");
 		attEl.createSpan({text: `${event.attendeeCount} attendee${event.attendeeCount === 1 ? "" : "s"}`});
-	}
-
-	// Duration
-	if (!event.isAllDay && event.id !== "unscheduled" && event.startTime.getTime() !== event.endTime.getTime()) {
-		const durationMs = event.endTime.getTime() - event.startTime.getTime();
-		const durationMin = Math.round(durationMs / 60_000);
-		let durText: string;
-		if (durationMin >= 60) {
-			const hours = Math.floor(durationMin / 60);
-			const mins = durationMin % 60;
-			durText = mins > 0 ? `${hours} hr ${mins} min` : `${hours} hr`;
-		} else {
-			durText = `${durationMin} min`;
-		}
-		meta.createSpan({cls: "whisper-cal-card-meta-item", text: durText});
 	}
 
 	// Actions row: workflow pills

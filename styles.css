@@ -116,6 +116,12 @@
 	line-height: 1.2;
 }
 
+.whisper-cal-card-gutter-duration {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	margin-top: 4px;
+}
+
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
