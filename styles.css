@@ -374,13 +374,13 @@
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete {
-	background: color-mix(in srgb, var(--text-success) 15%, transparent);
+	background: color-mix(in srgb, var(--text-success) 10%, transparent);
 	border-color: transparent;
 	color: var(--text-success);
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--text-success) 25%, transparent);
+	background: color-mix(in srgb, var(--text-success) 18%, transparent);
 }
 
 .whisper-cal-pill-running {
