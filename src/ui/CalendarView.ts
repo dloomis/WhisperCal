@@ -317,7 +317,7 @@ export class CalendarView extends ItemView {
 		const localNotes = this.findLocalNotes(calendarEventIds);
 		const merged = [...events, ...localNotes];
 
-		const allDay = merged.filter(e => e.isAllDay);
+		const allDay = this.settings.showAllDayEvents ? merged.filter(e => e.isAllDay) : [];
 		const timed = merged.filter(e => !e.isAllDay);
 		timed.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 

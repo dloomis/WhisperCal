@@ -28,6 +28,7 @@ export interface WhisperCalSettings {
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	autoSummarizeAfterTagging: boolean;
+	showAllDayEvents: boolean;
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	autoSummarizeAfterTagging: false,
+	showAllDayEvents: false,
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -322,6 +324,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						return; // Ignore invalid timezone — keep previous value
 					}
 					this.plugin.settings.timezone = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Show all-day events")
+			.setDesc("Display all-day events in the calendar view")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showAllDayEvents)
+				.onChange(async (value) => {
+					this.plugin.settings.showAllDayEvents = value;
 					await this.plugin.saveSettings();
 				}));
 
