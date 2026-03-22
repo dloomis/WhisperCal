@@ -21,6 +21,8 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Meeting Cards](#meeting-cards)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
+  - [Organizer Indicator](#organizer-indicator)
+  - [Non-Accepted Meeting Indicator](#non-accepted-meeting-indicator)
   - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
   - [Unlinked Recordings](#unlinked-recordings)
@@ -168,13 +170,13 @@ A small dot below the header shows connection status:
 
 Each calendar event is displayed as a two-column card:
 
-- **Time gutter** (left) — Start/end times, "All day", or "Ad hoc" for unscheduled meetings. Shows a warning-colored bar when the workflow is incomplete.
+- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. A gold star appears when you are the organizer. Shows a warning-colored bar when the workflow is incomplete, and a barber-pole stripe for meetings you haven't accepted.
 - **Content** (right):
   - **Subject** — The meeting title.
   - **Meta row** — Location (clickable for online meeting URLs), attendee count, and duration (e.g., "30m" or "1h 30m"), separated by middle dots.
   - **Four workflow pills** — Note, Transcript, Speakers, Summary (see [The Four-Stage Pipeline](#the-four-stage-pipeline)).
 
-Cards are grouped into sections: **All day** events at the top, then **Scheduled** (or **Today**) events sorted by start time.
+All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
 ### Unscheduled Meetings
 
@@ -187,6 +189,14 @@ Unscheduled notes use the current timestamp as their meeting time and get a wide
 When viewing today's calendar:
 - **Currently ongoing events** (between start and end time) are highlighted.
 - If no event is ongoing, the **next upcoming event** is highlighted instead.
+
+### Organizer Indicator
+
+Meetings you organized display a **gold star** in the time gutter below the duration. This is determined by comparing the event's organizer email against your Microsoft 365 account email.
+
+### Non-Accepted Meeting Indicator
+
+Meetings you haven't accepted (tentative, not responded, or declined) show a **barber-pole stripe** pattern on the time gutter, making them visually distinct from accepted meetings.
 
 ### Incomplete Workflow Highlighting
 
@@ -642,6 +652,7 @@ All commands are available from the command palette (`Cmd+P`):
 |---------|---------|-------------|
 | **Timezone** | `America/New_York` | IANA timezone for displaying meeting times. |
 | **Refresh interval** | `5` min | Auto-refresh frequency for the calendar view. |
+| **Show all-day events** | Off | Display all-day events in the calendar view. |
 | **Cache future days** | `5` | Number of upcoming days to pre-fetch. |
 | **Cache retention** | `30` days | How long past calendar data is kept locally. |
 
