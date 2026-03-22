@@ -21,7 +21,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Meeting Cards](#meeting-cards)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
-  - [Organizer Indicator](#organizer-indicator)
+  - [Gutter Icons](#gutter-icons)
   - [Non-Accepted Meeting Indicator](#non-accepted-meeting-indicator)
   - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
@@ -170,7 +170,7 @@ A small dot below the header shows connection status:
 
 Each calendar event is displayed as a two-column card:
 
-- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. A gold star appears when you are the organizer. Shows a warning-colored bar when the workflow is incomplete, and a barber-pole stripe for meetings you haven't accepted.
+- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). Shows a warning-colored bar when the workflow is incomplete, and a barber-pole stripe for meetings you haven't accepted.
 - **Content** (right):
   - **Subject** — The meeting title.
   - **Meta row** — Location (clickable for online meeting URLs), attendee count, and duration (e.g., "30m" or "1h 30m"), separated by middle dots.
@@ -190,9 +190,17 @@ When viewing today's calendar:
 - **Currently ongoing events** (between start and end time) are highlighted.
 - If no event is ongoing, the **next upcoming event** is highlighted instead.
 
-### Organizer Indicator
+### Gutter Icons
 
-Meetings you organized display a **gold star** in the time gutter below the duration. This is determined by comparing the event's organizer email against your Microsoft 365 account email.
+Below the time and duration, the gutter displays up to three inline icons:
+
+| Icon | Meaning |
+|------|---------|
+| **★ Star** (gold) | You are the organizer of this meeting. Determined by comparing the event's organizer email against your Microsoft 365 account email. |
+| **⚡ Zap** (red) | The organizer is in your **important organizers** list (configured in settings via the chip input with Graph API people autocomplete). |
+| **■ Colored square** | The meeting has an Outlook **category** assigned. The color matches the category color from your M365 master categories. Multiple categories show multiple squares. |
+
+All three icons are solid-filled for visual clarity.
 
 ### Non-Accepted Meeting Indicator
 
