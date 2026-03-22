@@ -29,6 +29,7 @@ export interface WhisperCalSettings {
 	llmMaxConcurrent: number;
 	autoSummarizeAfterTagging: boolean;
 	showAllDayEvents: boolean;
+	importantOrganizerEmails: string[];
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -57,6 +58,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmMaxConcurrent: 2,
 	autoSummarizeAfterTagging: false,
 	showAllDayEvents: false,
+	importantOrganizerEmails: [],
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -337,6 +339,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		this.renderImportantOrganizers(containerEl);
+
 		new Setting(containerEl)
 			.setName("Refresh interval (minutes)")
 			.setDesc("How often to refresh the calendar view")
@@ -463,6 +467,81 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+	}
+
+	private renderImportantOrganizers(containerEl: HTMLElement): void {
+		const wrapper = containerEl.createDiv({cls: "whisper-cal-important-organizers"});
+
+		new Setting(wrapper)
+			.setName("Important organizers")
+			.setDesc("Meetings organized by these people show an alert icon in the gutter");
+
+		const listEl = wrapper.createDiv({cls: "whisper-cal-email-list"});
+
+		const renderList = () => {
+			listEl.empty();
+			for (const email of this.plugin.settings.importantOrganizerEmails) {
+				const row = listEl.createDiv({cls: "whisper-cal-email-row"});
+				row.createSpan({cls: "whisper-cal-email-text", text: email});
+				const removeBtn = row.createEl("button", {
+					cls: "whisper-cal-email-remove",
+					attr: {"aria-label": "Remove"},
+				});
+				removeBtn.setText("\u00D7");
+				removeBtn.addEventListener("click", async () => {
+					this.plugin.settings.importantOrganizerEmails =
+						this.plugin.settings.importantOrganizerEmails.filter(e => e !== email);
+					await this.plugin.saveSettings();
+					renderList();
+				});
+			}
+		};
+
+		renderList();
+
+		const addRow = wrapper.createDiv({cls: "whisper-cal-email-add-row"});
+		const input = addRow.createEl("input", {
+			type: "email",
+			cls: "whisper-cal-email-input",
+			attr: {placeholder: "user@example.com"},
+		});
+		const addBtn = addRow.createEl("button", {
+			cls: "whisper-cal-btn whisper-cal-btn-secondary",
+			text: "Add",
+		});
+		const errorEl = addRow.createDiv({cls: "whisper-cal-email-error"});
+
+		const addEmail = async () => {
+			const value = input.value.trim().toLowerCase();
+			errorEl.setText("");
+
+			if (!value) return;
+
+			// RFC 5322 simplified: local@domain with at least one dot in domain
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			if (!emailRegex.test(value)) {
+				errorEl.setText("Invalid email address");
+				return;
+			}
+
+			if (this.plugin.settings.importantOrganizerEmails.includes(value)) {
+				errorEl.setText("Already in list");
+				return;
+			}
+
+			this.plugin.settings.importantOrganizerEmails.push(value);
+			await this.plugin.saveSettings();
+			input.value = "";
+			renderList();
+		};
+
+		addBtn.addEventListener("click", () => void addEmail());
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				void addEmail();
+			}
+		});
 	}
 
 	private renderAuthStatus(state: AuthState): void {

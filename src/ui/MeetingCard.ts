@@ -20,6 +20,7 @@ export interface MeetingCardOpts {
 	transcriptFolderPath?: string;
 	recordingWindowMinutes?: number;
 	onNoteCreated?: () => void;
+	importantOrganizerEmails?: string[];
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
 }
@@ -102,6 +103,15 @@ export function renderMeetingCard(
 	if (event.isOrganizer) {
 		const starEl = gutter.createDiv({cls: "whisper-cal-card-gutter-organizer"});
 		setIcon(starEl, "star");
+	}
+
+	const importantEmails = opts.importantOrganizerEmails ?? [];
+	if (importantEmails.length > 0 && event.organizerEmail) {
+		const normalized = event.organizerEmail.toLowerCase();
+		if (importantEmails.includes(normalized)) {
+			const importantEl = gutter.createDiv({cls: "whisper-cal-card-gutter-important"});
+			setIcon(importantEl, "alert-triangle");
+		}
 	}
 
 	// Content — right column
