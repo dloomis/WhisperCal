@@ -376,8 +376,14 @@
 }
 
 /* Important organizers email list */
+.whisper-cal-important-organizers-control {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 4px;
+}
+
 .whisper-cal-email-list {
-	margin-bottom: 8px;
+	margin-bottom: 4px;
 }
 
 .whisper-cal-email-row {
@@ -413,17 +419,55 @@
 .whisper-cal-email-add-row {
 	display: flex;
 	gap: 8px;
-	align-items: flex-start;
-	flex-wrap: wrap;
+	align-items: center;
 }
 
-.whisper-cal-email-input {
+.whisper-cal-email-input-wrapper {
 	flex: 1;
+	position: relative;
 	min-width: 200px;
 }
 
-.whisper-cal-email-error {
+.whisper-cal-email-input {
 	width: 100%;
+}
+
+.whisper-cal-email-suggestions {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	z-index: var(--layer-popover);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-s);
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.whisper-cal-email-suggestion {
+	padding: 6px 10px;
+	cursor: pointer;
+}
+
+.whisper-cal-email-suggestion:hover,
+.whisper-cal-email-suggestion.is-selected {
+	background: var(--background-modifier-hover);
+}
+
+.whisper-cal-email-suggestion-name {
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+	font-weight: var(--font-medium);
+}
+
+.whisper-cal-email-suggestion-email {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.whisper-cal-email-error {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-error);
 	min-height: 0;

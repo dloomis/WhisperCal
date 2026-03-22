@@ -1,4 +1,4 @@
-import {App, PluginSettingTab, Setting} from "obsidian";
+import {App, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
@@ -470,13 +470,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	private renderImportantOrganizers(containerEl: HTMLElement): void {
-		const wrapper = containerEl.createDiv({cls: "whisper-cal-important-organizers"});
-
-		new Setting(wrapper)
+		const setting = new Setting(containerEl)
 			.setName("Important organizers")
 			.setDesc("Meetings organized by these people show an alert icon in the gutter");
 
-		const listEl = wrapper.createDiv({cls: "whisper-cal-email-list"});
+		// Put everything inside the setting's controlEl so it stays in the shaded area
+		const controlEl = setting.controlEl;
+		controlEl.addClass("whisper-cal-important-organizers-control");
+
+		const listEl = controlEl.createDiv({cls: "whisper-cal-email-list"});
 
 		const renderList = () => {
 			listEl.empty();
@@ -499,17 +501,143 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		renderList();
 
-		const addRow = wrapper.createDiv({cls: "whisper-cal-email-add-row"});
-		const input = addRow.createEl("input", {
-			type: "email",
+		const addRow = controlEl.createDiv({cls: "whisper-cal-email-add-row"});
+		const inputWrapper = addRow.createDiv({cls: "whisper-cal-email-input-wrapper"});
+		const input = inputWrapper.createEl("input", {
+			type: "text",
 			cls: "whisper-cal-email-input",
-			attr: {placeholder: "user@example.com"},
+			attr: {placeholder: "Search people or type an email"},
 		});
+		const suggestionsEl = inputWrapper.createDiv({cls: "whisper-cal-email-suggestions"});
 		const addBtn = addRow.createEl("button", {
 			cls: "whisper-cal-btn whisper-cal-btn-secondary",
 			text: "Add",
 		});
-		const errorEl = addRow.createDiv({cls: "whisper-cal-email-error"});
+		const errorEl = controlEl.createDiv({cls: "whisper-cal-email-error"});
+
+		// Graph API people search with debounce
+		let searchTimer: number | null = null;
+		let selectedIndex = -1;
+
+		interface PeopleSuggestion {
+			name: string;
+			email: string;
+		}
+
+		let suggestions: PeopleSuggestion[] = [];
+
+		const renderSuggestions = () => {
+			suggestionsEl.empty();
+			if (suggestions.length === 0) {
+				suggestionsEl.hide();
+				return;
+			}
+			suggestionsEl.show();
+			for (let i = 0; i < suggestions.length; i++) {
+				const s = suggestions[i]!;
+				const item = suggestionsEl.createDiv({
+					cls: `whisper-cal-email-suggestion${i === selectedIndex ? " is-selected" : ""}`,
+				});
+				item.createDiv({cls: "whisper-cal-email-suggestion-name", text: s.name});
+				item.createDiv({cls: "whisper-cal-email-suggestion-email", text: s.email});
+				item.addEventListener("mousedown", (e) => {
+					e.preventDefault();
+					pickSuggestion(s);
+				});
+			}
+		};
+
+		const pickSuggestion = (s: PeopleSuggestion) => {
+			input.value = s.email;
+			suggestions = [];
+			selectedIndex = -1;
+			renderSuggestions();
+			void addEmail();
+		};
+
+		const searchPeople = async (query: string) => {
+			if (query.length < 2) {
+				suggestions = [];
+				selectedIndex = -1;
+				renderSuggestions();
+				return;
+			}
+			try {
+				if (!this.plugin.auth.isSignedIn()) return;
+				const token = await this.plugin.auth.getAccessToken();
+				const graphBase = this.plugin.auth.getGraphBaseUrl();
+				const encoded = encodeURIComponent(`"${query}"`);
+				const response = await requestUrl({
+					url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=5&$select=displayName,scoredEmailAddresses`,
+					method: "GET",
+					headers: {Authorization: `Bearer ${token}`},
+				});
+				const data = response.json as {
+					value?: Array<{
+						displayName?: string;
+						scoredEmailAddresses?: Array<{address?: string}>;
+					}>;
+				};
+				suggestions = (data.value ?? [])
+					.filter(p => p.scoredEmailAddresses?.[0]?.address)
+					.map(p => ({
+						name: p.displayName ?? "",
+						email: (p.scoredEmailAddresses![0]!.address!).toLowerCase(),
+					}));
+				selectedIndex = -1;
+				renderSuggestions();
+			} catch {
+				// Silently ignore search errors
+			}
+		};
+
+		input.addEventListener("input", () => {
+			if (searchTimer !== null) window.clearTimeout(searchTimer);
+			const query = input.value.trim();
+			errorEl.setText("");
+			searchTimer = window.setTimeout(() => void searchPeople(query), 300);
+		});
+
+		input.addEventListener("keydown", (e) => {
+			if (suggestions.length > 0) {
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					selectedIndex = Math.min(selectedIndex + 1, suggestions.length - 1);
+					renderSuggestions();
+					return;
+				}
+				if (e.key === "ArrowUp") {
+					e.preventDefault();
+					selectedIndex = Math.max(selectedIndex - 1, 0);
+					renderSuggestions();
+					return;
+				}
+				if (e.key === "Enter" && selectedIndex >= 0) {
+					e.preventDefault();
+					pickSuggestion(suggestions[selectedIndex]!);
+					return;
+				}
+				if (e.key === "Escape") {
+					suggestions = [];
+					selectedIndex = -1;
+					renderSuggestions();
+					return;
+				}
+			}
+			if (e.key === "Enter") {
+				e.preventDefault();
+				void addEmail();
+			}
+		});
+
+		input.addEventListener("blur", () => {
+			// Delay to allow mousedown on suggestion to fire
+			window.setTimeout(() => {
+				suggestions = [];
+				selectedIndex = -1;
+				renderSuggestions();
+			}, 200);
+		});
 
 		const addEmail = async () => {
 			const value = input.value.trim().toLowerCase();
@@ -517,7 +645,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 			if (!value) return;
 
-			// RFC 5322 simplified: local@domain with at least one dot in domain
 			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 			if (!emailRegex.test(value)) {
 				errorEl.setText("Invalid email address");
@@ -532,16 +659,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			this.plugin.settings.importantOrganizerEmails.push(value);
 			await this.plugin.saveSettings();
 			input.value = "";
+			suggestions = [];
+			selectedIndex = -1;
+			renderSuggestions();
 			renderList();
 		};
 
 		addBtn.addEventListener("click", () => void addEmail());
-		input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				void addEmail();
-			}
-		});
 	}
 
 	private renderAuthStatus(state: AuthState): void {
