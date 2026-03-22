@@ -20,7 +20,7 @@ export interface MeetingCardOpts {
 	transcriptFolderPath?: string;
 	recordingWindowMinutes?: number;
 	onNoteCreated?: () => void;
-	importantOrganizerEmails?: string[];
+	importantOrganizerEmails?: readonly string[];
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
 }

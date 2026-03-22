@@ -6,6 +6,11 @@ import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
 
+export interface ImportantOrganizer {
+	name: string;
+	email: string;
+}
+
 export interface WhisperCalSettings {
 	timezone: string;
 	refreshIntervalMinutes: number;
@@ -29,7 +34,7 @@ export interface WhisperCalSettings {
 	llmMaxConcurrent: number;
 	autoSummarizeAfterTagging: boolean;
 	showAllDayEvents: boolean;
-	importantOrganizerEmails: string[];
+	importantOrganizers: ImportantOrganizer[];
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
@@ -58,7 +63,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmMaxConcurrent: 2,
 	autoSummarizeAfterTagging: false,
 	showAllDayEvents: false,
-	importantOrganizerEmails: [],
+	importantOrganizers: [],
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
@@ -474,56 +479,53 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Important organizers")
 			.setDesc("Meetings organized by these people show an alert icon in the gutter");
 
-		// Put everything inside the setting's controlEl so it stays in the shaded area
 		const controlEl = setting.controlEl;
 		controlEl.addClass("whisper-cal-important-organizers-control");
 
-		const listEl = controlEl.createDiv({cls: "whisper-cal-email-list"});
+		// Chip input container — chips + text input in a single "field"
+		const chipField = controlEl.createDiv({cls: "whisper-cal-chip-field"});
+		const input = chipField.createEl("input", {
+			type: "text",
+			cls: "whisper-cal-chip-input",
+			attr: {placeholder: "Search people\u2026"},
+		});
 
-		const renderList = () => {
-			listEl.empty();
-			for (const email of this.plugin.settings.importantOrganizerEmails) {
-				const row = listEl.createDiv({cls: "whisper-cal-email-row"});
-				row.createSpan({cls: "whisper-cal-email-text", text: email});
-				const removeBtn = row.createEl("button", {
-					cls: "whisper-cal-email-remove",
-					attr: {"aria-label": "Remove"},
+		const suggestionsEl = controlEl.createDiv({cls: "whisper-cal-email-suggestions"});
+		const errorEl = controlEl.createDiv({cls: "whisper-cal-email-error"});
+
+		const renderChips = () => {
+			// Remove existing chips (keep the input)
+			chipField.querySelectorAll(".whisper-cal-chip").forEach(el => el.remove());
+			for (const org of this.plugin.settings.importantOrganizers) {
+				const chip = createDiv({cls: "whisper-cal-chip"});
+				chip.createSpan({cls: "whisper-cal-chip-label", text: org.name || org.email});
+				const removeBtn = chip.createSpan({
+					cls: "whisper-cal-chip-remove",
+					attr: {"aria-label": `Remove ${org.name || org.email}`},
 				});
 				removeBtn.setText("\u00D7");
 				removeBtn.addEventListener("click", async () => {
-					this.plugin.settings.importantOrganizerEmails =
-						this.plugin.settings.importantOrganizerEmails.filter(e => e !== email);
+					this.plugin.settings.importantOrganizers =
+						this.plugin.settings.importantOrganizers.filter(o => o.email !== org.email);
 					await this.plugin.saveSettings();
-					renderList();
+					renderChips();
 				});
+				chipField.insertBefore(chip, input);
 			}
+			input.placeholder = this.plugin.settings.importantOrganizers.length > 0
+				? "" : "Search people\u2026";
 		};
 
-		renderList();
+		renderChips();
 
-		const addRow = controlEl.createDiv({cls: "whisper-cal-email-add-row"});
-		const inputWrapper = addRow.createDiv({cls: "whisper-cal-email-input-wrapper"});
-		const input = inputWrapper.createEl("input", {
-			type: "text",
-			cls: "whisper-cal-email-input",
-			attr: {placeholder: "Search people or type an email"},
-		});
-		const suggestionsEl = inputWrapper.createDiv({cls: "whisper-cal-email-suggestions"});
-		const addBtn = addRow.createEl("button", {
-			cls: "whisper-cal-btn whisper-cal-btn-secondary",
-			text: "Add",
-		});
-		const errorEl = controlEl.createDiv({cls: "whisper-cal-email-error"});
+		// Focus input when clicking the chip field
+		chipField.addEventListener("click", () => input.focus());
 
 		// Graph API people search with debounce
 		let searchTimer: number | null = null;
 		let selectedIndex = -1;
 
-		interface PeopleSuggestion {
-			name: string;
-			email: string;
-		}
-
+		interface PeopleSuggestion { name: string; email: string }
 		let suggestions: PeopleSuggestion[] = [];
 
 		const renderSuggestions = () => {
@@ -538,8 +540,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				const item = suggestionsEl.createDiv({
 					cls: `whisper-cal-email-suggestion${i === selectedIndex ? " is-selected" : ""}`,
 				});
-				item.createDiv({cls: "whisper-cal-email-suggestion-name", text: s.name});
-				item.createDiv({cls: "whisper-cal-email-suggestion-email", text: s.email});
+				// Initials avatar
+				const initials = s.name
+					.split(/\s+/)
+					.filter(Boolean)
+					.map(w => w[0]!.toUpperCase())
+					.slice(0, 2)
+					.join("");
+				item.createDiv({cls: "whisper-cal-suggestion-avatar", text: initials});
+				const textCol = item.createDiv({cls: "whisper-cal-suggestion-text"});
+				textCol.createDiv({cls: "whisper-cal-email-suggestion-name", text: s.name || s.email});
+				textCol.createDiv({cls: "whisper-cal-email-suggestion-email", text: s.email});
 				item.addEventListener("mousedown", (e) => {
 					e.preventDefault();
 					pickSuggestion(s);
@@ -548,11 +559,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		};
 
 		const pickSuggestion = (s: PeopleSuggestion) => {
-			input.value = s.email;
+			const exists = this.plugin.settings.importantOrganizers.some(o => o.email === s.email);
+			if (!exists) {
+				this.plugin.settings.importantOrganizers.push({name: s.name, email: s.email});
+				void this.plugin.saveSettings();
+			}
+			input.value = "";
 			suggestions = [];
 			selectedIndex = -1;
 			renderSuggestions();
-			void addEmail();
+			renderChips();
+			input.focus();
 		};
 
 		const searchPeople = async (query: string) => {
@@ -568,7 +585,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				const graphBase = this.plugin.auth.getGraphBaseUrl();
 				const encoded = encodeURIComponent(`"${query}"`);
 				const response = await requestUrl({
-					url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=5&$select=displayName,scoredEmailAddresses`,
+					url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=8&$select=displayName,scoredEmailAddresses`,
 					method: "GET",
 					headers: {Authorization: `Bearer ${token}`},
 				});
@@ -578,23 +595,27 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						scoredEmailAddresses?: Array<{address?: string}>;
 					}>;
 				};
+				const alreadyAdded = new Set(
+					this.plugin.settings.importantOrganizers.map(o => o.email),
+				);
 				suggestions = (data.value ?? [])
 					.filter(p => p.scoredEmailAddresses?.[0]?.address)
 					.map(p => ({
 						name: p.displayName ?? "",
 						email: (p.scoredEmailAddresses![0]!.address!).toLowerCase(),
-					}));
+					}))
+					.filter(s => !alreadyAdded.has(s.email));
 				selectedIndex = -1;
 				renderSuggestions();
 			} catch {
-				// Silently ignore search errors
+				// Silently ignore search errors — user may lack People.Read scope
 			}
 		};
 
 		input.addEventListener("input", () => {
 			if (searchTimer !== null) window.clearTimeout(searchTimer);
-			const query = input.value.trim();
 			errorEl.setText("");
+			const query = input.value.trim();
 			searchTimer = window.setTimeout(() => void searchPeople(query), 300);
 		});
 
@@ -608,7 +629,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}
 				if (e.key === "ArrowUp") {
 					e.preventDefault();
-					selectedIndex = Math.max(selectedIndex - 1, 0);
+					selectedIndex = Math.max(selectedIndex - 1, -1);
 					renderSuggestions();
 					return;
 				}
@@ -624,48 +645,42 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					return;
 				}
 			}
-			if (e.key === "Enter") {
+			// Backspace on empty input removes last chip
+			if (e.key === "Backspace" && input.value === "" && this.plugin.settings.importantOrganizers.length > 0) {
+				this.plugin.settings.importantOrganizers.pop();
+				void this.plugin.saveSettings();
+				renderChips();
+			}
+			// Enter on raw email text (no suggestion selected)
+			if (e.key === "Enter" && selectedIndex < 0) {
 				e.preventDefault();
-				void addEmail();
+				const value = input.value.trim().toLowerCase();
+				if (!value) return;
+				const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+				if (!emailRegex.test(value)) {
+					errorEl.setText("Invalid email address");
+					return;
+				}
+				if (this.plugin.settings.importantOrganizers.some(o => o.email === value)) {
+					errorEl.setText("Already added");
+					return;
+				}
+				this.plugin.settings.importantOrganizers.push({name: value, email: value});
+				void this.plugin.saveSettings();
+				input.value = "";
+				suggestions = [];
+				renderSuggestions();
+				renderChips();
 			}
 		});
 
 		input.addEventListener("blur", () => {
-			// Delay to allow mousedown on suggestion to fire
 			window.setTimeout(() => {
 				suggestions = [];
 				selectedIndex = -1;
 				renderSuggestions();
 			}, 200);
 		});
-
-		const addEmail = async () => {
-			const value = input.value.trim().toLowerCase();
-			errorEl.setText("");
-
-			if (!value) return;
-
-			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			if (!emailRegex.test(value)) {
-				errorEl.setText("Invalid email address");
-				return;
-			}
-
-			if (this.plugin.settings.importantOrganizerEmails.includes(value)) {
-				errorEl.setText("Already in list");
-				return;
-			}
-
-			this.plugin.settings.importantOrganizerEmails.push(value);
-			await this.plugin.saveSettings();
-			input.value = "";
-			suggestions = [];
-			selectedIndex = -1;
-			renderSuggestions();
-			renderList();
-		};
-
-		addBtn.addEventListener("click", () => void addEmail());
 	}
 
 	private renderAuthStatus(state: AuthState): void {

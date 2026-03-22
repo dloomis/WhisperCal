@@ -64,7 +64,7 @@ export class MsalAuth {
 	/** Build fully-qualified scope string for the current cloud instance. */
 	private getScopes(): string {
 		const graphBaseUrl = CLOUD_ENDPOINTS[this.config.cloudInstance].graphBaseUrl;
-		return `${graphBaseUrl}/Calendars.Read offline_access`;
+		return `${graphBaseUrl}/Calendars.Read ${graphBaseUrl}/People.Read offline_access`;
 	}
 
 	async getAccessToken(): Promise<string> {

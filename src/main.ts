@@ -207,6 +207,14 @@ export default class WhisperCalPlugin extends Plugin {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 		this.tokenCache = data?.tokenCache ?? null;
+		// Migrate old importantOrganizerEmails (string[]) to importantOrganizers ({name, email}[])
+		const legacy = data as Record<string, unknown> | null;
+		if (legacy?.importantOrganizerEmails && Array.isArray(legacy.importantOrganizerEmails)) {
+			const oldEmails = legacy.importantOrganizerEmails as string[];
+			if (oldEmails.length > 0 && (!this.settings.importantOrganizers || this.settings.importantOrganizers.length === 0)) {
+				this.settings.importantOrganizers = oldEmails.map(e => ({name: e, email: e}));
+			}
+		}
 		// Auto-populate microphoneUser from macOS account on first install
 		if (!this.settings.microphoneUser) {
 			try {
