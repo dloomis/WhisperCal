@@ -98,7 +98,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
 
 		if (event.isOrganizer) {
-			const starEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-organizer"});
+			const starEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-organizer", attr: {"aria-label": "You are the organizer"}});
 			setIcon(starEl, "star");
 		}
 
@@ -106,16 +106,17 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		if (importantEmails.length > 0 && event.organizerEmail) {
 			const normalized = event.organizerEmail.toLowerCase();
 			if (importantEmails.includes(normalized)) {
-				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important"});
-				setIcon(importantEl, "zap");
+				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
+				setIcon(importantEl, "shield-alert");
 			}
 		}
 
 		for (const cat of event.categories) {
-			iconRow.createDiv({
+			const catEl = iconRow.createDiv({
 				cls: "whisper-cal-card-gutter-category",
-				attr: {"aria-label": cat.name, style: `background-color: ${cat.color};`},
+				attr: {"aria-label": cat.name, style: `color: ${cat.color};`},
 			});
+			setIcon(catEl, "square-kanban");
 		}
 	}
 
