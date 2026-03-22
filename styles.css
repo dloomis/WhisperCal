@@ -124,6 +124,18 @@
 	margin-top: 4px;
 }
 
+.whisper-cal-card-gutter-organizer {
+	margin-top: 4px;
+	color: var(--text-warning);
+	display: flex;
+	justify-content: center;
+}
+
+.whisper-cal-card-gutter-organizer .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);

@@ -99,6 +99,11 @@ export function renderMeetingCard(
 		}
 	}
 
+	if (event.responseStatus === "organizer") {
+		const starEl = gutter.createDiv({cls: "whisper-cal-card-gutter-organizer"});
+		setIcon(starEl, "star");
+	}
+
 	// Content — right column
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
