@@ -174,7 +174,7 @@
 	display: flex;
 	align-items: flex-start;
 	flex-wrap: wrap;
-	gap: 12px;
+	gap: 6px;
 	margin-top: 6px;
 }
 
@@ -359,27 +359,21 @@
 	color: var(--text-faint);
 }
 
-/* Workflow pill wrappers */
-.whisper-cal-pill-wrapper {
-	display: inline-flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 3px;
-}
-
 /* Workflow pill buttons */
 .whisper-cal-pill {
 	display: inline-flex;
 	align-items: center;
-	justify-content: center;
-	width: 40px;
-	height: 40px;
-	border-radius: var(--radius-m);
+	gap: 4px;
+	padding: 4px 10px;
+	border-radius: 999px;
 	border: 1px solid var(--background-modifier-border);
 	background: none;
 	color: var(--text-muted);
 	cursor: pointer;
 	box-sizing: border-box;
+	font-size: var(--font-ui-smaller);
+	line-height: 1;
+	white-space: nowrap;
 }
 
 .whisper-cal-pill-icon {
@@ -388,14 +382,12 @@
 }
 
 .whisper-cal-pill-icon svg {
-	width: 18px;
-	height: 18px;
+	width: 14px;
+	height: 14px;
 }
 
 .whisper-cal-pill-label {
-	font-size: 10px;
 	line-height: 1;
-	white-space: nowrap;
 }
 
 .whisper-cal-pill:hover:not(:disabled) {
@@ -406,7 +398,7 @@
 .whisper-cal-pill.whisper-cal-pill-complete {
 	background: color-mix(in srgb, var(--text-success) 10%, transparent);
 	border-color: transparent;
-	color: var(--text-success);
+	color: color-mix(in srgb, var(--text-success) 70%, black);
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete:hover:not(:disabled) {
