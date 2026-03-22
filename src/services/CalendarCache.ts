@@ -17,6 +17,7 @@ interface SerializedCalendarEvent {
 	organizerName: string;
 	organizerEmail: string;
 	isRecurring: boolean;
+	responseStatus?: string;
 }
 
 interface CacheDayEntry {
@@ -244,6 +245,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 			startTime: new Date(e.startTime),
 			endTime: new Date(e.endTime),
 			isRecurring: e.isRecurring ?? false,
+			responseStatus: (e.responseStatus ?? "none") as CalendarEvent["responseStatus"],
 		}));
 	}
 

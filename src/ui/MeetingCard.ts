@@ -64,7 +64,11 @@ export function renderMeetingCard(
 	card.dataset.notePath = noteCreator.getNotePath(event);
 
 	// Time gutter — left column
-	const gutter = card.createDiv({cls: "whisper-cal-card-gutter"});
+	const notAccepted = event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
+	const gutterCls = notAccepted
+		? "whisper-cal-card-gutter whisper-cal-card-gutter-tentative"
+		: "whisper-cal-card-gutter";
+	const gutter = card.createDiv({cls: gutterCls});
 	if (event.isAllDay) {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {

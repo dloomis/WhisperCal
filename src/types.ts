@@ -3,6 +3,8 @@ export interface EventAttendee {
 	email: string;
 }
 
+export type ResponseStatus = "accepted" | "tentativelyAccepted" | "declined" | "notResponded" | "organizer" | "none";
+
 export interface CalendarEvent {
 	id: string;
 	subject: string;
@@ -18,6 +20,7 @@ export interface CalendarEvent {
 	organizerName: string;
 	organizerEmail: string;
 	isRecurring: boolean;
+	responseStatus: ResponseStatus;
 }
 
 export interface CalendarProvider {
@@ -53,6 +56,11 @@ export interface GraphOnlineMeeting {
 	joinUrl: string;
 }
 
+export interface GraphResponseStatus {
+	response: string;
+	time: string;
+}
+
 export interface GraphEvent {
 	id: string;
 	subject: string;
@@ -69,4 +77,5 @@ export interface GraphEvent {
 		emailAddress: GraphEmailAddress;
 	};
 	type: string;
+	responseStatus: GraphResponseStatus;
 }

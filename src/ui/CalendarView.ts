@@ -289,6 +289,7 @@ export class CalendarView extends ItemView {
 			organizerName: "",
 			organizerEmail: "",
 			isRecurring: false,
+			responseStatus: "organizer",
 		};
 		renderMeetingCard(this.contentContainer, {
 			event: unscheduledEvent,
@@ -426,6 +427,7 @@ export class CalendarView extends ItemView {
 				organizerName: "",
 				organizerEmail: "",
 				isRecurring: false,
+				responseStatus: "organizer",
 			});
 		}
 		return results;
@@ -647,6 +649,7 @@ export class CalendarView extends ItemView {
 				organizerName: "",
 				organizerEmail: "",
 				isRecurring: false,
+				responseStatus: "organizer",
 			};
 			await this.noteCreator.createNote(event, {preserveTimestamps: true});
 			const notePath = this.noteCreator.getNotePath(event);
