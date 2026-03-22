@@ -166,13 +166,13 @@ A small dot below the header shows connection status:
 
 ### Meeting Cards
 
-Each calendar event is displayed as a card showing:
+Each calendar event is displayed as a two-column card:
 
-- **Subject** — The meeting title.
-- **Time** — Start and end times, "All day", or "Ad hoc" for unscheduled meetings.
-- **Location** — If the event has an online meeting URL (Teams, Zoom, etc.), clicking the location opens it.
-- **Attendee count** — Number of invitees.
-- **Four workflow pills** — Note, Transcript, Speakers, Summary (see [The Four-Stage Pipeline](#the-four-stage-pipeline)).
+- **Time gutter** (left) — Start/end times, "All day", or "Ad hoc" for unscheduled meetings. Shows a warning-colored bar when the workflow is incomplete.
+- **Content** (right):
+  - **Subject** — The meeting title.
+  - **Meta row** — Location (clickable for online meeting URLs), attendee count, and duration (e.g., "30m" or "1h 30m"), separated by middle dots.
+  - **Four workflow pills** — Note, Transcript, Speakers, Summary (see [The Four-Stage Pipeline](#the-four-stage-pipeline)).
 
 Cards are grouped into sections: **All day** events at the top, then **Scheduled** (or **Today**) events sorted by start time.
 
@@ -190,7 +190,7 @@ When viewing today's calendar:
 
 ### Incomplete Workflow Highlighting
 
-Cards that have a meeting note but haven't completed the full pipeline (through summarization) are highlighted with a **warning-colored** left border. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The warning uses the theme's `--text-warning` color (typically amber/orange) and disappears once the Summary stage is complete.
+Cards that have a meeting note but haven't completed the full pipeline (through summarization) show a **warning-colored bar** in the time gutter. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The warning uses the theme's `--text-warning` color (typically amber/orange) and disappears once the Summary stage is complete.
 
 ### Note-Open Highlighting
 

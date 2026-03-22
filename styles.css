@@ -78,56 +78,71 @@
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 	margin: 16px 0 8px 0;
+	padding-left: 74px;
 }
 
 .whisper-cal-card {
 	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
+	flex-direction: row;
+	align-items: stretch;
 	background: var(--background-secondary);
 	border-radius: var(--radius-m);
-	padding: 12px;
 	margin-bottom: 8px;
-	border-left: 3px solid var(--interactive-accent);
+	overflow: hidden;
 }
 
-.whisper-cal-card-active {
-	background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
-	border-left-width: 4px;
-	box-shadow: 0 0 0 1px var(--background-modifier-border);
-}
-
-.whisper-cal-card-note-open {
-	border-left-width: 4px;
-	background: color-mix(in srgb, var(--text-success) 8%, transparent);
-	box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-success) 30%, transparent);
-}
-
-.whisper-cal-card-note-open:not(.whisper-cal-card-warning) {
-	border-left-color: var(--text-success);
-}
-
-.whisper-cal-card-warning {
-	border-left-color: var(--text-warning);
-}
-
-.whisper-cal-card-time-row {
+/* Time gutter — left column */
+.whisper-cal-card-gutter {
 	display: flex;
+	flex-direction: column;
 	align-items: center;
-	gap: 8px;
-	margin-bottom: 4px;
+	justify-content: flex-start;
+	padding: 12px 0;
+	width: 72px;
+	flex-shrink: 0;
+	border-right: 2px solid var(--interactive-accent);
 }
 
-.whisper-cal-card-time {
-	font-size: var(--font-ui-smaller);
+.whisper-cal-card-gutter-time {
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
 	color: var(--text-muted);
+	line-height: 1.2;
+}
+
+.whisper-cal-card-gutter-period {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	line-height: 1.2;
+}
+
+/* Gutter status shading */
+.whisper-cal-card-gutter-warning {
+	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
+	border-right-color: var(--text-warning);
+}
+
+.whisper-cal-card-active .whisper-cal-card-gutter {
+	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
+	background: color-mix(in srgb, var(--text-success) 12%, transparent);
+	border-right-color: var(--text-success);
+}
+
+/* Content — right column */
+.whisper-cal-card-content {
+	flex: 1;
+	min-width: 0;
+	padding: 12px;
 }
 
 .whisper-cal-card-subject-row {
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	margin-bottom: 8px;
+	margin-bottom: 4px;
 }
 
 .whisper-cal-card-subject {
@@ -143,7 +158,9 @@
 .whisper-cal-card-meta {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 12px;
+	align-items: center;
+	gap: 4px;
+	margin-bottom: 2px;
 }
 
 .whisper-cal-card-actions {
@@ -160,6 +177,12 @@
 	gap: 4px;
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
+}
+
+.whisper-cal-card-meta-item + .whisper-cal-card-meta-item::before {
+	content: "\00B7";
+	margin-right: 4px;
+	color: var(--text-faint);
 }
 
 .whisper-cal-card-meta-link {

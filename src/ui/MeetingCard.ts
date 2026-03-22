@@ -64,30 +64,34 @@ export function renderMeetingCard(
 	const card = container.createDiv({cls});
 	card.dataset.notePath = noteCreator.getNotePath(event);
 
-	// Subject row: Meeting Name
-	const subjectRow = card.createDiv({cls: "whisper-cal-card-subject-row"});
-	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
-
-	// Time row
-	const timeRow = card.createDiv({cls: "whisper-cal-card-time-row"});
-	const timeEl = timeRow.createDiv({cls: "whisper-cal-card-time"});
+	// Time gutter — left column
+	const gutter = card.createDiv({cls: "whisper-cal-card-gutter"});
 	if (event.isAllDay) {
-		timeEl.setText("All day");
+		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All"});
+		gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: "day"});
 	} else if (event.id === "unscheduled") {
-		// Top-level unscheduled card — no time yet
-		timeEl.setText("Ad hoc");
-	} else if (event.startTime.getTime() === event.endTime.getTime()) {
-		// Same start/end (e.g. unscheduled note with only a start time)
-		const start = formatTime(event.startTime, timezone);
-		timeEl.setText(start);
+		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "Ad"});
+		gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: "hoc"});
 	} else {
-		const start = formatTime(event.startTime, timezone);
-		const end = formatTime(event.endTime, timezone);
-		timeEl.setText(`${start} - ${end}`);
+		const timeStr = formatTime(event.startTime, timezone); // e.g. "11:00 AM"
+		const match = timeStr.match(/^(.+)\s+(AM|PM)$/i);
+		if (match) {
+			gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: match[1]!});
+			gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: match[2]!});
+		} else {
+			gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: timeStr});
+		}
 	}
 
-	// Metadata row: location + invitee count
-	const meta = card.createDiv({cls: "whisper-cal-card-meta"});
+	// Content — right column
+	const content = card.createDiv({cls: "whisper-cal-card-content"});
+
+	// Subject row: Meeting Name
+	const subjectRow = content.createDiv({cls: "whisper-cal-card-subject-row"});
+	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
+
+	// Metadata row: location + invitee count + duration
+	const meta = content.createDiv({cls: "whisper-cal-card-meta"});
 
 	if (event.onlineMeetingUrl) {
 		const joinUrl = event.onlineMeetingUrl;
@@ -113,11 +117,26 @@ export function renderMeetingCard(
 		const attEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
 		const attIcon = attEl.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(attIcon, "users");
-		attEl.createSpan({text: String(event.attendeeCount)});
+		attEl.createSpan({text: `${event.attendeeCount} attendee${event.attendeeCount === 1 ? "" : "s"}`});
+	}
+
+	// Duration
+	if (!event.isAllDay && event.id !== "unscheduled" && event.startTime.getTime() !== event.endTime.getTime()) {
+		const durationMs = event.endTime.getTime() - event.startTime.getTime();
+		const durationMin = Math.round(durationMs / 60_000);
+		let durText: string;
+		if (durationMin >= 60) {
+			const hours = Math.floor(durationMin / 60);
+			const mins = durationMin % 60;
+			durText = mins > 0 ? `${hours} hr ${mins} min` : `${hours} hr`;
+		} else {
+			durText = `${durationMin} min`;
+		}
+		meta.createSpan({cls: "whisper-cal-card-meta-item", text: durText});
 	}
 
 	// Actions row: workflow pills
-	const actions = card.createDiv({cls: "whisper-cal-card-actions"});
+	const actions = content.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
 	if (event.id === "unscheduled") {
@@ -179,9 +198,9 @@ export function renderMeetingCard(
 		: summarizeJobs.has(notePath) ? "running"
 		: "incomplete";
 
-	// Highlight card when workflow is started but not yet complete
+	// Highlight gutter when workflow is started but not yet complete
 	if (noteExists && summaryState !== "complete") {
-		card.addClass("whisper-cal-card-warning");
+		gutter.addClass("whisper-cal-card-gutter-warning");
 	}
 
 	// Note pill
@@ -286,12 +305,12 @@ export function renderMeetingCard(
 
 	// Status lines below actions
 	if (speakersState === "running") {
-		const status = card.createDiv({cls: "whisper-cal-card-status"});
+		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Tagging speakers\u2026"});
 	}
 	if (summaryState === "running") {
-		const status = card.createDiv({cls: "whisper-cal-card-status"});
+		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Summarizing\u2026"});
 	}
