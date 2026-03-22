@@ -34,13 +34,14 @@ const stateLabels: Record<PillState, string> = {
 };
 
 function renderPill(container: HTMLElement, icon: string, label: string, state: PillState): HTMLButtonElement {
-	const btn = container.createEl("button", {
+	const wrapper = container.createDiv({cls: "whisper-cal-pill-wrapper"});
+	const btn = wrapper.createEl("button", {
 		cls: `whisper-cal-pill whisper-cal-pill-${state}`,
 		attr: {"aria-label": label + stateLabels[state]},
 	});
 	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
 	setIcon(iconEl, state === "complete" ? "check" : icon);
-	btn.createSpan({cls: "whisper-cal-pill-label", text: label});
+	wrapper.createSpan({cls: "whisper-cal-pill-label", text: label});
 	if (state === "disabled" || state === "running") {
 		btn.disabled = true;
 	}

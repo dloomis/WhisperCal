@@ -326,20 +326,27 @@
 	color: var(--text-faint);
 }
 
-/* Workflow pill buttons */
-.whisper-cal-pill {
+/* Workflow pill wrappers */
+.whisper-cal-pill-wrapper {
 	display: inline-flex;
 	flex-direction: column;
 	align-items: center;
-	justify-content: center;
 	gap: 2px;
-	padding: 6px 4px 4px;
+	width: 64px;
+}
+
+/* Workflow pill buttons */
+.whisper-cal-pill {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
 	border-radius: var(--radius-s);
 	border: 1px solid var(--background-modifier-border);
 	background: none;
 	color: var(--text-muted);
 	cursor: pointer;
-	width: 64px;
+	width: 100%;
 	box-sizing: border-box;
 }
 
