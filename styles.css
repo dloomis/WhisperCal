@@ -125,28 +125,42 @@
 	margin-top: 4px;
 }
 
-.whisper-cal-card-gutter-organizer {
+.whisper-cal-card-gutter-icons {
+	display: flex;
+	align-items: center;
+	gap: 3px;
 	margin-top: 4px;
+}
+
+.whisper-cal-card-gutter-organizer {
 	color: var(--text-warning);
 	display: flex;
-	justify-content: center;
+	align-items: center;
 }
 
 .whisper-cal-card-gutter-organizer .svg-icon {
 	width: 14px;
 	height: 14px;
+	fill: currentColor;
 }
 
 .whisper-cal-card-gutter-important {
-	margin-top: 4px;
 	color: var(--text-error);
 	display: flex;
-	justify-content: center;
+	align-items: center;
 }
 
 .whisper-cal-card-gutter-important .svg-icon {
 	width: 14px;
 	height: 14px;
+	fill: currentColor;
+}
+
+.whisper-cal-card-gutter-category {
+	width: 12px;
+	height: 12px;
+	border-radius: var(--radius-s);
+	flex-shrink: 0;
 }
 
 /* Gutter status shading */

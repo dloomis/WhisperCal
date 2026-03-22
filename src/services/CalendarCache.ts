@@ -1,5 +1,5 @@
 import type {App} from "obsidian";
-import type {CalendarEvent, CalendarProvider, EventAttendee} from "../types";
+import type {CalendarEvent, CalendarProvider, EventAttendee, EventCategory} from "../types";
 
 /** Serialized form of CalendarEvent with ISO date strings instead of Date objects. */
 interface SerializedCalendarEvent {
@@ -19,6 +19,7 @@ interface SerializedCalendarEvent {
 	isOrganizer?: boolean;
 	isRecurring: boolean;
 	responseStatus?: string;
+	categories?: EventCategory[];
 }
 
 interface CacheDayEntry {
@@ -248,6 +249,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 			isOrganizer: e.isOrganizer ?? false,
 			isRecurring: e.isRecurring ?? false,
 			responseStatus: (e.responseStatus ?? "none") as CalendarEvent["responseStatus"],
+			categories: e.categories ?? [],
 		}));
 	}
 

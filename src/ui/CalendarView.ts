@@ -295,6 +295,7 @@ export class CalendarView extends ItemView {
 			isOrganizer: false,
 			isRecurring: false,
 			responseStatus: "organizer",
+			categories: [],
 		};
 		renderMeetingCard(this.contentContainer, {
 			event: unscheduledEvent,
@@ -440,6 +441,7 @@ export class CalendarView extends ItemView {
 				isOrganizer: false,
 				isRecurring: false,
 				responseStatus: "organizer",
+				categories: [],
 			});
 		}
 		return results;
@@ -657,6 +659,7 @@ export class CalendarView extends ItemView {
 				isOrganizer: false,
 				isRecurring: false,
 				responseStatus: "organizer",
+				categories: [],
 			};
 			await this.noteCreator.createNote(event, {preserveTimestamps: true});
 			const notePath = this.noteCreator.getNotePath(event);

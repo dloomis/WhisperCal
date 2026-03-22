@@ -90,17 +90,32 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		}
 	}
 
-	if (event.isOrganizer) {
-		const starEl = gutter.createDiv({cls: "whisper-cal-card-gutter-organizer"});
-		setIcon(starEl, "star");
-	}
+	const hasIcons = event.isOrganizer
+		|| (opts.importantOrganizerEmails ?? []).length > 0
+		|| event.categories.length > 0;
 
-	const importantEmails = opts.importantOrganizerEmails ?? [];
-	if (importantEmails.length > 0 && event.organizerEmail) {
-		const normalized = event.organizerEmail.toLowerCase();
-		if (importantEmails.includes(normalized)) {
-			const importantEl = gutter.createDiv({cls: "whisper-cal-card-gutter-important"});
-			setIcon(importantEl, "alert-triangle");
+	if (hasIcons) {
+		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
+
+		if (event.isOrganizer) {
+			const starEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-organizer"});
+			setIcon(starEl, "star");
+		}
+
+		const importantEmails = opts.importantOrganizerEmails ?? [];
+		if (importantEmails.length > 0 && event.organizerEmail) {
+			const normalized = event.organizerEmail.toLowerCase();
+			if (importantEmails.includes(normalized)) {
+				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important"});
+				setIcon(importantEl, "zap");
+			}
+		}
+
+		for (const cat of event.categories) {
+			iconRow.createDiv({
+				cls: "whisper-cal-card-gutter-category",
+				attr: {"aria-label": cat.name, style: `background-color: ${cat.color};`},
+			});
 		}
 	}
 

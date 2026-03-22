@@ -5,6 +5,11 @@ export interface EventAttendee {
 
 export type ResponseStatus = "accepted" | "tentativelyAccepted" | "declined" | "notResponded" | "organizer" | "none";
 
+export interface EventCategory {
+	name: string;
+	color: string;
+}
+
 export interface CalendarEvent {
 	id: string;
 	subject: string;
@@ -22,6 +27,7 @@ export interface CalendarEvent {
 	isOrganizer: boolean;
 	isRecurring: boolean;
 	responseStatus: ResponseStatus;
+	categories: EventCategory[];
 }
 
 export interface CalendarProvider {
@@ -79,4 +85,5 @@ export interface GraphEvent {
 	};
 	type: string;
 	responseStatus: GraphResponseStatus;
+	categories?: string[];
 }
