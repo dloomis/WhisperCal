@@ -270,8 +270,7 @@ export class CalendarView extends ItemView {
 		const activeEventIds = isToday ? this.findActiveEventIds(events) : new Set<string>();
 
 		const onNoteCreated = () => {
-			this.lastRefreshTime = 0;
-			void this.refresh();
+			this.rerenderCards();
 		};
 
 		// Unscheduled card — always at the top
