@@ -376,10 +376,12 @@
 }
 
 /* Important organizers — chip input */
-.whisper-cal-important-organizers-control {
-	flex-direction: column;
-	align-items: stretch;
-	gap: 4px;
+.whisper-cal-important-organizers-setting {
+	flex-wrap: wrap;
+}
+
+.whisper-cal-important-organizers-setting .setting-item-control {
+	display: none;
 }
 
 .whisper-cal-chip-field {
@@ -393,6 +395,8 @@
 	background: var(--background-primary);
 	cursor: text;
 	min-height: 34px;
+	width: 100%;
+	margin-top: 8px;
 }
 
 .whisper-cal-chip-field:focus-within {
@@ -455,6 +459,7 @@
 	max-height: 280px;
 	overflow-y: auto;
 	margin-top: 2px;
+	width: 100%;
 }
 
 .whisper-cal-email-suggestion {

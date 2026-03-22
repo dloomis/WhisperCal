@@ -475,22 +475,23 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	private renderImportantOrganizers(containerEl: HTMLElement): void {
-		new Setting(containerEl)
+		const setting = new Setting(containerEl)
 			.setName("Important organizers")
 			.setDesc("Meetings organized by these people show an alert icon in the gutter");
 
-		const wrapper = containerEl.createDiv({cls: "whisper-cal-important-organizers"});
+		// Add chip field inside the setting-item element so it's in the shaded area
+		const settingEl = setting.settingEl;
+		settingEl.addClass("whisper-cal-important-organizers-setting");
 
-		// Chip input container — chips + text input in a single "field"
-		const chipField = wrapper.createDiv({cls: "whisper-cal-chip-field"});
+		const chipField = settingEl.createDiv({cls: "whisper-cal-chip-field"});
 		const input = chipField.createEl("input", {
 			type: "text",
 			cls: "whisper-cal-chip-input",
 			attr: {placeholder: "Search people\u2026"},
 		});
 
-		const suggestionsEl = wrapper.createDiv({cls: "whisper-cal-email-suggestions"});
-		const errorEl = wrapper.createDiv({cls: "whisper-cal-email-error"});
+		const suggestionsEl = settingEl.createDiv({cls: "whisper-cal-email-suggestions"});
+		const errorEl = settingEl.createDiv({cls: "whisper-cal-email-error"});
 
 		const renderChips = () => {
 			// Remove existing chips (keep the input)
@@ -582,32 +583,62 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				if (!this.plugin.auth.isSignedIn()) return;
 				const token = await this.plugin.auth.getAccessToken();
 				const graphBase = this.plugin.auth.getGraphBaseUrl();
-				const encoded = encodeURIComponent(`"${query}"`);
-				const response = await requestUrl({
-					url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=8&$select=displayName,scoredEmailAddresses`,
-					method: "GET",
-					headers: {Authorization: `Bearer ${token}`},
-				});
-				const data = response.json as {
-					value?: Array<{
-						displayName?: string;
-						scoredEmailAddresses?: Array<{address?: string}>;
-					}>;
-				};
 				const alreadyAdded = new Set(
 					this.plugin.settings.importantOrganizers.map(o => o.email),
 				);
-				suggestions = (data.value ?? [])
-					.filter(p => p.scoredEmailAddresses?.[0]?.address)
-					.map(p => ({
-						name: p.displayName ?? "",
-						email: (p.scoredEmailAddresses![0]!.address!).toLowerCase(),
-					}))
-					.filter(s => !alreadyAdded.has(s.email));
+
+				// Try /me/people first (People.Read), fall back to /users (User.ReadBasic.All)
+				let results: PeopleSuggestion[] = [];
+				try {
+					const encoded = encodeURIComponent(`"${query}"`);
+					const response = await requestUrl({
+						url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=8&$select=displayName,scoredEmailAddresses`,
+						method: "GET",
+						headers: {Authorization: `Bearer ${token}`},
+					});
+					const data = response.json as {
+						value?: Array<{
+							displayName?: string;
+							scoredEmailAddresses?: Array<{address?: string}>;
+						}>;
+					};
+					results = (data.value ?? [])
+						.filter(p => p.scoredEmailAddresses?.[0]?.address)
+						.map(p => ({
+							name: p.displayName ?? "",
+							email: (p.scoredEmailAddresses![0]!.address!).toLowerCase(),
+						}));
+				} catch {
+					// People API unavailable — try /users directory search
+					const searchExpr = encodeURIComponent(`"displayName:${query}"`);
+					const response = await requestUrl({
+						url: `${graphBase}/v1.0/users?$search=${searchExpr}&$top=8&$select=displayName,mail,userPrincipalName`,
+						method: "GET",
+						headers: {
+							Authorization: `Bearer ${token}`,
+							ConsistencyLevel: "eventual",
+						},
+					});
+					const data = response.json as {
+						value?: Array<{
+							displayName?: string;
+							mail?: string;
+							userPrincipalName?: string;
+						}>;
+					};
+					results = (data.value ?? [])
+						.filter(u => u.mail || u.userPrincipalName)
+						.map(u => ({
+							name: u.displayName ?? "",
+							email: (u.mail ?? u.userPrincipalName ?? "").toLowerCase(),
+						}));
+				}
+
+				suggestions = results.filter(s => !alreadyAdded.has(s.email));
 				selectedIndex = -1;
 				renderSuggestions();
 			} catch {
-				// Silently ignore search errors — user may lack People.Read scope
+				// Both endpoints failed — silently ignore
 			}
 		};
 
