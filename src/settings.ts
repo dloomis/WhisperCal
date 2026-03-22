@@ -475,39 +475,38 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	private renderImportantOrganizers(containerEl: HTMLElement): void {
-		const setting = new Setting(containerEl)
+		new Setting(containerEl)
 			.setName("Important organizers")
 			.setDesc("Meetings organized by these people show an alert icon in the gutter");
 
-		const controlEl = setting.controlEl;
-		controlEl.addClass("whisper-cal-important-organizers-control");
+		const wrapper = containerEl.createDiv({cls: "whisper-cal-important-organizers"});
 
 		// Chip input container — chips + text input in a single "field"
-		const chipField = controlEl.createDiv({cls: "whisper-cal-chip-field"});
+		const chipField = wrapper.createDiv({cls: "whisper-cal-chip-field"});
 		const input = chipField.createEl("input", {
 			type: "text",
 			cls: "whisper-cal-chip-input",
 			attr: {placeholder: "Search people\u2026"},
 		});
 
-		const suggestionsEl = controlEl.createDiv({cls: "whisper-cal-email-suggestions"});
-		const errorEl = controlEl.createDiv({cls: "whisper-cal-email-error"});
+		const suggestionsEl = wrapper.createDiv({cls: "whisper-cal-email-suggestions"});
+		const errorEl = wrapper.createDiv({cls: "whisper-cal-email-error"});
 
 		const renderChips = () => {
 			// Remove existing chips (keep the input)
 			chipField.querySelectorAll(".whisper-cal-chip").forEach(el => el.remove());
 			for (const org of this.plugin.settings.importantOrganizers) {
-				const chip = createDiv({cls: "whisper-cal-chip"});
+				const chip = chipField.createDiv({cls: "whisper-cal-chip"});
 				chip.createSpan({cls: "whisper-cal-chip-label", text: org.name || org.email});
 				const removeBtn = chip.createSpan({
 					cls: "whisper-cal-chip-remove",
 					attr: {"aria-label": `Remove ${org.name || org.email}`},
 				});
 				removeBtn.setText("\u00D7");
-				removeBtn.addEventListener("click", async () => {
+				removeBtn.addEventListener("click", () => {
 					this.plugin.settings.importantOrganizers =
 						this.plugin.settings.importantOrganizers.filter(o => o.email !== org.email);
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 					renderChips();
 				});
 				chipField.insertBefore(chip, input);
