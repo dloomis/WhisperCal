@@ -288,6 +288,7 @@ export class CalendarView extends ItemView {
 			attendees: [],
 			organizerName: "",
 			organizerEmail: "",
+			isOrganizer: false,
 			isRecurring: false,
 			responseStatus: "organizer",
 		};
@@ -426,6 +427,7 @@ export class CalendarView extends ItemView {
 				attendees: [],
 				organizerName: "",
 				organizerEmail: "",
+				isOrganizer: false,
 				isRecurring: false,
 				responseStatus: "organizer",
 			});
@@ -648,6 +650,7 @@ export class CalendarView extends ItemView {
 				attendees: [],
 				organizerName: "",
 				organizerEmail: "",
+				isOrganizer: false,
 				isRecurring: false,
 				responseStatus: "organizer",
 			};

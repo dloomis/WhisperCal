@@ -19,6 +19,7 @@ export interface CalendarEvent {
 	attendees: EventAttendee[];
 	organizerName: string;
 	organizerEmail: string;
+	isOrganizer: boolean;
 	isRecurring: boolean;
 	responseStatus: ResponseStatus;
 }

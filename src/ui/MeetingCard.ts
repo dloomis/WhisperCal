@@ -99,7 +99,7 @@ export function renderMeetingCard(
 		}
 	}
 
-	if (event.responseStatus === "organizer") {
+	if (event.isOrganizer) {
 		const starEl = gutter.createDiv({cls: "whisper-cal-card-gutter-organizer"});
 		setIcon(starEl, "star");
 	}

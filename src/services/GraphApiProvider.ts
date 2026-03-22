@@ -5,6 +5,7 @@ import type {MsalAuth} from "./MsalAuth";
 
 export class GraphApiProvider implements CalendarProvider {
 	private auth: MsalAuth;
+	private userEmail: string | null = null;
 
 	constructor(auth: MsalAuth) {
 		this.auth = auth;
@@ -18,6 +19,11 @@ export class GraphApiProvider implements CalendarProvider {
 		const token = await this.auth.getAccessToken();
 		const startDateTime = getDayStartUTC(date, timezone);
 		const endDateTime = getDayEndUTC(date, timezone);
+
+		// Fetch user email on first call for organizer detection
+		if (this.userEmail === null) {
+			await this.fetchUserEmail(token);
+		}
 
 		const graphBase = this.auth.getGraphBaseUrl();
 		const baseUrl = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$top=50&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type,responseStatus`;
@@ -42,11 +48,28 @@ export class GraphApiProvider implements CalendarProvider {
 			}
 		}
 
-		return allEvents.map(parseGraphEvent);
+		const userEmail = this.userEmail ?? "";
+		return allEvents.map(e => parseGraphEvent(e, userEmail));
+	}
+
+	private async fetchUserEmail(token: string): Promise<void> {
+		try {
+			const graphBase = this.auth.getGraphBaseUrl();
+			const response = await requestUrl({
+				url: `${graphBase}/v1.0/me?$select=mail,userPrincipalName`,
+				method: "GET",
+				headers: {Authorization: `Bearer ${token}`},
+			});
+			const data = response.json as { mail?: string; userPrincipalName?: string };
+			this.userEmail = (data.mail ?? data.userPrincipalName ?? "").toLowerCase();
+		} catch (e) {
+			console.debug("[WhisperCal] Failed to fetch user email:", e);
+			this.userEmail = "";
+		}
 	}
 }
 
-function parseGraphEvent(event: GraphEvent): CalendarEvent {
+function parseGraphEvent(event: GraphEvent, userEmail: string): CalendarEvent {
 	const attendees = event.attendees?.map(a => ({
 		name: a.emailAddress.name ?? "",
 		email: a.emailAddress.address ?? "",
@@ -70,6 +93,7 @@ function parseGraphEvent(event: GraphEvent): CalendarEvent {
 		attendees,
 		organizerName: event.organizer?.emailAddress?.name ?? "",
 		organizerEmail: event.organizer?.emailAddress?.address ?? "",
+		isOrganizer: userEmail !== "" && (event.organizer?.emailAddress?.address ?? "").toLowerCase() === userEmail,
 		isRecurring: event.type !== "singleInstance",
 		responseStatus: (event.responseStatus?.response as CalendarEvent["responseStatus"]) ?? "none",
 	};
