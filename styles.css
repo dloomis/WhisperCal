@@ -98,7 +98,7 @@
 	align-items: flex-start;
 	justify-content: flex-start;
 	padding: 12px 10px;
-	width: 86px;
+	width: 96px;
 	flex-shrink: 0;
 	border-right: 4px solid var(--interactive-accent);
 	position: relative;
@@ -107,6 +107,7 @@
 .whisper-cal-card-gutter-time {
 	font-size: var(--font-ui-medium);
 	font-weight: var(--font-semibold);
+	white-space: nowrap;
 	color: var(--text-muted);
 	line-height: 1.2;
 }
