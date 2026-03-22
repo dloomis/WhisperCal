@@ -1,16 +1,7 @@
 import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
-
-interface FrontmatterSpeaker {
-	id?: string;
-	name?: string;
-	stub?: boolean;
-	line_count?: number;
-	original_name?: string;
-	confidence?: string;
-	evidence?: string;
-}
+import type {FrontmatterSpeaker} from "./SpeakerTagParser";
 
 /**
  * Apply approved speaker tag decisions to the transcript file:

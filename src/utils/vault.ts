@@ -1,6 +1,14 @@
 import {App, TFile, TFolder} from "obsidian";
 
 /**
+ * Strip wiki-link brackets and optional display-text alias from a string.
+ * e.g. "[[Some Note]]" → "Some Note", "[[path|display]]" → "path"
+ */
+export function stripWikiLink(raw: string): string {
+	return raw.replace(/^\[\[/, "").replace(/(\|.*?)?\]\]$/, "").trim();
+}
+
+/**
  * Resolve a frontmatter wiki-link value (e.g. "[[Some Note]]") to a TFile.
  * Returns null if the value is missing, empty, or the target doesn't exist.
  */
@@ -12,7 +20,7 @@ export function resolveWikiLink(
 ): TFile | null {
 	const raw = fm[key];
 	if (!raw || typeof raw !== "string" || !raw.trim()) return null;
-	const linktext = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+	const linktext = stripWikiLink(raw);
 	return app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
 }
 
@@ -29,4 +37,29 @@ export function getMarkdownFilesRecursive(folder: TFolder): TFile[] {
 		}
 	}
 	return files;
+}
+
+/**
+ * Ensure a vault folder exists, creating it if necessary.
+ */
+export async function ensureFolder(app: App, folderPath: string): Promise<void> {
+	const existing = app.vault.getAbstractFileByPath(folderPath);
+	if (existing instanceof TFolder) return;
+	try {
+		await app.vault.createFolder(folderPath);
+	} catch {
+		// Folder may already exist (race condition)
+	}
+}
+
+/**
+ * Collect all MacWhisper session IDs that are already linked to notes in the vault.
+ */
+export function getLinkedSessionIds(app: App): Set<string> {
+	const linked = new Set<string>();
+	for (const file of app.vault.getMarkdownFiles()) {
+		const sid = app.metadataCache.getFileCache(file)?.frontmatter?.["macwhisper_session_id"] as string | undefined;
+		if (sid) linked.add(sid);
+	}
+	return linked;
 }

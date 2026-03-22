@@ -1,5 +1,5 @@
 import {ItemView, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
-import {getMarkdownFilesRecursive} from "../utils/vault";
+import {getLinkedSessionIds, getMarkdownFilesRecursive} from "../utils/vault";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
@@ -13,9 +13,17 @@ import {renderMeetingCard} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
+export interface CalendarViewCallbacks {
+	getCacheStatus: () => CacheStatus | null;
+	getUserEmail: () => string;
+	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
+	onSummarize: (notePath: string) => void;
+}
+
 export class CalendarView extends ItemView {
 	private settings: WhisperCalSettings;
 	private provider: CalendarProvider;
+	private callbacks: CalendarViewCallbacks;
 	private noteCreator: NoteCreator;
 	private contentContainer: HTMLElement | null = null;
 	private currentDateString: string;
@@ -25,37 +33,29 @@ export class CalendarView extends ItemView {
 	private selectedDate: Date;
 	private cachedEvents: CalendarEvent[] | null = null;
 	private cardRefreshTimer: number | null = null;
+	private fmSnapshot = new Map<string, string>();
 	private dateEl: HTMLElement | null = null;
 	private todayBtn: HTMLElement | null = null;
 	private statusEl: HTMLElement | null = null;
-	private getCacheStatus: (() => CacheStatus | null) | null = null;
-	private onTagSpeakers: ((transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void) | null = null;
-	private onSummarize: ((notePath: string) => void) | null = null;
-	private getUserEmail: (() => string) | null = null;
 	private noteOpenPath: string | null = null;
 	private stickyHeaderEl: HTMLElement | null = null;
 	private unlinkedEl: HTMLElement | null = null;
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
+
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: WhisperCalSettings,
 		provider: CalendarProvider,
-		getCacheStatus?: () => CacheStatus | null,
-		getUserEmail?: () => string,
-		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
-		onSummarize?: (notePath: string) => void,
+		callbacks: CalendarViewCallbacks,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.provider = provider;
+		this.callbacks = callbacks;
 		this.noteCreator = new NoteCreator(this.app, settings);
 		this.currentDateString = getTodayString(settings.timezone);
 		this.selectedDate = new Date();
-		this.getCacheStatus = getCacheStatus ?? null;
-		this.getUserEmail = getUserEmail ?? null;
-		this.onTagSpeakers = onTagSpeakers ?? null;
-		this.onSummarize = onSummarize ?? null;
 	}
 
 	getViewType(): string {
@@ -127,6 +127,12 @@ export class CalendarView extends ItemView {
 				if (this.cachedEvents === null) return;
 				if (!file.path.startsWith(this.settings.noteFolderPath + "/")
 				&& !file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
+
+				// Only re-render if card-relevant frontmatter actually changed
+				const newKey = this.getFmKey(file.path);
+				if (newKey === this.fmSnapshot.get(file.path)) return;
+				this.fmSnapshot.set(file.path, newKey);
+
 				if (this.cardRefreshTimer !== null) {
 					window.clearTimeout(this.cardRefreshTimer);
 				}
@@ -189,7 +195,7 @@ export class CalendarView extends ItemView {
 			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
 			if (events.length === 0) {
 				// Check if we're truly disconnected with no cache
-				const status = this.getCacheStatus?.();
+				const status = this.callbacks.getCacheStatus();
 				if (status && !status.connected && status.fetchedAt === null) {
 					this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
 					this.updateStatusIndicator();
@@ -213,30 +219,11 @@ export class CalendarView extends ItemView {
 		void this.loadAndRenderUnlinkedSection();
 	}
 
-	updateSettings(
-		settings: WhisperCalSettings,
-		provider: CalendarProvider,
-		getCacheStatus?: () => CacheStatus | null,
-		getUserEmail?: () => string,
-		onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void,
-		onSummarize?: (notePath: string) => void,
-	): void {
+	updateSettings(settings: WhisperCalSettings, provider: CalendarProvider): void {
 		this.settings = settings;
 		this.provider = provider;
-		if (getCacheStatus) {
-			this.getCacheStatus = getCacheStatus;
-		}
-		if (getUserEmail) {
-			this.getUserEmail = getUserEmail;
-		}
-		if (onTagSpeakers) {
-			this.onTagSpeakers = onTagSpeakers;
-		}
-		if (onSummarize) {
-			this.onSummarize = onSummarize;
-		}
 		this.noteCreator = new NoteCreator(this.app, settings);
-		this.restartAutoRefresh();
+		this.startAutoRefresh();
 		this.lastRefreshTime = 0;
 		void this.refresh();
 	}
@@ -271,7 +258,7 @@ export class CalendarView extends ItemView {
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
 		// Backfill isOrganizer for cached events that predate the field
-		const userEmail = this.getUserEmail?.()?.toLowerCase() ?? "";
+		const userEmail = this.callbacks.getUserEmail()?.toLowerCase() ?? "";
 		if (userEmail) {
 			for (const e of events) {
 				if (!e.isOrganizer && e.organizerEmail) {
@@ -288,6 +275,7 @@ export class CalendarView extends ItemView {
 		const onNoteCreated = () => {
 			this.rerenderCards();
 		};
+		const importantEmails = this.settings.importantOrganizers.map(o => o.email);
 
 		// Unscheduled card — always at the top
 		const unscheduledEvent: CalendarEvent = {
@@ -316,10 +304,10 @@ export class CalendarView extends ItemView {
 			isActive: false,
 			transcriptFolderPath: this.settings.transcriptFolderPath,
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
-			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
+			importantOrganizerEmails: importantEmails,
 			onNoteCreated,
-			onTagSpeakers: this.onTagSpeakers ?? undefined,
-			onSummarize: this.onSummarize ?? undefined,
+			onTagSpeakers: this.callbacks.onTagSpeakers,
+			onSummarize: this.callbacks.onSummarize,
 		});
 
 		if (events.length === 0) {
@@ -350,10 +338,10 @@ export class CalendarView extends ItemView {
 					isActive: activeEventIds.has(event.id),
 					transcriptFolderPath: this.settings.transcriptFolderPath,
 					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
+					importantOrganizerEmails: importantEmails,
 					onNoteCreated,
-					onTagSpeakers: this.onTagSpeakers ?? undefined,
-					onSummarize: this.onSummarize ?? undefined,
+					onTagSpeakers: this.callbacks.onTagSpeakers,
+					onSummarize: this.callbacks.onSummarize,
 				});
 			}
 		}
@@ -368,10 +356,10 @@ export class CalendarView extends ItemView {
 					isActive: activeEventIds.has(event.id),
 					transcriptFolderPath: this.settings.transcriptFolderPath,
 					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
+					importantOrganizerEmails: importantEmails,
 					onNoteCreated,
-					onTagSpeakers: this.onTagSpeakers ?? undefined,
-					onSummarize: this.onSummarize ?? undefined,
+					onTagSpeakers: this.callbacks.onTagSpeakers,
+					onSummarize: this.callbacks.onSummarize,
 				});
 			}
 		}
@@ -379,6 +367,9 @@ export class CalendarView extends ItemView {
 		// Reset so updateNoteOpenHighlight re-applies to the new DOM
 		this.noteOpenPath = null;
 		this.applyNoteOpenHighlight();
+
+		// Snapshot frontmatter so the changed handler can detect real changes
+		this.snapshotFrontmatter();
 	}
 
 	/**
@@ -574,13 +565,7 @@ export class CalendarView extends ItemView {
 	}
 
 	private getLinkedSessionIds(): Set<string> {
-		const linked = new Set<string>();
-		for (const file of this.app.vault.getMarkdownFiles()) {
-			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-			const sid = fm?.["macwhisper_session_id"] as string | undefined;
-			if (sid) linked.add(sid);
-		}
-		return linked;
+		return getLinkedSessionIds(this.app);
 	}
 
 	private renderUnlinkedCard(container: HTMLElement, recording: MacWhisperRecording): void {
@@ -689,6 +674,37 @@ export class CalendarView extends ItemView {
 		void this.loadAndRenderUnlinkedSection();
 	}
 
+	/** Keys from frontmatter that affect card rendering. */
+	private static readonly FM_KEYS = [
+		"macwhisper_session_id", "transcript", "pipeline_state", "calendar_event_id",
+	] as const;
+
+	/** Build a stable string from card-relevant frontmatter values. */
+	private getFmKey(path: string): string {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return "";
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (!fm) return "";
+		return CalendarView.FM_KEYS.map(k => `${k}=${fm[k] ?? ""}`).join("|");
+	}
+
+	/** Snapshot frontmatter for all notes relevant to the current card set. */
+	private snapshotFrontmatter(): void {
+		this.fmSnapshot.clear();
+		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
+		if (folder instanceof TFolder) {
+			for (const file of getMarkdownFilesRecursive(folder)) {
+				this.fmSnapshot.set(file.path, this.getFmKey(file.path));
+			}
+		}
+		const tFolder = this.app.vault.getAbstractFileByPath(this.settings.transcriptFolderPath);
+		if (tFolder instanceof TFolder) {
+			for (const file of getMarkdownFilesRecursive(tFolder)) {
+				this.fmSnapshot.set(file.path, this.getFmKey(file.path));
+			}
+		}
+	}
+
 	private formatRecordingDate(date: Date): string {
 		const now = new Date();
 		const sameYear = date.getFullYear() === now.getFullYear();
@@ -754,7 +770,7 @@ export class CalendarView extends ItemView {
 
 	private updateStatusIndicator(): void {
 		if (!this.statusEl) return;
-		const status = this.getCacheStatus?.();
+		const status = this.callbacks.getCacheStatus();
 		if (!status) {
 			this.statusEl.toggleClass("whisper-cal-hidden", true);
 			return;
@@ -806,7 +822,4 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	private restartAutoRefresh(): void {
-		this.startAutoRefresh();
-	}
 }

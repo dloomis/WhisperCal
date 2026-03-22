@@ -17,11 +17,14 @@ export interface ParseResult {
 	warning?: string;
 }
 
-interface FrontmatterSpeaker {
+export interface FrontmatterSpeaker {
 	id?: string;
 	name?: string;
 	line_count?: number;
 	stub?: boolean;
+	original_name?: string;
+	confidence?: string;
+	evidence?: string;
 }
 
 /**

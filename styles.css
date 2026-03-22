@@ -260,7 +260,6 @@
 	height: 14px;
 }
 
-
 .whisper-cal-btn {
 	display: inline-flex;
 	align-items: center;
@@ -317,7 +316,6 @@
 .whisper-cal-settings select {
 	min-width: 300px;
 }
-
 
 /* Auth settings UI */
 .whisper-cal-auth-status {
@@ -845,4 +843,3 @@
 	justify-content: flex-end;
 	gap: 8px;
 }
-

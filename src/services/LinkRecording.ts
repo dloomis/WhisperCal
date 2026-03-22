@@ -3,6 +3,7 @@ import {findRecordingsNear, hasTranscriptLines, type MacWhisperRecording} from "
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
+import {getLinkedSessionIds} from "../utils/vault";
 import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
 
@@ -104,11 +105,7 @@ export async function linkRecording(opts: {
 	const allRecordings = await findRecordingsNear(meetingStart, windowMinutes);
 
 	// Exclude recordings already linked to any note in the vault
-	const linked = new Set<string>();
-	for (const file of app.vault.getMarkdownFiles()) {
-		const sid = app.metadataCache.getFileCache(file)?.frontmatter?.["macwhisper_session_id"] as string | undefined;
-		if (sid) linked.add(sid);
-	}
+	const linked = getLinkedSessionIds(app);
 	const recordings = allRecordings.filter(r => !linked.has(r.sessionId));
 
 	if (recordings.length === 0) {

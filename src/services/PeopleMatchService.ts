@@ -29,7 +29,6 @@ interface PeopleIndex {
 export class PeopleMatchService {
 	private app: App;
 	private peopleFolderPath: string;
-	private index: PeopleIndex | null = null;
 
 	constructor(app: App, peopleFolderPath: string) {
 		this.app = app;
@@ -41,7 +40,7 @@ export class PeopleMatchService {
 			return {matched: [], unmatched: [...attendees]};
 		}
 
-		const index = this.getIndex();
+		const index = this.buildIndex();
 		const matched: MatchedAttendee[] = [];
 		const unmatched: EventAttendee[] = [];
 
@@ -59,7 +58,7 @@ export class PeopleMatchService {
 
 	matchOne(name: string, email: string): string | null {
 		if (!this.peopleFolderPath) return null;
-		return this.lookupOne(this.getIndex(), email, name);
+		return this.lookupOne(this.buildIndex(), email, name);
 	}
 
 	private lookupOne(index: PeopleIndex, email: string, name: string): string | null {
@@ -68,13 +67,6 @@ export class PeopleMatchService {
 		return (emailLower ? index.byEmail.get(emailLower) : undefined)
 			?? (nameLower ? index.byName.get(nameLower) : undefined)
 			?? null;
-	}
-
-	private getIndex(): PeopleIndex {
-		if (!this.index) {
-			this.index = this.buildIndex();
-		}
-		return this.index;
 	}
 
 	private buildIndex(): PeopleIndex {
@@ -89,13 +81,11 @@ export class PeopleMatchService {
 		const files = getMarkdownFilesRecursive(folder);
 
 		for (const file of files) {
-			const cache = this.app.metadataCache.getFileCache(file);
-			const fm = cache?.frontmatter;
+			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 			if (!fm) continue;
 
 			const notePath = file.path.replace(/\.md$/, "");
 
-			// Index all email fields
 			for (const field of EMAIL_FIELDS) {
 				const value: unknown = fm[field];
 				if (typeof value === "string" && value) {
@@ -103,7 +93,6 @@ export class PeopleMatchService {
 				}
 			}
 
-			// Index full_name
 			const fullName: unknown = fm["full_name"];
 			if (typeof fullName === "string" && fullName) {
 				byName.set(fullName.toLowerCase(), notePath);
@@ -112,5 +101,4 @@ export class PeopleMatchService {
 
 		return {byEmail, byName};
 	}
-
 }

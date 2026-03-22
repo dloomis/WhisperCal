@@ -7,10 +7,6 @@ import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {summarizeJobs, speakerTagJobs} from "../state";
 
-export interface MeetingCardHandle {
-	el: HTMLElement;
-}
-
 export interface MeetingCardOpts {
 	event: CalendarEvent;
 	timezone: string;
@@ -26,6 +22,16 @@ export interface MeetingCardOpts {
 }
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
+
+interface PillStates {
+	note: PillState;
+	transcript: PillState;
+	speakers: PillState;
+	summary: PillState;
+	transcriptFile: TFile | null;
+	transcriptPath: string;
+	pipelineState: string | undefined;
+}
 
 const stateLabels: Record<PillState, string> = {
 	incomplete: "",
@@ -48,34 +54,19 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	return btn;
 }
 
-export function renderMeetingCard(
-	container: HTMLElement,
-	opts: MeetingCardOpts,
-): MeetingCardHandle {
-	const {
-		event, timezone, noteCreator, app,
-		transcriptFolderPath = "Transcripts",
-		recordingWindowMinutes = 10,
-		onNoteCreated, onTagSpeakers, onSummarize,
-	} = opts;
-	const isActive = opts.isActive ?? false;
-
-	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
-	const card = container.createDiv({cls});
-	card.dataset.notePath = noteCreator.getNotePath(event);
-
-	// Time gutter — left column
+function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): HTMLElement {
 	const notAccepted = event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
 	const gutterCls = notAccepted
 		? "whisper-cal-card-gutter whisper-cal-card-gutter-tentative"
 		: "whisper-cal-card-gutter";
 	const gutter = card.createDiv({cls: gutterCls});
+
 	if (event.isAllDay) {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "Ad Hoc"});
 	} else {
-		const timeStr = formatTime(event.startTime, timezone); // e.g. "11:00 AM"
+		const timeStr = formatTime(event.startTime, timezone);
 		const timeDiv = gutter.createDiv({cls: "whisper-cal-card-gutter-time"});
 		const match = timeStr.match(/^(.+)\s+(AM|PM)$/i);
 		if (match) {
@@ -84,7 +75,6 @@ export function renderMeetingCard(
 		} else {
 			timeDiv.textContent = timeStr;
 		}
-		// Duration below the time
 		if (event.startTime.getTime() !== event.endTime.getTime()) {
 			const durationMs = event.endTime.getTime() - event.startTime.getTime();
 			const durationMin = Math.round(durationMs / 60_000);
@@ -114,14 +104,10 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Content — right column
-	const content = card.createDiv({cls: "whisper-cal-card-content"});
+	return gutter;
+}
 
-	// Subject row: Meeting Name
-	const subjectRow = content.createDiv({cls: "whisper-cal-card-subject-row"});
-	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
-
-	// Metadata row: location + invitee count + duration
+function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 	const meta = content.createDiv({cls: "whisper-cal-card-meta"});
 
 	if (event.onlineMeetingUrl) {
@@ -150,8 +136,72 @@ export function renderMeetingCard(
 		setIcon(attIcon, "users");
 		attEl.createSpan({text: `${event.attendeeCount} attendee${event.attendeeCount === 1 ? "" : "s"}`});
 	}
+}
 
-	// Actions row: workflow pills
+function computePillStates(
+	app: App,
+	noteCreator: NoteCreator,
+	event: CalendarEvent,
+): PillStates {
+	const noteFile = noteCreator.findNote(event);
+	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
+	const noteExists = noteFile !== null;
+	const noteFm: Record<string, unknown> = noteFile
+		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
+		: {};
+
+	const note: PillState = noteExists ? "complete" : "incomplete";
+	const transcript: PillState = !noteExists
+		? "disabled"
+		: noteFm["transcript"] ? "complete" : "incomplete";
+
+	const pipelineState = noteFm["pipeline_state"] as string | undefined;
+	const transcriptFile = noteFm["transcript"]
+		? resolveWikiLink(app, noteFm, "transcript", notePath)
+		: null;
+	const transcriptPath = transcriptFile?.path ?? "";
+
+	const speakers: PillState = transcript !== "complete"
+		? "disabled"
+		: (pipelineState && pipelineState !== "titled") ? "complete"
+		: speakerTagJobs.has(transcriptPath) ? "running"
+		: "incomplete";
+
+	const summary: PillState = speakers !== "complete"
+		? "disabled"
+		: pipelineState === "summarized" ? "complete"
+		: summarizeJobs.has(notePath) ? "running"
+		: "incomplete";
+
+	return {note, transcript, speakers, summary, transcriptFile, transcriptPath, pipelineState};
+}
+
+export function renderMeetingCard(
+	container: HTMLElement,
+	opts: MeetingCardOpts,
+): void {
+	const {
+		event, timezone, noteCreator, app,
+		transcriptFolderPath = "Transcripts",
+		recordingWindowMinutes = 10,
+		onNoteCreated, onTagSpeakers, onSummarize,
+	} = opts;
+	const isActive = opts.isActive ?? false;
+
+	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
+	const card = container.createDiv({cls});
+	card.dataset.notePath = noteCreator.getNotePath(event);
+
+	const gutter = renderGutter(card, event, timezone, opts);
+	const content = card.createDiv({cls: "whisper-cal-card-content"});
+
+	// Subject
+	const subjectRow = content.createDiv({cls: "whisper-cal-card-subject-row"});
+	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
+
+	renderMetadata(content, event);
+
+	// Actions row
 	const actions = content.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
@@ -173,54 +223,28 @@ export function renderMeetingCard(
 			};
 			void handleClick();
 		});
-		return {el: card};
+		return;
 	}
 
-	// Read meeting note frontmatter for state detection
+	// Compute workflow pill states
+	const states = computePillStates(app, noteCreator, event);
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
-	const noteExists = noteFile !== null;
 	const noteFm: Record<string, unknown> = noteFile
 		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
 		: {};
 
-	// Compute pill states
-	const noteState: PillState = noteExists ? "complete" : "incomplete";
-
-	const transcriptState: PillState = !noteExists
-		? "disabled"
-		: noteFm["transcript"] ? "complete" : "incomplete";
-
-	const pipelineState = noteFm["pipeline_state"] as string | undefined;
-	// Resolve transcript path for job tracking
-	const transcriptLink = noteFm["transcript"] as string | undefined;
-	const transcriptFile = transcriptLink
-		? resolveWikiLink(app, noteFm, "transcript", notePath)
-		: null;
-	const transcriptPath = transcriptFile?.path ?? "";
-	if (transcriptPath) {
-		card.dataset.transcriptPath = transcriptPath;
+	if (states.transcriptPath) {
+		card.dataset.transcriptPath = states.transcriptPath;
 	}
 
-	const speakersState: PillState = transcriptState !== "complete"
-		? "disabled"
-		: (pipelineState && pipelineState !== "titled") ? "complete"
-		: speakerTagJobs.has(transcriptPath) ? "running"
-		: "incomplete";
-
-	const summaryState: PillState = speakersState !== "complete"
-		? "disabled"
-		: pipelineState === "summarized" ? "complete"
-		: summarizeJobs.has(notePath) ? "running"
-		: "incomplete";
-
 	// Highlight gutter when workflow is started but not yet complete
-	if (noteExists && summaryState !== "complete") {
+	if (states.note === "complete" && states.summary !== "complete") {
 		gutter.addClass("whisper-cal-card-gutter-warning");
 	}
 
 	// Note pill
-	const notePill = renderPill(actions, "file-text", "Note", noteState);
+	const notePill = renderPill(actions, "file-text", "Note", states.note);
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
@@ -238,9 +262,7 @@ export function renderMeetingCard(
 						targetEvent = {...event, subject: name};
 					}
 					await noteCreator.createNote(targetEvent);
-					if (onNoteCreated) {
-						onNoteCreated();
-					}
+					if (onNoteCreated) onNoteCreated();
 				}
 			} finally {
 				notePill.disabled = false;
@@ -250,18 +272,14 @@ export function renderMeetingCard(
 	});
 
 	// Transcript pill
-	const transcriptPill = renderPill(actions, "mic", "Transcript", transcriptState);
-	if (transcriptState !== "disabled") {
+	const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
+	if (states.transcript !== "disabled") {
 		transcriptPill.addEventListener("click", () => {
-			if (transcriptState === "complete") {
-				// Open transcript file
+			if (states.transcript === "complete") {
 				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-				if (tf) {
-					void app.workspace.openLinkText(tf.path, "", false);
-				}
+				if (tf) void app.workspace.openLinkText(tf.path, "", false);
 				return;
 			}
-			// Link recording (create note first if needed)
 			transcriptPill.disabled = true;
 			const handleMic = async () => {
 				let linked = false;
@@ -290,46 +308,42 @@ export function renderMeetingCard(
 	}
 
 	// Speakers pill
-	const speakersPill = renderPill(actions, "user", "Speakers", speakersState);
-	if (speakersState === "incomplete" && onTagSpeakers) {
+	const speakersPill = renderPill(actions, "user", "Speakers", states.speakers);
+	if (states.speakers === "incomplete" && onTagSpeakers) {
 		speakersPill.addEventListener("click", () => {
 			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 			if (!tf) return;
 			const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
 			onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
 		});
-	} else if (speakersState === "complete") {
+	} else if (states.speakers === "complete") {
 		speakersPill.addEventListener("click", () => {
 			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-			if (tf) {
-				void app.workspace.openLinkText(tf.path, "", false);
-			}
+			if (tf) void app.workspace.openLinkText(tf.path, "", false);
 		});
 	}
 
 	// Summary pill
-	const summaryPill = renderPill(actions, "sparkles", "Summary", summaryState);
-	if (summaryState === "incomplete" && onSummarize) {
+	const summaryPill = renderPill(actions, "sparkles", "Summary", states.summary);
+	if (states.summary === "incomplete" && onSummarize) {
 		summaryPill.addEventListener("click", () => {
 			onSummarize(notePath);
 		});
-	} else if (summaryState === "complete") {
+	} else if (states.summary === "complete") {
 		summaryPill.addEventListener("click", () => {
 			void app.workspace.openLinkText(notePath, "", false);
 		});
 	}
 
 	// Status lines below actions
-	if (speakersState === "running") {
+	if (states.speakers === "running") {
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Tagging speakers\u2026"});
 	}
-	if (summaryState === "running") {
+	if (states.summary === "running") {
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Summarizing\u2026"});
 	}
-
-	return {el: card};
 }

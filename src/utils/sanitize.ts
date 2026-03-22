@@ -7,3 +7,10 @@ const ILLEGAL_FILENAME_CHARS = /[/\\:*?"<>|#[\]]/g;
 export function sanitizeFilename(name: string): string {
 	return name.replace(ILLEGAL_FILENAME_CHARS, "").trim();
 }
+
+/**
+ * Escape a string for use inside a YAML double-quoted value.
+ */
+export function yamlEscape(s: string): string {
+	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}

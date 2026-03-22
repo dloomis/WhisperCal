@@ -58,13 +58,14 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 		const endTime = recording.dateCreated
 			? recording.dateCreated.toLocaleTimeString("en-US", timeOpts)
 			: "";
+		const duration = formatRecordingDuration(recording.durationSeconds);
 		const speakers = recording.speakerCount > 0
 			? `${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`
 			: "";
 		const timeRange = endTime ? `${startTime} – ${endTime}` : startTime;
 
 		el.createDiv({text: title});
-		const meta = [startDate, timeRange, speakers].filter(Boolean).join(" \u00B7 ");
+		const meta = [startDate, timeRange, duration, speakers].filter(Boolean).join(" \u00B7 ");
 		el.createDiv({cls: "suggestion-note", text: meta});
 	}
 

@@ -2,7 +2,8 @@ import {App, MarkdownView, TFile, TFolder, WorkspaceLeaf, normalizePath} from "o
 import type {CalendarEvent} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import {formatDate} from "../utils/time";
-import {sanitizeFilename} from "../utils/sanitize";
+import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
+import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
 import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 
@@ -36,14 +37,14 @@ export class NoteCreator {
 		const abs = this.app.vault.getAbstractFileByPath(canonical);
 		if (abs instanceof TFile) return abs;
 
-		// Scan note folder by frontmatter
+		// Scan note folder by frontmatter (recursively to cover subfolders)
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
 		if (!(folder instanceof TFolder)) return null;
 
+		const files = getMarkdownFilesRecursive(folder);
 		const date = formatDate(event.startTime, this.settings.timezone);
 
-		for (const child of folder.children) {
-			if (!(child instanceof TFile) || child.extension !== "md") continue;
+		for (const child of files) {
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
 
@@ -60,8 +61,7 @@ export class NoteCreator {
 		// whose frontmatter Date (or meeting_date) falls on the same day.
 		// Catches legacy notes created outside WhisperCal.
 		const subject = sanitizeFilename(event.subject);
-		for (const child of folder.children) {
-			if (!(child instanceof TFile) || child.extension !== "md") continue;
+		for (const child of files) {
 			if (!child.basename.includes(subject)) continue;
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
@@ -95,7 +95,7 @@ export class NoteCreator {
 		}
 
 		// Ensure folder exists
-		await this.ensureFolder(this.settings.noteFolderPath);
+		await ensureFolder(this.app, this.settings.noteFolderPath);
 
 		const noteCreated = new Date();
 
@@ -123,18 +123,6 @@ export class NoteCreator {
 			}
 		}
 		return this.app.workspace.getLeaf("tab");
-	}
-
-	private async ensureFolder(folderPath: string): Promise<void> {
-		const existing = this.app.vault.getAbstractFileByPath(folderPath);
-		if (existing instanceof TFolder) {
-			return;
-		}
-		try {
-			await this.app.vault.createFolder(folderPath);
-		} catch {
-			// Folder may already exist (race condition)
-		}
 	}
 
 	private setCursorToNotesSection(leaf: WorkspaceLeaf, content: string): void {
@@ -186,15 +174,15 @@ export class NoteCreator {
 			? "\n" + variables["invitees"]
 			: "";
 		const reserved = [
-			`meeting_subject: "${event.subject}"`,
-			`meeting_date: "${variables["date"]}"`,
-			`meeting_start: "${variables["startTime"]}"`,
-			`meeting_end: "${variables["endTime"]}"`,
-			`meeting_location: "${variables["location"]}"`,
+			`meeting_subject: "${yamlEscape(event.subject)}"`,
+			`meeting_date: "${yamlEscape(variables["date"] ?? "")}"`,
+			`meeting_start: "${yamlEscape(variables["startTime"] ?? "")}"`,
+			`meeting_end: "${yamlEscape(variables["endTime"] ?? "")}"`,
+			`meeting_location: "${yamlEscape(variables["location"] ?? "")}"`,
 			`meeting_invitees:${inviteeLines}`,
-			`meeting_organizer: "${variables["organizer"]}"`,
+			`meeting_organizer: "${yamlEscape(variables["organizer"] ?? "")}"`,
 			`tags: [meeting]`,
-			`calendar_event_id: "${event.id}"`,
+			`calendar_event_id: "${yamlEscape(event.id)}"`,
 			`note_created: "${noteCreated.toISOString()}"`,
 			`is_recurring: ${event.isRecurring}`,
 			`macwhisper_session_id: ""`,

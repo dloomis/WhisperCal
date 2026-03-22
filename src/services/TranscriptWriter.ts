@@ -1,8 +1,10 @@
 import type {App} from "obsidian";
-import {TFile, TFolder, normalizePath} from "obsidian";
+import {TFile, normalizePath} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
 import {updateFrontmatter} from "../utils/frontmatter";
+import {ensureFolder} from "../utils/vault";
+import {yamlEscape} from "../utils/sanitize";
 import {formatDateTimeWithOffset} from "../utils/time";
 
 interface SpeakerBlock {
@@ -44,11 +46,6 @@ function groupBySpeaker(lines: TranscriptData["lines"]): SpeakerBlock[] {
 		}
 	}
 	return blocks;
-}
-
-/** Escape a string for use inside a YAML double-quoted value. */
-function yamlEscape(s: string): string {
-	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function buildFrontmatter(opts: {
@@ -155,16 +152,6 @@ function buildTranscriptBody(data: TranscriptData): string {
 	}
 
 	return sections.join("\n");
-}
-
-async function ensureFolder(app: App, folderPath: string): Promise<void> {
-	const existing = app.vault.getAbstractFileByPath(folderPath);
-	if (existing instanceof TFolder) return;
-	try {
-		await app.vault.createFolder(folderPath);
-	} catch {
-		// Folder may already exist (race condition)
-	}
 }
 
 /**

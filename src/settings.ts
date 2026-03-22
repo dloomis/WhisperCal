@@ -281,7 +281,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setValue(String(this.plugin.settings.llmTimeoutMinutes))
 				.onChange(async (value) => {
-					const n = parseInt(value);
+					const n = parseInt(value, 10);
 					if (!isNaN(n) && n >= 0) {
 						this.plugin.settings.llmTimeoutMinutes = n;
 						await this.plugin.saveSettings();
@@ -296,7 +296,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setValue(String(this.plugin.settings.llmMaxConcurrent))
 				.onChange(async (value) => {
-					const n = parseInt(value);
+					const n = parseInt(value, 10);
 					if (!isNaN(n) && n >= 1) {
 						this.plugin.settings.llmMaxConcurrent = n;
 						await this.plugin.saveSettings();

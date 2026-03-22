@@ -2,7 +2,7 @@ import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
 import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
-import {CalendarView} from "./ui/CalendarView";
+import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
@@ -13,7 +13,7 @@ import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
-import {resolveWikiLink} from "./utils/vault";
+import {resolveWikiLink, stripWikiLink} from "./utils/vault";
 import {MsalAuth} from "./services/MsalAuth";
 import type {AuthState} from "./services/AuthTypes";
 import type {TokenCache} from "./services/AuthTypes";
@@ -30,6 +30,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private upstream: GraphApiProvider;
 	private provider: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
+	private viewCallbacks!: CalendarViewCallbacks;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
 	private tokenCache: TokenCache | null = null;
 
@@ -63,20 +64,19 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.cachedProvider.loadCache();
 		this.provider = this.cachedProvider;
 
-		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
-
-		const onTagSpeakers = (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
-			this.doTagSpeakers(transcriptFile, transcriptFm);
+		this.viewCallbacks = {
+			getCacheStatus: () => this.cachedProvider?.getLastStatus() ?? null,
+			getUserEmail: () => this.upstream.getUserEmail(),
+			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
+				this.doTagSpeakers(transcriptFile, transcriptFm);
+			},
+			onSummarize: (notePath: string) => {
+				this.doSummarize(notePath);
+			},
 		};
-
-		const onSummarize = (notePath: string) => {
-			this.doSummarize(notePath);
-		};
-
-		const getUserEmail = () => this.upstream.getUserEmail();
 
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
-			new CalendarView(leaf, this.settings, this.provider, getCacheStatus, getUserEmail, onTagSpeakers, onSummarize)
+			new CalendarView(leaf, this.settings, this.provider, this.viewCallbacks)
 		);
 
 		// Mirror pipeline_state from transcript files back to their meeting notes
@@ -88,10 +88,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const pipelineState = fm["pipeline_state"] as string | undefined;
 				if (!pipelineState) return;
 				// Resolve meeting note from transcript's meeting_note backlink
-				const meetingNoteLink = fm["meeting_note"] as string | undefined;
-				if (!meetingNoteLink || typeof meetingNoteLink !== "string") return;
-				const linktext = meetingNoteLink.replace(/^\[\[/, "").replace(/\]\]$/, "");
-				const meetingFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
+				const meetingFile = resolveWikiLink(this.app, fm as Record<string, unknown>, "meeting_note", file.path);
 				if (!meetingFile) return;
 				// Check if meeting note already has this pipeline_state
 				const meetingFm = this.app.metadataCache.getFileCache(meetingFile)?.frontmatter;
@@ -202,7 +199,6 @@ export default class WhisperCalPlugin extends Plugin {
 		summarizeJobs.clear();
 	}
 
-
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
@@ -242,17 +238,10 @@ export default class WhisperCalPlugin extends Plugin {
 			this.settings.timezone,
 		);
 		// Update existing views with new settings
-		const getCacheStatus = () => this.cachedProvider?.getLastStatus() ?? null;
-		const onTagSpeakers = (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
-			this.doTagSpeakers(transcriptFile, transcriptFm);
-		};
-		const onSummarize = (notePath: string) => {
-			this.doSummarize(notePath);
-		};
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider, getCacheStatus, () => this.upstream.getUserEmail(), onTagSpeakers, onSummarize);
+				view.updateSettings(this.settings, this.provider);
 			}
 		}
 	}
@@ -427,10 +416,8 @@ export default class WhisperCalPlugin extends Plugin {
 					// Auto-summarize if enabled
 					if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
 						const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
-						const meetingLink = tFm?.["meeting_note"] as string | undefined;
-						if (meetingLink) {
-							const linktext = meetingLink.replace(/^\[\[/, "").replace(/\]\]$/, "");
-							const meetingFile = this.app.metadataCache.getFirstLinkpathDest(linktext, transcriptPath);
+						if (tFm) {
+							const meetingFile = resolveWikiLink(this.app, tFm as Record<string, unknown>, "meeting_note", transcriptPath);
 							if (meetingFile) {
 								this.doSummarize(meetingFile.path);
 							}
@@ -650,7 +637,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Extract attendee names from frontmatter (stored as wiki links or plain strings)
 		const rawAttendees = Array.isArray(fm["meeting_invitees"]) ? fm["meeting_invitees"] as string[] : [];
 		const attendees = rawAttendees.map(s => {
-			const name = String(s).replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/^"/, "").replace(/"$/, "");
+			const name = stripWikiLink(String(s).replace(/^"/, "").replace(/"$/, ""));
 			return {name, email: ""};
 		});
 
