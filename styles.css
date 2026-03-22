@@ -373,14 +373,14 @@
 	color: var(--text-normal);
 }
 
-.whisper-cal-pill-complete {
-	background: color-mix(in srgb, var(--text-success) 20%, transparent);
+.whisper-cal-pill.whisper-cal-pill-complete {
+	background: color-mix(in srgb, var(--text-success) 15%, transparent);
 	border-color: transparent;
 	color: var(--text-success);
 }
 
-.whisper-cal-pill-complete:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--text-success) 30%, transparent);
+.whisper-cal-pill.whisper-cal-pill-complete:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--text-success) 25%, transparent);
 }
 
 .whisper-cal-pill-running {
