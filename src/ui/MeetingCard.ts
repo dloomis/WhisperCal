@@ -74,13 +74,7 @@ export function renderMeetingCard(
 		gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: "hoc"});
 	} else {
 		const timeStr = formatTime(event.startTime, timezone); // e.g. "11:00 AM"
-		const match = timeStr.match(/^(.+)\s+(AM|PM)$/i);
-		if (match) {
-			gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: match[1]!});
-			gutter.createDiv({cls: "whisper-cal-card-gutter-period", text: match[2]!});
-		} else {
-			gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: timeStr});
-		}
+		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: timeStr});
 		// Duration below the time
 		if (event.startTime.getTime() !== event.endTime.getTime()) {
 			const durationMs = event.endTime.getTime() - event.startTime.getTime();
