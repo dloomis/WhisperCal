@@ -348,14 +348,33 @@ export class CalendarView extends ItemView {
 		}
 
 		if (timed.length > 0) {
-			for (let i = 0; i < timed.length; i++) {
-				const event = timed[i]!;
+			// Group overlapping events into conflict clusters
+			const groups: CalendarEvent[][] = [];
+			let cur: CalendarEvent[] = [timed[0]!];
+			let curEnd = timed[0]!.endTime.getTime();
 
-				// Insert a gap spacer if there's dead time between this event and the previous one
-				if (i > 0) {
-					const prevEnd = timed[i - 1]!.endTime;
-					const gapMs = event.startTime.getTime() - prevEnd.getTime();
-					if (gapMs >= 60_000) { // at least 1 minute gap
+			for (let i = 1; i < timed.length; i++) {
+				const event = timed[i]!;
+				if (event.startTime.getTime() < curEnd) {
+					cur.push(event);
+					curEnd = Math.max(curEnd, event.endTime.getTime());
+				} else {
+					groups.push(cur);
+					cur = [event];
+					curEnd = event.endTime.getTime();
+				}
+			}
+			groups.push(cur);
+
+			for (let g = 0; g < groups.length; g++) {
+				const group = groups[g]!;
+
+				// Gap spacer between groups
+				if (g > 0) {
+					const prevGroup = groups[g - 1]!;
+					const prevEnd = Math.max(...prevGroup.map(e => e.endTime.getTime()));
+					const gapMs = group[0]!.startTime.getTime() - prevEnd;
+					if (gapMs >= 60_000) {
 						const gapMin = Math.round(gapMs / 60_000);
 						let gapText: string;
 						if (gapMin >= 60) {
@@ -372,19 +391,27 @@ export class CalendarView extends ItemView {
 					}
 				}
 
-				renderMeetingCard(this.contentContainer, {
-					event,
-					timezone: this.settings.timezone,
-					noteCreator: this.noteCreator,
-					app: this.app,
-					isActive: activeEventIds.has(event.id),
-					transcriptFolderPath: this.settings.transcriptFolderPath,
-					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					importantOrganizerEmails: importantEmails,
-					onNoteCreated,
-					onTagSpeakers: this.callbacks.onTagSpeakers,
-					onSummarize: this.callbacks.onSummarize,
-				});
+				// Wrap conflicts in a bracket container
+				const isConflict = group.length > 1;
+				const target = isConflict
+					? this.contentContainer.createDiv({cls: "whisper-cal-conflict-group"})
+					: this.contentContainer;
+
+				for (const event of group) {
+					renderMeetingCard(target, {
+						event,
+						timezone: this.settings.timezone,
+						noteCreator: this.noteCreator,
+						app: this.app,
+						isActive: activeEventIds.has(event.id),
+						transcriptFolderPath: this.settings.transcriptFolderPath,
+						recordingWindowMinutes: this.settings.recordingWindowMinutes,
+						importantOrganizerEmails: importantEmails,
+						onNoteCreated,
+						onTagSpeakers: this.callbacks.onTagSpeakers,
+						onSummarize: this.callbacks.onSummarize,
+					});
+				}
 			}
 		}
 

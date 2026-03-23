@@ -323,6 +323,29 @@
 	flex-shrink: 0;
 }
 
+/* Conflict bracket — groups overlapping meetings */
+.whisper-cal-conflict-group {
+	position: relative;
+	padding-left: 10px;
+	margin-bottom: 8px;
+}
+
+.whisper-cal-conflict-group::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 8px;
+	bottom: 16px; /* accounts for last card's margin-bottom */
+	width: 3px;
+	background: var(--text-error);
+	border-radius: 2px;
+	opacity: 0.6;
+}
+
+.whisper-cal-conflict-group > .whisper-cal-card:last-child {
+	margin-bottom: 0;
+}
+
 .whisper-cal-empty {
 	text-align: center;
 	color: var(--text-muted);
