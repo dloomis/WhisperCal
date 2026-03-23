@@ -327,7 +327,7 @@ export function renderMeetingCard(
 	}
 
 	// Speakers pill
-	const speakersPill = renderPill(actions, "user", "Speakers", states.speakers);
+	const speakersPill = renderPill(actions, "users-round", "Speakers", states.speakers);
 	if (states.speakers === "incomplete" && onTagSpeakers) {
 		speakersPill.addEventListener("click", () => {
 			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
