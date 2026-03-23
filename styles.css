@@ -300,6 +300,28 @@
 	cursor: not-allowed;
 }
 
+/* Gap spacer between meetings */
+.whisper-cal-gap {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 16px;
+	margin: -2px 0;
+	height: 20px;
+}
+
+.whisper-cal-gap-line {
+	flex: 1;
+	border-top: 1px dotted var(--background-modifier-border);
+}
+
+.whisper-cal-gap-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
 .whisper-cal-empty {
 	text-align: center;
 	color: var(--text-muted);

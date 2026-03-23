@@ -348,7 +348,30 @@ export class CalendarView extends ItemView {
 		}
 
 		if (timed.length > 0) {
-			for (const event of timed) {
+			for (let i = 0; i < timed.length; i++) {
+				const event = timed[i]!;
+
+				// Insert a gap spacer if there's dead time between this event and the previous one
+				if (i > 0) {
+					const prevEnd = timed[i - 1]!.endTime;
+					const gapMs = event.startTime.getTime() - prevEnd.getTime();
+					if (gapMs >= 60_000) { // at least 1 minute gap
+						const gapMin = Math.round(gapMs / 60_000);
+						let gapText: string;
+						if (gapMin >= 60) {
+							const h = Math.floor(gapMin / 60);
+							const m = gapMin % 60;
+							gapText = m > 0 ? `${h}h ${m}m` : `${h}h`;
+						} else {
+							gapText = `${gapMin}m`;
+						}
+						const spacer = this.contentContainer.createDiv({cls: "whisper-cal-gap"});
+						spacer.createDiv({cls: "whisper-cal-gap-line"});
+						spacer.createDiv({cls: "whisper-cal-gap-label", text: gapText});
+						spacer.createDiv({cls: "whisper-cal-gap-line"});
+					}
+				}
+
 				renderMeetingCard(this.contentContainer, {
 					event,
 					timezone: this.settings.timezone,
