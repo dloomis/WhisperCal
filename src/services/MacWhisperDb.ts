@@ -308,7 +308,7 @@ export async function getTranscript(sessionId: string): Promise<TranscriptData> 
 		WHERE hex(s.id) = '${sessionId}';
 	`;
 
-	// 3. Speaker list with id, stub flag, and line count
+	// 3. Speaker list with id, stub flag, line count, and first appearance
 	const speakersSql = `
 		SELECT sp.name as name,
 		       hex(sp.id) as id,
@@ -317,13 +317,13 @@ export async function getTranscript(sessionId: string): Promise<TranscriptData> 
 		FROM session_speaker ss
 		JOIN speaker sp ON ss.speakerID = sp.id
 		LEFT JOIN (
-			SELECT tl.speakerID, COUNT(*) as cnt
+			SELECT tl.speakerID, COUNT(*) as cnt, MIN(tl.start) as firstAppearance
 			FROM transcriptline tl
 			WHERE hex(tl.sessionId) = '${sessionId}'
 			GROUP BY tl.speakerID
 		) lc ON lc.speakerID = sp.id
 		WHERE hex(ss.sessionID) = '${sessionId}'
-		ORDER BY sp.name ASC;
+		ORDER BY COALESCE(lc.firstAppearance, 999999999) ASC;
 	`;
 
 	// Run all three queries concurrently

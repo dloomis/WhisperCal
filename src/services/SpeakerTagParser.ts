@@ -103,16 +103,33 @@ function mergeWithFrontmatter(
 	speakers: FrontmatterSpeaker[],
 	llmMap: Map<number, ProposedSpeakerMapping>,
 ): ProposedSpeakerMapping[] {
+	// Build a name-based lookup from LLM entries so we match by speaker name
+	// instead of array index — the LLM's numbering may differ from the
+	// frontmatter order (e.g. alphabetical sort vs. speaker-label numbers).
+	const llmByName = new Map<string, ProposedSpeakerMapping>();
+	for (const mapping of llmMap.values()) {
+		llmByName.set(mapping.originalName.toLowerCase(), mapping);
+	}
+
 	const merged: ProposedSpeakerMapping[] = [];
+	const matched = new Set<string>();
 	for (let i = 0; i < speakers.length; i++) {
-		const llm = llmMap.get(i);
+		const s = speakers[i]!;
+		const name = s.name ?? `Speaker ${i}`;
+		const llm = llmByName.get(name.toLowerCase());
 		if (llm) {
-			merged.push(llm);
+			// Re-index to frontmatter position and carry over speaker ID / line count
+			merged.push({
+				...llm,
+				index: i,
+				speakerId: s.id ?? llm.speakerId,
+				lineCount: s.line_count ?? llm.lineCount,
+			});
+			matched.add(name.toLowerCase());
 		} else {
-			const s = speakers[i]!;
 			merged.push({
 				index: i,
-				originalName: s.name ?? `Speaker ${i}`,
+				originalName: name,
 				proposedName: "",
 				confidence: "",
 				evidence: "",
@@ -121,9 +138,11 @@ function mergeWithFrontmatter(
 			});
 		}
 	}
-	// Include any LLM entries with indices beyond frontmatter (shouldn't happen, but be safe)
-	for (const [idx, mapping] of llmMap) {
-		if (idx >= speakers.length) merged.push(mapping);
+	// Include any LLM entries that didn't match a frontmatter speaker by name
+	for (const mapping of llmMap.values()) {
+		if (!matched.has(mapping.originalName.toLowerCase())) {
+			merged.push({...mapping, index: merged.length});
+		}
 	}
 	return merged;
 }
