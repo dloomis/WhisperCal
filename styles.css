@@ -161,6 +161,9 @@
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
+}
+
+.whisper-cal-card-gutter-warning:not(.whisper-cal-card-gutter-categorized) {
 	border-right-color: var(--text-warning);
 }
 
@@ -192,6 +195,9 @@
 
 .whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
 	background: color-mix(in srgb, var(--text-success) 12%, transparent);
+}
+
+.whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning):not(.whisper-cal-card-gutter-categorized) {
 	border-right-color: var(--text-success);
 }
 

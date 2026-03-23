@@ -66,6 +66,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 
 	if (event.categories.length > 0) {
 		gutter.style.setProperty("--wc-category-color", event.categories[0]!.color);
+		gutter.addClass("whisper-cal-card-gutter-categorized");
 	}
 
 	if (event.isAllDay) {
