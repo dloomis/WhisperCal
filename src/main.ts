@@ -419,13 +419,14 @@ export default class WhisperCalPlugin extends Plugin {
 					await applySpeakerTags(this.app, transcriptPath, decisions);
 					new Notice("Speaker tags applied");
 
-					// Auto-summarize if enabled
+					// Auto-summarize if enabled — skip the pipeline_state check
+					// because the metadata cache mirror hasn't fired yet.
 					if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
 						const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
 						if (tFm) {
 							const meetingFile = resolveWikiLink(this.app, tFm as Record<string, unknown>, "meeting_note", transcriptPath);
 							if (meetingFile) {
-								this.doSummarize(meetingFile.path);
+								this.doSummarize(meetingFile.path, true);
 							}
 						}
 					}
@@ -446,25 +447,27 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	private doSummarize(notePath: string): void {
+	private doSummarize(notePath: string, skipPipelineCheck = false): void {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
 			return;
 		}
-		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-		if (!fm) {
-			new Notice("Meeting note has no frontmatter");
-			return;
-		}
-		const pipelineState = fm["pipeline_state"] as string | undefined;
-		if (pipelineState === "summarized") {
-			new Notice("This meeting has already been summarized");
-			return;
-		}
-		if (pipelineState !== "tagged") {
-			new Notice("Speakers must be tagged before summarizing");
-			return;
+		if (!skipPipelineCheck) {
+			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+			if (!fm) {
+				new Notice("Meeting note has no frontmatter");
+				return;
+			}
+			const pipelineState = fm["pipeline_state"] as string | undefined;
+			if (pipelineState === "summarized") {
+				new Notice("This meeting has already been summarized");
+				return;
+			}
+			if (pipelineState !== "tagged") {
+				new Notice("Speakers must be tagged before summarizing");
+				return;
+			}
 		}
 		if (!this.settings.summarizerPromptPath) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
