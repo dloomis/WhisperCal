@@ -575,7 +575,7 @@
 	justify-content: center;
 	position: relative;
 	width: 48px;
-	height: 34px;
+	height: 30px;
 	padding: 0;
 	border-radius: var(--radius-s);
 	border: 1px solid var(--background-modifier-border);
