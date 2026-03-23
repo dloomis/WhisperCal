@@ -192,10 +192,12 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 
 	fs.writeFileSync(scriptFile, scriptLines.join("\n"), {mode: 0o755});
 
-	// Open Terminal.app with the script
+	// Open Terminal.app with the script.
+	// AppleScript strings use double quotes; escape any in the path.
+	const asQuoted = `"${scriptFile.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 	const osascript = [
 		`tell application "Terminal"`,
-		`  do script ${shellQuote(scriptFile)}`,
+		`  do script ${asQuoted}`,
 		`  activate`,
 		`end tell`,
 	].join("\n");
