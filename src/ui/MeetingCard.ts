@@ -110,7 +110,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 			const normalized = event.organizerEmail.toLowerCase();
 			if (importantEmails.includes(normalized)) {
 				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
-				setIcon(importantEl, "shield-alert");
+				setIcon(importantEl, "octagon-alert");
 			}
 		}
 
