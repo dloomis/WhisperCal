@@ -119,7 +119,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 				cls: "whisper-cal-card-gutter-category",
 				attr: {"aria-label": cat.name, style: `color: ${cat.color};`},
 			});
-			setIcon(catEl, "square-kanban");
+			setIcon(catEl, "grid-2x2");
 		}
 	}
 
