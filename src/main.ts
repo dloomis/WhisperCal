@@ -333,38 +333,43 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
+		// Register job synchronously BEFORE any async work so duplicate launches
+		// are blocked immediately (e.g. auto-summarize + manual button press).
+		speakerTagJobs.add(transcriptPath);
+		this.activeLlmCount++;
+		this.refreshCalendarCards();
+
 		void this.runTagSpeakers(transcriptFile, transcriptPath);
 	}
 
 	private async runTagSpeakers(transcriptFile: TFile, transcriptPath: string): Promise<void> {
-		// basePath is undocumented but stable on desktop — no Vault API alternative
-		// exists for obtaining the absolute filesystem path to the vault root.
-		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-
-		// Validate CLI exists
-		if (!await validateLlmCli(this.settings.llmCli)) {
-			new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
-			return;
-		}
-
-		// Validate prompt file exists
-		const resolvedPrompt = resolvePromptPath(this.settings.speakerTaggingPromptPath, vaultPath);
+		// Job already registered synchronously in doTagSpeakers.
+		// The finally block below always cleans up, even on early validation failures.
 		try {
-			await access(resolvedPrompt);
-		} catch {
-			new Notice(`Speaker tagging prompt file not found: ${resolvedPrompt}`);
-			return;
-		}
+			// basePath is undocumented but stable on desktop — no Vault API alternative
+			// exists for obtaining the absolute filesystem path to the vault root.
+			const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
 
-		speakerTagJobs.add(transcriptPath);
-		this.activeLlmCount++;
-		this.refreshCalendarCards();
-		new Notice("Speaker tagging started");
+			// Validate CLI exists
+			if (!await validateLlmCli(this.settings.llmCli)) {
+				new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+				return;
+			}
 
-		const timeoutMs = this.settings.llmTimeoutMinutes > 0
-			? this.settings.llmTimeoutMinutes * 60000 : 0;
+			// Validate prompt file exists
+			const resolvedPrompt = resolvePromptPath(this.settings.speakerTaggingPromptPath, vaultPath);
+			try {
+				await access(resolvedPrompt);
+			} catch {
+				new Notice(`Speaker tagging prompt file not found: ${resolvedPrompt}`);
+				return;
+			}
 
-		try {
+			new Notice("Speaker tagging started");
+
+			const timeoutMs = this.settings.llmTimeoutMinutes > 0
+				? this.settings.llmTimeoutMinutes * 60000 : 0;
+
 			const {exitCode, stdout, stderr} = await spawnLlmPrompt({
 				targetPath: transcriptPath,
 				targetLabel: "Transcript",
@@ -373,7 +378,7 @@ export default class WhisperCalPlugin extends Plugin {
 				microphoneUser: this.settings.microphoneUser,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-					transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
+				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				batch: true,
 				timeoutMs,
@@ -484,37 +489,42 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		void this.runSummarize(notePath);
-	}
-
-	private async runSummarize(notePath: string): Promise<void> {
-		const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-
-		// Validate CLI exists
-		if (!await validateLlmCli(this.settings.llmCli)) {
-			new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
-			return;
-		}
-
-		// Validate prompt file exists
-		const resolvedPrompt = resolvePromptPath(this.settings.summarizerPromptPath, vaultPath);
-		try {
-			await access(resolvedPrompt);
-		} catch {
-			new Notice(`Summarizer prompt file not found: ${resolvedPrompt}`);
-			return;
-		}
-
+		// Register job synchronously BEFORE any async work so duplicate launches
+		// are blocked immediately (e.g. auto-summarize + manual button press).
 		summarizeJobs.add(notePath);
 		this.activeLlmCount++;
 		this.refreshCalendarCards();
 		this.updateSummarizeBanners(notePath);
-		new Notice("Summarization started");
 
-		const timeoutMs = this.settings.llmTimeoutMinutes > 0
-			? this.settings.llmTimeoutMinutes * 60000 : 0;
+		void this.runSummarize(notePath);
+	}
 
+	private async runSummarize(notePath: string): Promise<void> {
+		// Job already registered synchronously in doSummarize.
+		// The finally block below always cleans up, even on early validation failures.
 		try {
+			const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
+
+			// Validate CLI exists
+			if (!await validateLlmCli(this.settings.llmCli)) {
+				new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+				return;
+			}
+
+			// Validate prompt file exists
+			const resolvedPrompt = resolvePromptPath(this.settings.summarizerPromptPath, vaultPath);
+			try {
+				await access(resolvedPrompt);
+			} catch {
+				new Notice(`Summarizer prompt file not found: ${resolvedPrompt}`);
+				return;
+			}
+
+			new Notice("Summarization started");
+
+			const timeoutMs = this.settings.llmTimeoutMinutes > 0
+				? this.settings.llmTimeoutMinutes * 60000 : 0;
+
 			const {exitCode, stderr} = await spawnLlmPrompt({
 				targetPath: notePath,
 				targetLabel: "Meeting note",
@@ -522,7 +532,7 @@ export default class WhisperCalPlugin extends Plugin {
 				promptPath: this.settings.summarizerPromptPath,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-					timeoutMs,
+				timeoutMs,
 			});
 
 			if (exitCode === 0) {

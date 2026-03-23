@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile, normalizePath} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
-import {updateFrontmatter} from "../utils/frontmatter";
+import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import {ensureFolder} from "../utils/vault";
 import {yamlEscape} from "../utils/sanitize";
 import {formatDateTimeWithOffset} from "../utils/time";
@@ -204,11 +204,15 @@ export async function createTranscriptFile(opts: {
 
 	await app.vault.create(transcriptPath, content);
 
-	// Update meeting note frontmatter with link to transcript and pipeline state
+	// Update meeting note frontmatter with link to transcript and pipeline state.
+	// Batch into a single processFrontMatter call to avoid a race with the
+	// pipeline_state mirror handler that fires when the transcript file is created.
 	const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-	await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
 	const allSpeakersNamed = data.speakers.length > 0 && data.speakers.every(sp => !sp.isStub);
-	await updateFrontmatter(app, notePath, "pipeline_state", allSpeakersNamed ? "tagged" : "titled");
+	await batchUpdateFrontmatter(app, notePath, {
+		transcript: `[[${transcriptBasename}]]`,
+		pipeline_state: allSpeakersNamed ? "tagged" : "titled",
+	});
 
 	return transcriptPath;
 }
