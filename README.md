@@ -197,8 +197,8 @@ Below the time and duration, the gutter displays up to three inline icons:
 | Icon | Meaning |
 |------|---------|
 | **☆ Star** | You are the organizer of this meeting. Determined by comparing the event's organizer email against your Microsoft 365 account email. |
-| **🛡 Shield-alert** | The organizer is in your **important organizers** list (configured in settings via the chip input with Graph API people autocomplete). |
-| **▦ Square-kanban** | The meeting has an Outlook **category** assigned. The color matches the category color from your M365 master categories. Multiple categories show multiple squares. |
+| **⛔ Octagon-alert** | The organizer is in your **important organizers** list (configured in settings via the chip input with Graph API people autocomplete). |
+| **⊞ Layout-grid** | The meeting has an Outlook **category** assigned. The color matches the category color from your M365 master categories. Multiple categories show multiple icons. |
 
 All three icons use an outline style for visual consistency.
 
