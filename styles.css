@@ -334,7 +334,7 @@
 	position: absolute;
 	left: -10px;
 	top: 8px;
-	bottom: 16px;
+	bottom: 8px;
 	width: 6px;
 	border: 4px solid var(--background-secondary);
 	border-right: none;
