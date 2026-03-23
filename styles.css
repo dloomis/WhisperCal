@@ -855,11 +855,51 @@
 	flex-shrink: 0;
 }
 
-.whisper-cal-speaker-tag-input {
+.whisper-cal-speaker-tag-input-wrapper {
+	position: relative;
 	flex: 1;
 	min-width: 120px;
+}
+
+.whisper-cal-speaker-tag-input {
+	width: 100%;
 	padding: 4px 8px;
 	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-autocomplete-dropdown {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	z-index: var(--layer-popover);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-s);
+	max-height: 200px;
+	overflow-y: auto;
+	margin-top: 2px;
+}
+
+.whisper-cal-autocomplete-item {
+	padding: 4px 8px;
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+
+.whisper-cal-autocomplete-item:hover,
+.whisper-cal-autocomplete-item.is-selected {
+	background: var(--background-modifier-hover);
+}
+
+.whisper-cal-autocomplete-create {
+	color: var(--text-accent);
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.whisper-cal-autocomplete-create-name {
+	font-weight: var(--font-semibold);
 }
 
 .whisper-cal-speaker-tag-detail {

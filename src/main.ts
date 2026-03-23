@@ -406,7 +406,7 @@ export default class WhisperCalPlugin extends Plugin {
 			// Queue the modal so parallel completions are presented one at a time
 			this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
 				const title = transcriptFile.basename;
-				const decisions = await new SpeakerTagModal(this.app, mappings, title).prompt();
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, this.settings.peopleFolderPath).prompt();
 				if (!decisions) return;
 
 				const hasTagged = decisions.some(d => d.confirmedName);
