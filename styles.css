@@ -186,7 +186,7 @@
 }
 
 .whisper-cal-card-active .whisper-cal-card-gutter {
-	background: color-mix(in srgb, var(--wc-category-color) 12%, transparent);
+	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 
 .whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
