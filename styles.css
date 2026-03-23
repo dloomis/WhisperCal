@@ -101,7 +101,7 @@
 	padding: 12px 10px;
 	width: 96px;
 	flex-shrink: 0;
-	--wc-category-color: var(--background-secondary);
+	--wc-category-color: var(--background-primary);
 	border-right: 4px solid var(--wc-category-color);
 	position: relative;
 }
