@@ -206,8 +206,8 @@ export class SpeakerTagModal extends Modal {
 				item.addEventListener("mousedown", (e) => {
 					e.preventDefault();
 					input.value = person.name;
+					userEdited = false;
 					dropdown.style.display = "none";
-					input.dispatchEvent(new Event("input"));
 				});
 			}
 
