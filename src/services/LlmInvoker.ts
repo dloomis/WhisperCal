@@ -177,17 +177,16 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		`#!${userShell} -l`,
 		`cd ${shellQuote(vaultPath)}`,
 		`echo "━━━ WhisperCal LLM Debug ━━━"`,
-		`echo "Command: ${escapeSq(cmd)}"`,
-		`echo "Working dir: ${escapeSq(vaultPath)}"`,
+		`echo "Working dir: ${vaultPath.replace(/"/g, '\\"')}"`,
 		`echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━"`,
 		`echo ""`,
-		// Run the command; tee stdout to file, capture stderr via fd 3
-		`exec 3>&1`,
-		`{ ${cmd} 2>&1 1>&3 3>&- | tee ${shellQuote(stderrFile)} >&2 3>&-; } 3>&1 1>&2 | tee ${shellQuote(stdoutFile)}`,
-		// Capture exit code from PIPESTATUS (the LLM command, not tee)
-		`echo \${PIPESTATUS[0]} > ${shellQuote(exitCodeFile)}`,
+		// Run the command; tee stdout to file, show stderr in terminal and capture to file
+		`${cmd} > >(tee ${shellQuote(stdoutFile)}) 2> >(tee ${shellQuote(stderrFile)} >&2)`,
+		`_llm_exit=$?`,
+		`sleep 0.5`,
+		`echo $_llm_exit > ${shellQuote(exitCodeFile)}`,
 		`echo ""`,
-		`echo "━━━ Process exited with code $(cat ${shellQuote(exitCodeFile)}) ━━━"`,
+		`echo "━━━ Process exited with code $_llm_exit ━━━"`,
 	];
 
 	fs.writeFileSync(scriptFile, scriptLines.join("\n"), {mode: 0o755});
