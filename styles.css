@@ -101,7 +101,8 @@
 	padding: 12px 10px;
 	width: 96px;
 	flex-shrink: 0;
-	border-right: 4px solid var(--interactive-accent);
+	--wc-category-color: var(--interactive-accent);
+	border-right: 4px solid var(--wc-category-color);
 	position: relative;
 }
 
@@ -157,17 +158,6 @@
 	stroke-width: 2.5px;
 }
 
-.whisper-cal-card-gutter-category {
-	display: flex;
-	align-items: center;
-}
-
-.whisper-cal-card-gutter-category .svg-icon {
-	width: 16px;
-	height: 16px;
-	stroke-width: 2.5px;
-}
-
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
@@ -188,8 +178,8 @@
 	height: 100%;
 	background: repeating-linear-gradient(
 		-45deg,
-		var(--interactive-accent),
-		var(--interactive-accent) 4px,
+		var(--wc-category-color),
+		var(--wc-category-color) 4px,
 		transparent 4px,
 		transparent 8px
 	);
@@ -197,7 +187,7 @@
 }
 
 .whisper-cal-card-active .whisper-cal-card-gutter {
-	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+	background: color-mix(in srgb, var(--wc-category-color) 12%, transparent);
 }
 
 .whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {

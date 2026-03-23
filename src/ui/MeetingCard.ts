@@ -64,6 +64,10 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		: "whisper-cal-card-gutter";
 	const gutter = card.createDiv({cls: gutterCls});
 
+	if (event.categories.length > 0) {
+		gutter.style.setProperty("--wc-category-color", event.categories[0]!.color);
+	}
+
 	if (event.isAllDay) {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {
@@ -94,8 +98,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	}
 
 	const hasIcons = event.isOrganizer
-		|| (opts.importantOrganizerEmails ?? []).length > 0
-		|| event.categories.length > 0;
+		|| (opts.importantOrganizerEmails ?? []).length > 0;
 
 	if (hasIcons) {
 		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
@@ -112,14 +115,6 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
 				setIcon(importantEl, "octagon-alert");
 			}
-		}
-
-		for (const cat of event.categories) {
-			const catEl = iconRow.createDiv({
-				cls: "whisper-cal-card-gutter-category",
-				attr: {"aria-label": cat.name, style: `color: ${cat.color};`},
-			});
-			setIcon(catEl, "layout-grid");
 		}
 	}
 
