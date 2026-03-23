@@ -109,7 +109,7 @@ export class SpeakerTagModal extends Modal {
 			this.inputs.push(input);
 
 			if (this.people.length > 0) {
-				this.attachAutocomplete(wrapper, input);
+				this.attachAutocomplete(wrapper, input, mapping.proposedName);
 			}
 
 			// Confidence + evidence below input
@@ -170,17 +170,23 @@ export class SpeakerTagModal extends Modal {
 		}, 10);
 	}
 
-	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement): void {
+	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement, originalProposed: string): void {
 		const dropdown = wrapper.createDiv({cls: "whisper-cal-autocomplete-dropdown"});
 		dropdown.style.display = "none";
 		let selectedIdx = -1;
+		let userEdited = !originalProposed;
+
+		input.addEventListener("input", () => {
+			userEdited = input.value.trim() !== originalProposed;
+		});
 
 		const updateDropdown = (): void => {
 			const query = input.value.trim().toLowerCase();
 			dropdown.empty();
 			selectedIdx = -1;
 
-			if (!query) {
+			// Only show autocomplete when user has edited away from the LLM proposal, or it was empty
+			if (!userEdited || !query) {
 				dropdown.style.display = "none";
 				return;
 			}
