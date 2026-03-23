@@ -49,11 +49,17 @@ export function getDayEndUTC(date: Date, timezone: string): string {
 /**
  * Format a Date as a time string (e.g. "9:00 AM") in the given timezone.
  */
+/** Detect system hour cycle once (h23/h24 = 24-hour, h11/h12 = 12-hour). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const systemHourCycle = (new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions() as any).hourCycle as string | undefined;
+const systemHour12 = systemHourCycle === "h11" || systemHourCycle === "h12";
+
 export function formatTime(date: Date, timezone: string): string {
 	return date.toLocaleTimeString(undefined, {
 		timeZone: timezone,
 		hour: "numeric",
 		minute: "2-digit",
+		hour12: systemHour12,
 	});
 }
 
