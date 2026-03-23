@@ -110,7 +110,7 @@
 	font-size: var(--font-ui-medium);
 	font-weight: var(--font-semibold);
 	white-space: nowrap;
-	color: var(--text-muted);
+	color: var(--text-normal);
 	line-height: 1.2;
 }
 
