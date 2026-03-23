@@ -69,6 +69,10 @@ export class SpeakerTagModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-speaker-tag-modal");
 
+		// Prevent backdrop click and window blur from closing the modal
+		this.containerEl.querySelector(".modal-bg")
+			?.addEventListener("click", (e) => e.stopImmediatePropagation());
+
 		contentEl.createEl("h3", {text: "Tag speakers"});
 		contentEl.createEl("p", {
 			cls: "whisper-cal-speaker-tag-subtitle",
