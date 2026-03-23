@@ -102,6 +102,7 @@
 	width: 96px;
 	flex-shrink: 0;
 	--wc-category-color: var(--background-modifier-border);
+	--wc-gutter-text: color-mix(in srgb, var(--background-secondary), black 40%);
 	border-right: 4px solid var(--wc-category-color);
 	position: relative;
 }
@@ -117,13 +118,13 @@
 .whisper-cal-card-gutter-period {
 	font-size: var(--font-ui-smaller);
 	font-weight: normal;
-	color: var(--background-modifier-border);
+	color: var(--wc-gutter-text);
 	line-height: 1.2;
 }
 
 .whisper-cal-card-gutter-duration {
 	font-size: var(--font-ui-smaller);
-	color: var(--background-modifier-border);
+	color: var(--wc-gutter-text);
 	margin-top: 4px;
 }
 
@@ -161,6 +162,7 @@
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
+	--wc-gutter-text: color-mix(in srgb, var(--text-warning), black 20%);
 }
 
 /* Barber-pole stripe for not-accepted meetings */
@@ -187,10 +189,12 @@
 
 .whisper-cal-card-active .whisper-cal-card-gutter {
 	background: color-mix(in srgb, var(--wc-category-color) 12%, transparent);
+	--wc-gutter-text: color-mix(in srgb, var(--wc-category-color), black 20%);
 }
 
 .whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
 	background: color-mix(in srgb, var(--text-success) 12%, transparent);
+	--wc-gutter-text: color-mix(in srgb, var(--text-success), black 20%);
 }
 
 /* Content — right column */
