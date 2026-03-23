@@ -225,7 +225,7 @@ export function renderMeetingCard(
 
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
 	if (event.id === "unscheduled") {
-		const notePill = renderPill(actions, "file-text", "Note", "incomplete");
+		const notePill = renderPill(actions, "file-plus-2", "Note", "incomplete");
 		notePill.addEventListener("click", () => {
 			notePill.disabled = true;
 			const handleClick = async () => {
@@ -263,7 +263,7 @@ export function renderMeetingCard(
 	}
 
 	// Note pill
-	const notePill = renderPill(actions, "file-text", "Note", states.note);
+	const notePill = renderPill(actions, "file-plus-2", "Note", states.note);
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
