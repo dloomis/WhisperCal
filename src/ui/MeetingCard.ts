@@ -152,8 +152,8 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 	if (event.attendeeCount > 0) {
 		const attEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
 		const attIcon = attEl.createSpan({cls: "whisper-cal-card-icon"});
-		setIcon(attIcon, "users");
-		attEl.createSpan({text: `${event.attendeeCount} attendee${event.attendeeCount === 1 ? "" : "s"}`});
+		setIcon(attIcon, "users-round");
+		attEl.createSpan({text: `${event.attendeeCount}`});
 	}
 }
 
