@@ -154,9 +154,9 @@ Build the People context table (the `People Note Filename` column is reused in S
 ```
 | Full Name | Nickname | Context | People Note Filename | Source |
 |-----------|----------|---------|---------------------|--------|
-| Michael Chen | Mike | Platform Engineer, C2E | Michael Chen | calendar |
+| Michael Chen | Mike | Platform Engineer, Acme Corp | Michael Chen | calendar |
 | Tom Wilson | Tom | | Tom Wilson | prior_transcript |
-| Jane Smith | Jane | Iris Technical Lead, KSPIL6 | Jane Smith | microphone_user |
+| Jane Smith | Jane | Frontend Lead, Project Alpha | Jane Smith | microphone_user |
 ```
 
 ---
@@ -237,7 +237,7 @@ When a first name is identified (from vocative or other evidence), resolve to fu
 
 1. **Context match:** Check the `Context` column for each candidate. If the transcript discusses a program, team, or organization that matches exactly one candidate's context → resolve to that candidate at **HIGH** confidence (not CERTAIN — circumstantial evidence). **Evidence:** `context_match: "{context value}" aligns with transcript topic "{topic}"`
 2. **Calendar attendee preference:** If exactly one candidate is a calendar attendee for this session → resolve to that candidate (existing Rule 2 logic applies).
-3. **Neither resolves:** Flag as LOW confidence with all candidates **and their Context values** listed for faster manual resolution. Example: `"John" — candidates: John Keith (Iris Technical Lead, KSPIL6), John Washburn (Network Engineer, C2E)`
+3. **Neither resolves:** Flag as LOW confidence with all candidates **and their Context values** listed for faster manual resolution. Example: `"John" — candidates: John Keith (Frontend Lead, Project Alpha), John Washburn (Network Engineer, Acme Corp)`
 
 #### Rule 7: Alias / Transcription Error Handling
 

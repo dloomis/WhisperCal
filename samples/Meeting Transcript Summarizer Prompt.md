@@ -4,7 +4,7 @@ Standalone prompt for summarizing a meeting transcript and writing the summary i
 
 **Invocation pattern:**
 ```
-claude --dangerously-skip-permissions 'Follow the instructions in /abs/path/Meeting Transcript Summarizer Prompt.md. Meeting note: Meetings/2026-03-05 - Weekly CMB Meeting.md.'
+claude --dangerously-skip-permissions 'Follow the instructions in /abs/path/Meeting Transcript Summarizer Prompt.md. Meeting note: Meetings/2026-03-05 - Weekly Team Sync.md.'
 ```
 
 ---
