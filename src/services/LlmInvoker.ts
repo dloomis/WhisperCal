@@ -1,5 +1,4 @@
 import {spawn, execSync, type ChildProcess} from "child_process";
-import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
@@ -157,43 +156,25 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 }
 
 /**
- * Open the LLM CLI in a Terminal.app window for debugging.
- * Output is tee'd to temp files so callers still get stdout/stderr/exitCode.
+ * Open the LLM CLI in an interactive Terminal.app window for debugging.
+ * The user can watch and interact with the LLM session directly.
+ * Returns immediately with exitCode 0 — this is fire-and-forget.
  */
 function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
-	const {cmd, vaultPath} = buildLlmCommand(opts);
-	const timeoutMs = opts.timeoutMs ?? 0;
+	const {vaultPath} = opts;
 
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "whispercal-llm-"));
-	const stdoutFile = path.join(tmpDir, "stdout");
-	const stderrFile = path.join(tmpDir, "stderr");
-	const exitCodeFile = path.join(tmpDir, "exitcode");
-	const scriptFile = path.join(tmpDir, "run.sh");
+	// Build the command WITHOUT --dangerously-skip-permissions so it's interactive.
+	// Strip that flag from llmExtraFlags if present.
+	const interactiveFlags = opts.llmExtraFlags
+		.replace(/--dangerously-skip-permissions/g, "")
+		.trim();
+	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
+	const {cmd} = buildLlmCommand(interactiveOpts);
 
-	// Build a wrapper script that captures output and exit code.
-	// Use the user's shell as a login shell so PATH (Homebrew, etc.) is available.
-	const userShell = os.userInfo().shell || "/bin/zsh";
-	const scriptLines = [
-		`#!${userShell} -l`,
-		`cd ${shellQuote(vaultPath)}`,
-		`echo "━━━ WhisperCal LLM Debug ━━━"`,
-		`echo "Working dir: ${vaultPath.replace(/"/g, '\\"')}"`,
-		`echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━"`,
-		`echo ""`,
-		// Run the command; tee stdout to file, show stderr in terminal and capture to file
-		`${cmd} > >(tee ${shellQuote(stdoutFile)}) 2> >(tee ${shellQuote(stderrFile)} >&2)`,
-		`_llm_exit=$?`,
-		`sleep 0.5`,
-		`echo $_llm_exit > ${shellQuote(exitCodeFile)}`,
-		`echo ""`,
-		`echo "━━━ Process exited with code $_llm_exit ━━━"`,
-	];
-
-	fs.writeFileSync(scriptFile, scriptLines.join("\n"), {mode: 0o755});
-
-	// Open Terminal.app with the script.
-	// AppleScript strings use double quotes; escape any in the path.
-	const asQuoted = `"${scriptFile.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+	// Build the terminal command: cd to vault, then run the LLM CLI interactively.
+	// Quoting for AppleScript: escape backslashes and double quotes.
+	const termCmd = `cd ${shellQuote(vaultPath)} && ${cmd}`;
+	const asQuoted = `"${termCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 	const osascript = [
 		`tell application "Terminal"`,
 		`  do script ${asQuoted}`,
@@ -204,66 +185,10 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	try {
 		execSync(`osascript -e ${shellQuote(osascript)}`);
 	} catch (err) {
-		// Clean up temp dir on failure
-		fs.rmSync(tmpDir, {recursive: true, force: true});
 		const msg = err instanceof Error ? err.message : String(err);
 		return Promise.resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
 	}
 
-	// Poll for the exit code file to appear
-	return new Promise((resolve) => {
-		let timedOut = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-
-		if (timeoutMs > 0) {
-			timer = setTimeout(() => {
-				timedOut = true;
-			}, timeoutMs);
-		}
-
-		const pollInterval = setInterval(() => {
-			if (timedOut) {
-				clearInterval(pollInterval);
-				if (timer) clearTimeout(timer);
-				const mins = Math.round(timeoutMs / 60000);
-				resolve({
-					exitCode: 1,
-					stdout: readFileOrEmpty(stdoutFile),
-					stderr: `LLM process timed out after ${mins} minute${mins !== 1 ? "s" : ""}`,
-				});
-				cleanupTmpDir(tmpDir);
-				return;
-			}
-
-			if (!fs.existsSync(exitCodeFile)) return;
-
-			clearInterval(pollInterval);
-			if (timer) clearTimeout(timer);
-
-			// Small delay to let tee finish flushing
-			setTimeout(() => {
-				const exitCode = parseInt(readFileOrEmpty(exitCodeFile).trim(), 10) || 1;
-				const stdout = readFileOrEmpty(stdoutFile);
-				const stderr = readFileOrEmpty(stderrFile);
-				resolve({exitCode, stdout, stderr});
-				cleanupTmpDir(tmpDir);
-			}, 500);
-		}, 1000);
-	});
-}
-
-function readFileOrEmpty(filePath: string): string {
-	try {
-		return fs.readFileSync(filePath, "utf-8");
-	} catch {
-		return "";
-	}
-}
-
-function cleanupTmpDir(tmpDir: string): void {
-	try {
-		fs.rmSync(tmpDir, {recursive: true, force: true});
-	} catch {
-		// Best-effort cleanup
-	}
+	// Debug mode is fire-and-forget — the user interacts in Terminal directly.
+	return Promise.resolve({exitCode: 0, stdout: "", stderr: ""});
 }

@@ -385,6 +385,12 @@ export default class WhisperCalPlugin extends Plugin {
 				debugMode: this.settings.llmDebugMode,
 			});
 
+			// Debug mode opens an interactive Terminal session — nothing to parse
+			if (this.settings.llmDebugMode) {
+				new Notice("LLM debug session opened in Terminal");
+				return;
+			}
+
 			if (exitCode !== 0) {
 				const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
 				new Notice(`Speaker tagging failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
@@ -536,6 +542,12 @@ export default class WhisperCalPlugin extends Plugin {
 				timeoutMs,
 				debugMode: this.settings.llmDebugMode,
 			});
+
+			// Debug mode opens an interactive Terminal session
+			if (this.settings.llmDebugMode) {
+				new Notice("LLM debug session opened in Terminal");
+				return;
+			}
 
 			if (exitCode === 0) {
 				// Verify note still exists
