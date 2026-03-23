@@ -326,20 +326,19 @@
 /* Conflict bracket — groups overlapping meetings */
 .whisper-cal-conflict-group {
 	position: relative;
-	padding-left: 10px;
 	margin-bottom: 8px;
 }
 
 .whisper-cal-conflict-group::before {
 	content: "";
 	position: absolute;
-	left: 0;
+	left: -10px;
 	top: 8px;
-	bottom: 16px; /* accounts for last card's margin-bottom */
-	width: 3px;
-	background: var(--text-error);
-	border-radius: 2px;
-	opacity: 0.6;
+	bottom: 16px;
+	width: 6px;
+	border: 1.5px solid var(--text-faint);
+	border-right: none;
+	border-radius: 3px 0 0 3px;
 }
 
 .whisper-cal-conflict-group > .whisper-cal-card:last-child {
