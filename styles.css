@@ -163,6 +163,10 @@
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
 }
 
+.whisper-cal-card-gutter-done {
+	background: color-mix(in srgb, var(--text-success) 12%, transparent);
+}
+
 /* Barber-pole stripe for not-accepted meetings */
 .whisper-cal-card-gutter-tentative {
 	border-right-color: transparent;

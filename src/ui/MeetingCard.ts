@@ -252,8 +252,10 @@ export function renderMeetingCard(
 		card.dataset.transcriptPath = states.transcriptPath;
 	}
 
-	// Highlight gutter when workflow is started but not yet complete
-	if (states.note === "complete" && states.summary !== "complete") {
+	// Highlight gutter based on workflow progress
+	if (states.summary === "complete") {
+		gutter.addClass("whisper-cal-card-gutter-done");
+	} else if (states.note === "complete") {
 		gutter.addClass("whisper-cal-card-gutter-warning");
 	}
 
