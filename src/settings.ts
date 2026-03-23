@@ -32,6 +32,7 @@ export interface WhisperCalSettings {
 	llmExtraFlags: string;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
+	llmDebugMode: boolean;
 	autoSummarizeAfterTagging: boolean;
 	showAllDayEvents: boolean;
 	importantOrganizers: ImportantOrganizer[];
@@ -62,6 +63,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmExtraFlags: "--dangerously-skip-permissions",
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
+	llmDebugMode: false,
 	autoSummarizeAfterTagging: false,
 	showAllDayEvents: false,
 	importantOrganizers: [],
@@ -306,6 +308,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.plugin.settings.llmMaxConcurrent = n;
 						await this.plugin.saveSettings();
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Debug mode")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Open LLM commands in a Terminal window instead of running in the background")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.llmDebugMode)
+				.onChange(async (value) => {
+					this.plugin.settings.llmDebugMode = value;
+					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)

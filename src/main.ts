@@ -382,6 +382,7 @@ export default class WhisperCalPlugin extends Plugin {
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				batch: true,
 				timeoutMs,
+				debugMode: this.settings.llmDebugMode,
 			});
 
 			if (exitCode !== 0) {
@@ -533,6 +534,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
 				timeoutMs,
+				debugMode: this.settings.llmDebugMode,
 			});
 
 			if (exitCode === 0) {
