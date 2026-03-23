@@ -101,7 +101,7 @@
 	padding: 12px 10px;
 	width: 96px;
 	flex-shrink: 0;
-	--wc-category-color: var(--interactive-accent);
+	--wc-category-color: var(--text-faint);
 	border-right: 4px solid var(--wc-category-color);
 	position: relative;
 }
@@ -324,7 +324,7 @@
 	top: 8px;
 	bottom: 8px;
 	width: 6px;
-	border: 4px solid color-mix(in srgb, var(--background-secondary) 80%, black);
+	border: 4px solid var(--text-faint);
 	border-right: none;
 	border-radius: 4px 0 0 4px;
 }
