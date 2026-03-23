@@ -50,11 +50,10 @@ export function getDayEndUTC(date: Date, timezone: string): string {
  * Format a Date as a time string (e.g. "9:00 AM") in the given timezone.
  */
 export function formatTime(date: Date, timezone: string): string {
-	return date.toLocaleTimeString("en-US", {
+	return date.toLocaleTimeString(undefined, {
 		timeZone: timezone,
 		hour: "numeric",
 		minute: "2-digit",
-		hour12: true,
 	});
 }
 
