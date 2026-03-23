@@ -163,10 +163,6 @@
 	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
 }
 
-.whisper-cal-card-gutter-warning:not(.whisper-cal-card-gutter-categorized) {
-	border-right-color: var(--text-warning);
-}
-
 /* Barber-pole stripe for not-accepted meetings */
 .whisper-cal-card-gutter-tentative {
 	border-right-color: transparent;
@@ -195,10 +191,6 @@
 
 .whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
 	background: color-mix(in srgb, var(--text-success) 12%, transparent);
-}
-
-.whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning):not(.whisper-cal-card-gutter-categorized) {
-	border-right-color: var(--text-success);
 }
 
 /* Content — right column */
