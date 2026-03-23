@@ -38,6 +38,7 @@ export interface WhisperCalSettings {
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	deviceLoginUrl: string;
+	timeFormat: "auto" | "12h" | "24h";
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -67,6 +68,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	deviceLoginUrl: "",
+	timeFormat: "auto",
 };
 
 export class WhisperCalSettingTab extends PluginSettingTab {
@@ -336,6 +338,20 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.plugin.settings.timezone = value;
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName("Time format")
+			.setDesc("How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system")
+			.addDropdown(dropdown => {
+				dropdown.addOption("auto", "Auto");
+				dropdown.addOption("12h", "12-hour");
+				dropdown.addOption("24h", "24-hour");
+				dropdown.setValue(this.plugin.settings.timeFormat);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.timeFormat = value as "auto" | "12h" | "24h";
+					await this.plugin.saveSettings();
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Show all-day events")

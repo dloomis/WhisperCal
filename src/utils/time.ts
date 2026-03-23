@@ -49,17 +49,33 @@ export function getDayEndUTC(date: Date, timezone: string): string {
 /**
  * Format a Date as a time string (e.g. "9:00 AM") in the given timezone.
  */
-/** Detect system hour cycle once (h23/h24 = 24-hour, h11/h12 = 12-hour). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const systemHourCycle = (new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions() as any).hourCycle as string | undefined;
-const systemHour12 = systemHourCycle === "h11" || systemHourCycle === "h12";
+/** Configured time format — call setTimeFormat() from plugin onload. */
+let configuredHour12: boolean | undefined;
+
+/** Detect system hour cycle (h23/h24 = 24-hour, h11/h12 = 12-hour). */
+function detectSystemHour12(): boolean {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const hourCycle = (new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions() as any).hourCycle as string | undefined;
+	return hourCycle === "h11" || hourCycle === "h12";
+}
+
+function resolveHour12(): boolean {
+	if (configuredHour12 !== undefined) return configuredHour12;
+	return detectSystemHour12();
+}
+
+export function setTimeFormat(format: "auto" | "12h" | "24h"): void {
+	if (format === "12h") configuredHour12 = true;
+	else if (format === "24h") configuredHour12 = false;
+	else configuredHour12 = undefined; // auto
+}
 
 export function formatTime(date: Date, timezone: string): string {
 	return date.toLocaleTimeString(undefined, {
 		timeZone: timezone,
 		hour: "numeric",
 		minute: "2-digit",
-		hour12: systemHour12,
+		hour12: resolveHour12(),
 	});
 }
 

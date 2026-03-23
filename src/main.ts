@@ -11,7 +11,7 @@ import {parseSpeakerTagOutput} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
-import {parseDateTime} from "./utils/time";
+import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
 import {MsalAuth} from "./services/MsalAuth";
@@ -224,6 +224,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// Leave empty — user can fill in manually
 			}
 		}
+		setTimeFormat(this.settings.timeFormat);
 	}
 
 	async saveSettings() {
@@ -241,6 +242,7 @@ export default class WhisperCalPlugin extends Plugin {
 			this.settings.cacheRetentionDays,
 			this.settings.timezone,
 		);
+		setTimeFormat(this.settings.timeFormat);
 		// Update existing views with new settings
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
