@@ -30,14 +30,8 @@ export class SpeakerTagModal extends Modal {
 
 	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, peopleFolderPath: string) {
 		super(app);
-		// Sort by confidence (CERTAIN > HIGH > LOW > empty), then by index
-		const confidenceOrder: Record<string, number> = {CERTAIN: 0, HIGH: 1, LOW: 2};
-		this.mappings = [...mappings].sort((a, b) => {
-			const ca = confidenceOrder[a.confidence] ?? 3;
-			const cb = confidenceOrder[b.confidence] ?? 3;
-			if (ca !== cb) return ca - cb;
-			return a.index - b.index;
-		});
+		// Keep original index order so speakers appear in transcript sequence
+		this.mappings = [...mappings].sort((a, b) => a.index - b.index);
 		this.title = title;
 		this.peopleFolderPath = peopleFolderPath;
 		this.people = this.buildPeopleList();

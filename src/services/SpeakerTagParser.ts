@@ -56,7 +56,7 @@ export function parseSpeakerTagOutput(
 		// Match lines like: - #0: "Microphone" → "Jane Smith" | CERTAIN | microphone user
 		// or: - #0: "Speaker 1" → (unresolved) | | no evidence
 		const lineRe = /^- #(\d+):\s*"([^"]*?)"\s*→\s*(?:"([^"]*?)"|\(unresolved\))\s*\|\s*(\w*)\s*\|\s*(.*)$/gm;
-		const parsed: ProposedSpeakerMapping[] = [];
+		const llmMap = new Map<number, ProposedSpeakerMapping>();
 		let match: RegExpExecArray | null;
 		while ((match = lineRe.exec(section)) !== null) {
 			const index = parseInt(match[1]!);
@@ -65,7 +65,7 @@ export function parseSpeakerTagOutput(
 			const confidence = match[4] ?? "";
 			const evidence = match[5]?.trim() ?? "";
 			const speaker = speakers[index];
-			parsed.push({
+			llmMap.set(index, {
 				index,
 				originalName,
 				proposedName,
@@ -75,7 +75,11 @@ export function parseSpeakerTagOutput(
 				lineCount: speaker?.line_count ?? 0,
 			});
 		}
-		if (parsed.length > 0) return {mappings: parsed};
+		if (llmMap.size > 0) {
+			// Merge: include all frontmatter speakers, overlay LLM data where available
+			const merged = mergeWithFrontmatter(speakers, llmMap);
+			return {mappings: merged};
+		}
 
 		// Header found but no lines parsed — malformed output
 		console.warn("[WhisperCal] 'Proposed Mapping:' header found but no lines matched the expected format");
@@ -93,6 +97,35 @@ export function parseSpeakerTagOutput(
 		return {mappings: [], warning: "LLM returned no speaker mappings and transcript has no speakers"};
 	}
 	return {mappings: buildFallbackMappings(speakers)};
+}
+
+function mergeWithFrontmatter(
+	speakers: FrontmatterSpeaker[],
+	llmMap: Map<number, ProposedSpeakerMapping>,
+): ProposedSpeakerMapping[] {
+	const merged: ProposedSpeakerMapping[] = [];
+	for (let i = 0; i < speakers.length; i++) {
+		const llm = llmMap.get(i);
+		if (llm) {
+			merged.push(llm);
+		} else {
+			const s = speakers[i]!;
+			merged.push({
+				index: i,
+				originalName: s.name ?? `Speaker ${i}`,
+				proposedName: "",
+				confidence: "",
+				evidence: "",
+				speakerId: s.id ?? "",
+				lineCount: s.line_count ?? 0,
+			});
+		}
+	}
+	// Include any LLM entries with indices beyond frontmatter (shouldn't happen, but be safe)
+	for (const [idx, mapping] of llmMap) {
+		if (idx >= speakers.length) merged.push(mapping);
+	}
+	return merged;
 }
 
 function buildFallbackMappings(speakers: FrontmatterSpeaker[]): ProposedSpeakerMapping[] {
