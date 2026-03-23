@@ -306,8 +306,8 @@
 	align-items: center;
 	gap: 8px;
 	padding: 0 16px;
-	margin: -2px 0;
-	height: 20px;
+	margin: 2px 0;
+	height: 28px;
 }
 
 .whisper-cal-gap-line {
