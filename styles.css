@@ -167,26 +167,9 @@
 	background: color-mix(in srgb, var(--text-success) 12%, transparent);
 }
 
-/* Barber-pole stripe for not-accepted meetings */
+/* Dashed border for not-accepted meetings */
 .whisper-cal-card-gutter-tentative {
-	border-right-color: transparent;
-}
-
-.whisper-cal-card-gutter-tentative::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	right: -4px;
-	width: 4px;
-	height: 100%;
-	background: repeating-linear-gradient(
-		-45deg,
-		var(--wc-category-color),
-		var(--wc-category-color) 4px,
-		transparent 4px,
-		transparent 8px
-	);
-	border-radius: 0 var(--radius-s) var(--radius-s) 0;
+	border-right-style: dashed;
 }
 
 .whisper-cal-card-active .whisper-cal-card-gutter {
