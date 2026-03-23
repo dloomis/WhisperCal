@@ -189,12 +189,8 @@
 	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 
-.whisper-cal-card-note-open {
+.whisper-cal-card-note-open .whisper-cal-card-content {
 	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-}
-
-.whisper-cal-card-note-open .whisper-cal-card-gutter:not(.whisper-cal-card-gutter-warning) {
-	background: color-mix(in srgb, var(--text-success) 12%, transparent);
 }
 
 /* Content — right column */
