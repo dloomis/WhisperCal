@@ -76,10 +76,14 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 };
 
 class LlmConsentModal extends Modal {
+	private resolve: ((accepted: boolean) => void) | null = null;
 	private accepted = false;
 
-	constructor(app: App, private readonly onAccept: () => void) {
-		super(app);
+	prompt(): Promise<boolean> {
+		return new Promise((resolve) => {
+			this.resolve = resolve;
+			this.open();
+		});
 	}
 
 	onOpen(): void {
@@ -110,10 +114,12 @@ class LlmConsentModal extends Modal {
 
 	onClose(): void {
 		this.contentEl.empty();
-		if (this.accepted) {
-			// Defer callback so the modal DOM is fully removed first
-			window.setTimeout(() => this.onAccept(), 50);
-		}
+		setTimeout(() => {
+			if (this.resolve) {
+				this.resolve(this.accepted);
+				this.resolve = null;
+			}
+		}, 0);
 	}
 }
 
@@ -265,22 +271,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Enable LLM features")
 			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
 			.addToggle(toggle => {
-				let programmatic = false;
 				toggle.setValue(this.plugin.settings.llmEnabled);
 				toggle.onChange(async (value) => {
-					if (programmatic) return;
 					if (value) {
-						// Revert toggle immediately; modal will set it if accepted
-						programmatic = true;
 						toggle.setValue(false);
-						programmatic = false;
-						new LlmConsentModal(this.app, async () => {
+						const accepted = await new LlmConsentModal(this.app).prompt();
+						if (accepted) {
 							this.plugin.settings.llmEnabled = true;
-							programmatic = true;
 							toggle.setValue(true);
-							programmatic = false;
 							await this.plugin.saveSettings();
-						}).open();
+						}
 					} else {
 						this.plugin.settings.llmEnabled = false;
 						await this.plugin.saveSettings();
