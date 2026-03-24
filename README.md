@@ -5,7 +5,7 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 > **Desktop only.** WhisperCal uses Node APIs and AppleScript and will not load on Obsidian mobile.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="WhisperCal screenshot showing the calendar sidebar alongside a meeting note" width="800">
+  <img src="docs/screenshot.png" alt="WhisperCal screenshot showing the calendar sidebar alongside a meeting note" width="600">
 </p>
 
 ---
