@@ -164,7 +164,7 @@
 }
 
 .whisper-cal-card-gutter-done {
-	background: color-mix(in srgb, var(--text-success) 12%, transparent);
+	background: color-mix(in srgb, var(--text-success) 25%, transparent);
 }
 
 /* Dashed border for not-accepted meetings */
