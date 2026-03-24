@@ -360,10 +360,6 @@
 	border-radius: 6px 0 0 6px;
 }
 
-.whisper-cal-conflict-group > .whisper-cal-card {
-	border: 1px dashed color-mix(in srgb, var(--wc-conflict-color) 40%, transparent);
-}
-
 .whisper-cal-conflict-group > .whisper-cal-card:last-child {
 	margin-bottom: 0;
 }
