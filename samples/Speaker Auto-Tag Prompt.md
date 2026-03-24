@@ -2,13 +2,14 @@
 
 Self-contained prompt for tagging unidentified speakers in a single transcript stub. Runs the full 7-rule speaker identification algorithm using vault data (People notes, calendar attendees, prior transcripts) — no MacWhisper DB interaction.
 
-**Design principle:** This prompt is a self-contained, single-transcript unit of work. It handles one transcript from analysis through write. An orchestrating processor can launch multiple instances in parallel for batch runs.
+**Design principle:** This prompt is a self-contained, single-transcript analysis unit. It analyzes one transcript and returns proposed speaker mappings. The calling plugin handles user review and writing changes.
 
 **Invocation pattern:**
 ```
 Follow the instructions in <path to this prompt file>.
 Transcript: Transcripts/2026-03-02 - Weekly Standup - Transcript.md.
 Microphone user: Jane Smith.
+Output format: <caller specifies expected output format>
 ```
 
 **Optional parameters:**
@@ -17,7 +18,6 @@ Microphone user: Jane Smith.
 - `Prior Speakers:` — pre-fetched prior transcript speakers (skips Step 6b)
 - `Transcripts Folder:` — folder name for transcript files (default: `Transcripts`)
 - `People Folder:` — folder name for People notes (default: `People`)
-- `batch: true` — returns proposed mapping without writing or presenting for approval
 
 ---
 
@@ -26,7 +26,7 @@ Microphone user: Jane Smith.
 Before any processing, load all required tools in a single call to avoid sequential tool discovery overhead:
 
 ```
-ToolSearch("select:Read,Edit,Glob,Grep,AskUserQuestion")
+ToolSearch("select:Read,Glob,Grep")
 ```
 
 ---
@@ -41,7 +41,7 @@ Extract from the calling message:
 - `Prior Speakers:` → pre-fetched prior transcript speakers (optional — skips Step 6b if provided)
 - `Transcripts Folder:` → folder name for transcript files (optional — defaults to `Transcripts`)
 - `People Folder:` → folder name for People notes (optional — defaults to `People`)
-- `batch:` → `true` for batch mode (optional — defaults to `false`)
+- `Output format:` → the expected output format for the proposed mapping (provided by the caller)
 
 **Path resolution:** Try the `Transcript:` path as-is first. If not found, error with: "Transcript file not found: [path]. Check the path and try again."
 
@@ -83,9 +83,7 @@ Use the **Read tool** to open the transcript file. Extract from frontmatter:
 
 Read `pipeline_state` from stub frontmatter:
 
-- `pipeline_state: tagged` or `extracted` or `summarized`:
-  - **Batch mode:** Log "already tagged — re-running with updated confidence" and proceed
-  - **Interactive mode:** Note in final report (Step 9): "Previously tagged; confidence values refreshed"
+- `pipeline_state: tagged` or `extracted` or `summarized` → proceed (re-running with updated confidence)
 - `pipeline_state: titled` or absent → proceed
 
 ---
@@ -253,113 +251,15 @@ For each unresolved stub, check `Nickname` column from the People context table 
 
 ### Build Proposed Mapping
 
-After applying all 7 rules, build the proposed mapping table:
-
-```
-| # | Stub Name | Proposed Name | Confidence | Evidence |
-|---|-----------|---------------|------------|----------|
-| 0 | Microphone | Jane Smith | CERTAIN | microphone |
-| 1 | Speaker 1 | Tom Wilson | CERTAIN | calendar + vocative ("Tom, go ahead" at 05:23) |
-| 2 | Speaker 2 | Michael Chen | HIGH | calendar + recurring_speaker |
-| 3 | Speaker 3 | (unresolved) | - | No matching signals |
-```
-
-**Numbering rule:** `#0` = Microphone, `#N` = Speaker N. This keeps proposal numbers aligned with stub labels for quick user corrections (e.g., "2: John Davis" means Speaker 2).
+After applying all 7 rules, build the proposed mapping. For each speaker, record:
+- `index` — `0` = Microphone, `N` = Speaker N (aligned with stub labels)
+- `original_name` — the stub label from the transcript
+- `proposed_name` — the resolved full name, or null if unresolved
+- `confidence` — CERTAIN, HIGH, or LOW (null if unresolved)
+- `evidence` — brief description of the signals used
 
 ---
 
-## Step 7.5: Approval Gate
+## Step 8: Return Results
 
-### Interactive Mode (default — `batch: false` or not set)
-
-Present the full mapping table to the user in a single message. Then use **one AskUserQuestion** with options:
-- **"Approve all"** — proceed to Step 8 as-is
-- **"Approve with edits"** — user provides numbered corrections matching the `#` column (e.g., "2: John Davis" = Speaker 2) in a single response
-
-LOW-confidence and unresolved speakers are flagged in the table but do not trigger separate prompts.
-
-**After approval**, proceed to Step 8.
-
-### Batch Mode (`batch: true`)
-
-Run the full analysis (Steps 1-7), build the proposed mapping, but:
-- Do **NOT** present the mapping for user approval
-- Do **NOT** write any changes to the transcript file
-- **Return** the complete proposed mapping as structured output:
-
-```
-Transcript: [filename]
-Proposed Mapping:
-- #0: "Microphone" → "Jane Smith" | CERTAIN | microphone
-- #1: "Speaker 1" → "Tom Wilson" | CERTAIN | calendar + vocative
-- #2: "Speaker 2" → "Michael Chen" | HIGH | calendar + recurring_speaker
-- #3: "Speaker 3" → (unresolved) | - | No matching signals
-Calendar Event: [matched event title or "none"]
-Calendar Attendees: [list]
-```
-
-The orchestrator handles review and writing in batch mode.
-
-**Skip Steps 8-9 in batch mode.**
-
----
-
-## Step 8: Update Transcript Stub
-
-After user approval, update the transcript stub using the **Edit tool** (never Write — preserves all existing fields).
-
-### 8a. Frontmatter Updates (single Edit call)
-
-Combine **all** frontmatter changes into **one Edit call** — replace the entire `speakers:` block through `pipeline_state:` in a single operation. This avoids sequential edits on the same file region.
-
-The replacement block must include:
-- Updated `speakers:` array — for each resolved speaker: `name` → resolved name, `stub: false`, plus `confidence`, `evidence`, and `original_name` fields
-- **Calendar data** (only if newly fetched in Step 5): `calendar_event` and `calendar_attendees`
-- **Confirmed speakers:** Build from the People context table `People Note Filename` column — use cached filenames, no re-Globbing
-- **Pipeline state:** `pipeline_state: tagged`
-
-**Technique:** Use the original `speakers:` block start through `pipeline_state: titled` (or current value) as the `old_string`, and replace with the fully-built block containing all updates. One edit, one file write.
-
-### 8b. Update Roster Cache
-
-If the transcript has `meeting_subject` AND is recurring (same eligibility as 6c-cache):
-
-1. Build the roster table from the People context table already in memory (the same table used in Step 7) — no extra tool calls for data.
-2. Write to `Caches/Speaker Rosters/{sanitized_subject}.md` (replace `/`, `\`, `:` with hyphens in filename) with:
-   - **Frontmatter:** `meeting_subject`, `generated` (current ISO 8601 timestamp with timezone), `source_transcript` (current transcript filename), `invitee_count` (number of calendar invitees), `roster_count` (number of resolved People entries)
-   - **Body:** The People context table in the same `| Full Name | Nickname | Context | People Note Filename | Source |` format consumed by Step 7
-
-This is 1 Write call — all data is already resolved in context.
-
-If not recurring → skip.
-
-### 8c. Body Label Replacement
-
-Using the approved mapping from Step 7 (no need to rebuild), replace stub labels in the transcript body:
-- Bold format: `**Speaker 1**` → `**Tom Wilson**`
-- Pipe-delimited format: `Speaker 1 | HH:MM:SS |` → `Tom Wilson | HH:MM:SS |`
-
-**Use `replace_all: true`** for each stub→name substitution to catch all occurrences in a single Edit call per speaker. Issue all body replacements in a **single parallel tool-call batch**.
-
----
-
-## Step 9: Report Results
-
-Summarize to the user:
-
-```
-Speaker auto-tag complete for: [transcript filename]
-
-Resolved speakers:
-- [Name] (CERTAIN — [evidence])
-- [Name] (HIGH — [evidence])
-
-Unresolved:
-- Speaker N ([X] lines) — kept as stub
-
-Stub updated: pipeline_state → tagged
-```
-
-If any speakers remain as stubs, ask: "Unresolved speakers remain. Proceed to summarization anyway, or re-run auto-tag with additional context?"
-
-**Batch mode:** Return the structured output from Step 7.5 instead of this summary. The orchestrator handles reporting.
+Return the proposed mapping in the output format specified by the caller's `Output format:` invocation parameter. Do not write any changes to the transcript — the calling plugin handles user review and file updates.

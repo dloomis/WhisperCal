@@ -42,6 +42,7 @@ export class CalendarView extends ItemView {
 	private unlinkedEl: HTMLElement | null = null;
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
+	private nowLineTimerId: number | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -151,10 +152,14 @@ export class CalendarView extends ItemView {
 
 		// Start auto-refresh
 		this.startAutoRefresh();
+
+		// Current-time marker — runs independently on its own 60s tick
+		this.startNowLineTimer();
 	}
 
 	async onClose(): Promise<void> {
 		this.stopAutoRefresh();
+		this.stopNowLineTimer();
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
 		if (this.cardRefreshTimer !== null) {
@@ -270,7 +275,6 @@ export class CalendarView extends ItemView {
 		this.contentContainer.empty();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
-		const activeEventIds = isToday ? this.findActiveEventIds(events) : new Set<string>();
 
 		const onNoteCreated = () => {
 			this.rerenderCards();
@@ -302,7 +306,6 @@ export class CalendarView extends ItemView {
 			timezone: this.settings.timezone,
 			noteCreator: this.noteCreator,
 			app: this.app,
-			isActive: false,
 			transcriptFolderPath: this.settings.transcriptFolderPath,
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: importantEmails,
@@ -336,7 +339,6 @@ export class CalendarView extends ItemView {
 					timezone: this.settings.timezone,
 					noteCreator: this.noteCreator,
 					app: this.app,
-					isActive: activeEventIds.has(event.id),
 					transcriptFolderPath: this.settings.transcriptFolderPath,
 					recordingWindowMinutes: this.settings.recordingWindowMinutes,
 					importantOrganizerEmails: importantEmails,
@@ -403,8 +405,7 @@ export class CalendarView extends ItemView {
 						timezone: this.settings.timezone,
 						noteCreator: this.noteCreator,
 						app: this.app,
-						isActive: activeEventIds.has(event.id),
-						transcriptFolderPath: this.settings.transcriptFolderPath,
+							transcriptFolderPath: this.settings.transcriptFolderPath,
 						recordingWindowMinutes: this.settings.recordingWindowMinutes,
 						importantOrganizerEmails: importantEmails,
 						onNoteCreated,
@@ -770,25 +771,6 @@ export class CalendarView extends ItemView {
 		return `${datePart}, ${timePart}`;
 	}
 
-	private findActiveEventIds(events: CalendarEvent[]): Set<string> {
-		const now = new Date();
-		const timed = events.filter(e => !e.isAllDay);
-
-		// Highlight all ongoing meetings (startTime <= now < endTime)
-		const ongoing = timed.filter(e => e.startTime <= now && e.endTime > now);
-		if (ongoing.length > 0) {
-			return new Set(ongoing.map(e => e.id));
-		}
-
-		// Otherwise highlight just the next upcoming meeting
-		const upcoming = timed.filter(e => e.startTime > now);
-		if (upcoming.length > 0) {
-			upcoming.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-			return new Set([upcoming[0]!.id]);
-		}
-
-		return new Set();
-	}
 
 	private navigateDay(offset: number): void {
 		this.selectedDate = new Date(
@@ -872,6 +854,58 @@ export class CalendarView extends ItemView {
 		if (this.refreshTimerId !== null) {
 			window.clearInterval(this.refreshTimerId);
 			this.refreshTimerId = null;
+		}
+	}
+
+	/**
+	 * Insert (or update) a thin red "now" line among the timed event cards.
+	 * Uses data-start-time / data-end-time attributes on card elements.
+	 */
+	/** Place (or reposition) the current-time marker. No-ops if not viewing today. */
+	private updateNowMarker(): void {
+		if (!this.contentContainer) return;
+
+		// Remove any existing marker
+		this.contentContainer.querySelector(".whisper-cal-now-line")?.remove();
+
+		// Only show on today's view
+		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
+
+		const nowMs = Date.now();
+
+		const timedCards = Array.from(
+			this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]"),
+		);
+		if (timedCards.length === 0) return;
+
+		const nextCard = timedCards.find(c => Number(c.dataset.startTime) > nowMs);
+		const marker = createDiv({cls: "whisper-cal-now-line"});
+
+		if (nextCard) {
+			const ref = nextCard.closest(".whisper-cal-conflict-group") ?? nextCard;
+			ref.parentElement!.insertBefore(marker, ref);
+		} else {
+			const last = timedCards[timedCards.length - 1]!;
+			const ref = last.closest(".whisper-cal-conflict-group") ?? last;
+			ref.parentElement!.insertBefore(marker, ref.nextSibling);
+		}
+	}
+
+	private static readonly NOW_MARKER_INTERVAL_MS = 60_000;
+
+	private startNowLineTimer(): void {
+		this.stopNowLineTimer();
+		this.updateNowMarker();
+		this.nowLineTimerId = window.setInterval(() => {
+			this.updateNowMarker();
+		}, CalendarView.NOW_MARKER_INTERVAL_MS);
+		this.registerInterval(this.nowLineTimerId);
+	}
+
+	private stopNowLineTimer(): void {
+		if (this.nowLineTimerId !== null) {
+			window.clearInterval(this.nowLineTimerId);
+			this.nowLineTimerId = null;
 		}
 	}
 

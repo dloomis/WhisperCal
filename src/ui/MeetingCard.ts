@@ -12,7 +12,6 @@ export interface MeetingCardOpts {
 	timezone: string;
 	noteCreator: NoteCreator;
 	app: App;
-	isActive?: boolean;
 	transcriptFolderPath?: string;
 	recordingWindowMinutes?: number;
 	onNoteCreated?: () => void;
@@ -200,11 +199,12 @@ export function renderMeetingCard(
 		recordingWindowMinutes = 10,
 		onNoteCreated, onTagSpeakers, onSummarize,
 	} = opts;
-	const isActive = opts.isActive ?? false;
-
-	const cls = isActive ? "whisper-cal-card whisper-cal-card-active" : "whisper-cal-card";
-	const card = container.createDiv({cls});
+	const card = container.createDiv({cls: "whisper-cal-card"});
 	card.dataset.notePath = noteCreator.getNotePath(event);
+	if (!event.isAllDay) {
+		card.dataset.startTime = String(event.startTime.getTime());
+		card.dataset.endTime = String(event.endTime.getTime());
+	}
 
 	const gutter = renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});

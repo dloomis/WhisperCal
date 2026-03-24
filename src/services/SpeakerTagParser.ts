@@ -49,54 +49,122 @@ export function parseSpeakerTagOutput(
 		};
 	}
 
-	// Try to find and parse the structured "Proposed Mapping:" section
-	const headerIdx = stdout.indexOf("Proposed Mapping:");
-	if (headerIdx !== -1) {
-		const section = stdout.slice(headerIdx);
-		// Match lines like: - #0: "Microphone" → "Jane Smith" | CERTAIN | microphone user
-		// or: - #0: "Speaker 1" → (unresolved) | | no evidence
-		const lineRe = /^- #(\d+):\s*"([^"]*?)"\s*→\s*(?:"([^"]*?)"|\(unresolved\))\s*\|\s*(\w*)\s*\|\s*(.*)$/gm;
-		const llmMap = new Map<number, ProposedSpeakerMapping>();
-		let match: RegExpExecArray | null;
-		while ((match = lineRe.exec(section)) !== null) {
-			const index = parseInt(match[1]!);
-			const originalName = match[2]!;
-			const proposedName = match[3] ?? "";
-			const confidence = match[4] ?? "";
-			const evidence = match[5]?.trim() ?? "";
-			const speaker = speakers[index];
-			llmMap.set(index, {
-				index,
-				originalName,
-				proposedName,
-				confidence: confidence.toUpperCase(),
-				evidence,
-				speakerId: speaker?.id ?? "",
-				lineCount: speaker?.line_count ?? 0,
-			});
-		}
-		if (llmMap.size > 0) {
-			// Merge: include all frontmatter speakers, overlay LLM data where available
-			const merged = mergeWithFrontmatter(speakers, llmMap);
-			return {mappings: merged};
-		}
+	// Try to extract a fenced JSON code block from the output
+	const jsonResult = extractJsonSpeakers(stdout, speakers);
+	if (jsonResult) return jsonResult;
 
-		// Header found but no lines parsed — malformed output
-		console.warn("[WhisperCal] 'Proposed Mapping:' header found but no lines matched the expected format");
-		if (speakers.length === 0) {
-			return {mappings: [], warning: "LLM output was malformed — no speakers found in transcript"};
-		}
-		return {
-			mappings: buildFallbackMappings(speakers),
-			warning: "LLM output was malformed — showing speakers without AI suggestions",
-		};
-	}
+	// Legacy fallback: try the old "Proposed Mapping:" regex format
+	const legacyResult = extractLegacySpeakers(stdout, speakers);
+	if (legacyResult) return legacyResult;
 
-	// No header at all — fallback to frontmatter speakers
+	// No parseable output — fallback to frontmatter speakers
 	if (speakers.length === 0) {
 		return {mappings: [], warning: "LLM returned no speaker mappings and transcript has no speakers"};
 	}
 	return {mappings: buildFallbackMappings(speakers)};
+}
+
+interface LlmSpeakerEntry {
+	index: number;
+	original_name: string;
+	proposed_name: string | null;
+	confidence: string | null;
+	evidence: string;
+}
+
+function extractJsonSpeakers(
+	stdout: string,
+	speakers: FrontmatterSpeaker[],
+): ParseResult | null {
+	const jsonStart = stdout.indexOf("```json");
+	if (jsonStart === -1) return null;
+	const bodyStart = stdout.indexOf("\n", jsonStart);
+	if (bodyStart === -1) return null;
+	const jsonEnd = stdout.indexOf("```", bodyStart);
+	if (jsonEnd === -1) return null;
+	const jsonStr = stdout.slice(bodyStart, jsonEnd).trim();
+
+	let parsed: {speakers?: LlmSpeakerEntry[]};
+	try {
+		parsed = JSON.parse(jsonStr) as {speakers?: LlmSpeakerEntry[]};
+	} catch {
+		console.warn("[WhisperCal] JSON block found but failed to parse");
+		if (speakers.length === 0) {
+			return {mappings: [], warning: "LLM output contained invalid JSON — no speakers found in transcript"};
+		}
+		return {
+			mappings: buildFallbackMappings(speakers),
+			warning: "LLM output contained invalid JSON — showing speakers without AI suggestions",
+		};
+	}
+
+	if (!Array.isArray(parsed.speakers) || parsed.speakers.length === 0) {
+		if (speakers.length === 0) {
+			return {mappings: [], warning: "LLM JSON contained no speakers array"};
+		}
+		return {
+			mappings: buildFallbackMappings(speakers),
+			warning: "LLM JSON contained no speakers — showing speakers without AI suggestions",
+		};
+	}
+
+	const llmMap = new Map<number, ProposedSpeakerMapping>();
+	for (const entry of parsed.speakers) {
+		const speaker = speakers[entry.index];
+		llmMap.set(entry.index, {
+			index: entry.index,
+			originalName: entry.original_name,
+			proposedName: entry.proposed_name ?? "",
+			confidence: entry.confidence?.toUpperCase() ?? "",
+			evidence: entry.evidence ?? "",
+			speakerId: speaker?.id ?? "",
+			lineCount: speaker?.line_count ?? 0,
+		});
+	}
+	return {mappings: mergeWithFrontmatter(speakers, llmMap)};
+}
+
+/** Legacy fallback: parse the old "Proposed Mapping:" regex format. */
+function extractLegacySpeakers(
+	stdout: string,
+	speakers: FrontmatterSpeaker[],
+): ParseResult | null {
+	const headerIdx = stdout.indexOf("Proposed Mapping:");
+	if (headerIdx === -1) return null;
+
+	const section = stdout.slice(headerIdx);
+	const lineRe = /^- #(\d+):\s*"([^"]*?)"\s*→\s*(?:"([^"]*?)"|\(unresolved\))\s*\|\s*(\w*)\s*\|\s*(.*)$/gm;
+	const llmMap = new Map<number, ProposedSpeakerMapping>();
+	let match: RegExpExecArray | null;
+	while ((match = lineRe.exec(section)) !== null) {
+		const index = parseInt(match[1]!);
+		const originalName = match[2]!;
+		const proposedName = match[3] ?? "";
+		const confidence = match[4] ?? "";
+		const evidence = match[5]?.trim() ?? "";
+		const speaker = speakers[index];
+		llmMap.set(index, {
+			index,
+			originalName,
+			proposedName,
+			confidence: confidence.toUpperCase(),
+			evidence,
+			speakerId: speaker?.id ?? "",
+			lineCount: speaker?.line_count ?? 0,
+		});
+	}
+	if (llmMap.size > 0) {
+		return {mappings: mergeWithFrontmatter(speakers, llmMap)};
+	}
+
+	console.warn("[WhisperCal] 'Proposed Mapping:' header found but no lines matched the expected format");
+	if (speakers.length === 0) {
+		return {mappings: [], warning: "LLM output was malformed — no speakers found in transcript"};
+	}
+	return {
+		mappings: buildFallbackMappings(speakers),
+		warning: "LLM output was malformed — showing speakers without AI suggestions",
+	};
 }
 
 function mergeWithFrontmatter(

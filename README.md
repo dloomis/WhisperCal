@@ -497,29 +497,50 @@ You can clear a name field to leave that speaker untagged, or type a different n
 
 #### Required LLM Output Format
 
-For the confirmation modal to work, the LLM's **stdout** must contain a section with the header `Proposed Mapping:` followed by one line per speaker in this exact format:
+The plugin injects the expected output format into the LLM's trigger string at invocation time — your prompt file does not need to specify the format. The LLM's **stdout** must contain a fenced JSON code block with a `speakers` array:
 
+````
+```json
+{
+  "speakers": [
+    {
+      "index": 0,
+      "original_name": "Microphone",
+      "proposed_name": "Jane Smith",
+      "confidence": "CERTAIN",
+      "evidence": "microphone user"
+    },
+    {
+      "index": 1,
+      "original_name": "Speaker 1",
+      "proposed_name": "Bob Lee",
+      "confidence": "HIGH",
+      "evidence": "introduced himself at 00:02:15"
+    },
+    {
+      "index": 2,
+      "original_name": "Speaker 2",
+      "proposed_name": null,
+      "confidence": null,
+      "evidence": "no matching attendee"
+    }
+  ]
+}
 ```
-Proposed Mapping:
-- #0: "Microphone" → "Jane Smith" | CERTAIN | microphone user
-- #1: "Speaker 1" → "Bob Lee" | HIGH | introduced himself at 00:02:15
-- #2: "Speaker 2" → (unresolved) | | no matching attendee
-```
-
-**Line format:** `- #<index>: "<original>" → "<proposed>" | <confidence> | <evidence>`
+````
 
 | Field | Description |
 |-------|-------------|
-| `#<index>` | Zero-based index matching the order of speakers in the transcript's frontmatter `speakers` array. |
-| `"<original>"` | The stub name from the transcript (e.g., "Microphone", "Speaker 1"). Must match the frontmatter speaker name exactly. |
-| `"<proposed>"` | The real name the LLM believes this speaker is. Use `(unresolved)` (no quotes) if the LLM cannot determine the identity. |
-| `<confidence>` | One of `CERTAIN`, `HIGH`, or `LOW`. May be empty for unresolved speakers. |
-| `<evidence>` | Free-text explanation of why the LLM made this identification (e.g., "microphone user", "introduced themselves at 00:05:12"). |
+| `index` | Zero-based index matching the order of speakers in the transcript's frontmatter `speakers` array. `0` = Microphone, `N` = Speaker N. |
+| `original_name` | The stub name from the transcript (e.g., "Microphone", "Speaker 1"). Must match the frontmatter speaker name exactly. |
+| `proposed_name` | The real name the LLM believes this speaker is. Use `null` if the LLM cannot determine the identity. |
+| `confidence` | One of `"CERTAIN"`, `"HIGH"`, or `"LOW"`. Use `null` for unresolved speakers. |
+| `evidence` | Free-text explanation of why the LLM made this identification (e.g., "microphone user", "introduced themselves at 00:05:12"). |
 
 **Important notes:**
-- The parser looks for the literal string `Proposed Mapping:` in the LLM's stdout. Everything before that header is ignored, so the LLM can include reasoning or other output above it.
-- If the header is missing or no lines match the expected format, WhisperCal falls back to showing the transcript's frontmatter speakers without AI suggestions. The user can still manually type names in the modal.
-- If the LLM returns empty output, speakers are shown without proposals and a warning notice is displayed.
+- The parser extracts the first fenced `` ```json `` block from the LLM's stdout. Everything outside the block is ignored, so the LLM can include reasoning or other output around it.
+- If no JSON block is found, the parser falls back to the legacy `Proposed Mapping:` text format for backward compatibility.
+- If parsing fails entirely or the LLM returns empty output, WhisperCal falls back to showing the transcript's frontmatter speakers without AI suggestions. The user can still manually type names in the modal.
 
 #### What Happens When You Apply
 
@@ -559,7 +580,7 @@ The LLM receives a single prompt string constructed from:
 - The path to your prompt file: `Follow the instructions in '<prompt-path>'.`
 - The target file: `Transcript: <path>.` (speaker tagging) or `Meeting note: <path>.` (summarization)
 - Optional context: `Microphone user: <name>.`, `Transcripts Folder: <folder>.`, `People Folder: <folder>.`
-- For speaker tagging: `batch: true.` (signals the prompt to output structured results to stdout instead of editing files directly)
+- For speaker tagging: an output format instruction specifying the expected JSON schema (the plugin hardcodes this — your prompt does not need to define it)
 
 **Pre-flight checks:** Before spawning the LLM, WhisperCal validates that:
 - The CLI command exists on your PATH.
@@ -708,7 +729,7 @@ The device code is valid for about 15 minutes. If it expires before you complete
 - Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail.
 
 ### Speaker tagging modal shows no AI suggestions
-- The LLM's stdout must contain a `Proposed Mapping:` header followed by lines in the expected format (see [Required LLM Output Format](#required-llm-output-format)). If the format doesn't match, speakers are shown without proposals.
+- The LLM's stdout must contain a fenced JSON code block with the expected schema (see [Required LLM Output Format](#required-llm-output-format)). If parsing fails, speakers are shown without proposals.
 - Check the developer console for the raw LLM output to debug prompt issues.
 
 ### "LLM concurrency limit reached"

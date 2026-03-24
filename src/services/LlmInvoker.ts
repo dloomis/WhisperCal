@@ -14,7 +14,7 @@ export interface LlmInvokerOpts {
 	microphoneUser?: string;
 	transcriptFolderPath?: string;  // folder name for transcript files
 	peopleFolderPath?: string;      // folder name for People notes
-	batch?: boolean;                // when true, appends "batch: true." to trigger
+	outputFormat?: string;          // appended to trigger to specify expected output format
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
 }
 
@@ -76,7 +76,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.microphoneUser) parts.push(`Microphone user: ${opts.microphoneUser}.`);
 	if (opts.transcriptFolderPath) parts.push(`Transcripts Folder: ${opts.transcriptFolderPath}.`);
 	if (opts.peopleFolderPath) parts.push(`People Folder: ${opts.peopleFolderPath}.`);
-	if (opts.batch) parts.push("batch: true.");
+	if (opts.outputFormat) parts.push(opts.outputFormat);
 	const trigger = parts.join(" ");
 
 	const flags = [opts.llmExtraFlags.trim()].filter(Boolean).join(" ");

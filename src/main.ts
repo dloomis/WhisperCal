@@ -380,7 +380,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmExtraFlags: this.settings.llmExtraFlags,
 				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
-				batch: true,
+				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
 				timeoutMs,
 				debugMode: this.settings.llmDebugMode,
 			});
@@ -700,6 +700,14 @@ export default class WhisperCalPlugin extends Plugin {
 		if (leaf) {
 			await leaf.setViewState({type: VIEW_TYPE_CALENDAR, active: true});
 			await this.app.workspace.revealLeaf(leaf);
+
+			// Set a comfortable default width so pill buttons don't wrap
+			const rightSplit = this.app.workspace.rightSplit as unknown as
+				{ containerEl: HTMLElement; size: number; resize: () => void } | undefined;
+			if (rightSplit && rightSplit.size < 380) {
+				rightSplit.size = 380;
+				rightSplit.resize();
+			}
 		}
 	}
 }
