@@ -103,8 +103,8 @@
 	padding: 12px 10px;
 	width: 88px;
 	flex-shrink: 0;
-	--wc-category-color: var(--text-error);
-	--wc-gutter-bg: color-mix(in srgb, var(--wc-category-color) 10%, var(--background-primary));
+	--wc-category-color: var(--wc-subtle);
+	--wc-gutter-bg: var(--background-secondary);
 	background: var(--wc-gutter-bg);
 	border-right: 4px solid color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg));
 	position: relative;
@@ -174,8 +174,8 @@
 
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
-	--wc-category-color: var(--text-warning);
-	--wc-gutter-bg: color-mix(in srgb, var(--text-warning) 25%, var(--background-primary));
+	--wc-category-color: var(--text-error);
+	--wc-gutter-bg: color-mix(in srgb, var(--text-error) 10%, var(--background-primary));
 }
 
 .whisper-cal-card-gutter-done {
