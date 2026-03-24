@@ -58,7 +58,12 @@ export async function ensureFolder(app: App, folderPath: string): Promise<void> 
 export function getLinkedSessionIds(app: App): Set<string> {
 	const linked = new Set<string>();
 	for (const file of app.vault.getMarkdownFiles()) {
-		const sid = app.metadataCache.getFileCache(file)?.frontmatter?.["macwhisper_session_id"] as string | undefined;
+		const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+		if (!fm) continue;
+		// Skip transcript files — the owning meeting note holds the canonical link
+		const tags = fm["tags"];
+		if (Array.isArray(tags) && tags.includes("transcript")) continue;
+		const sid = fm["macwhisper_session_id"] as string | undefined;
 		if (sid) linked.add(sid);
 	}
 	return linked;
