@@ -617,11 +617,11 @@
 	height: 26px;
 	padding: 0;
 	border-radius: var(--radius-s);
-	border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
-	background: none;
-	color: var(--text-muted);
+	border: 1px solid var(--background-modifier-border);
+	background: var(--interactive-normal);
+	color: var(--icon-color);
 	cursor: pointer;
-	box-shadow: 0 1px 2px color-mix(in srgb, var(--text-muted) 12%, transparent);
+	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 40%, transparent);
 	box-sizing: border-box;
 	font-size: var(--font-ui-smaller);
 	line-height: 1;
@@ -653,9 +653,10 @@
 }
 
 .whisper-cal-pill:hover:not(:disabled) {
-	background: var(--background-modifier-hover);
-	color: var(--text-normal);
-	box-shadow: 0 2px 4px color-mix(in srgb, var(--text-muted) 18%, transparent);
+	background: var(--interactive-hover);
+	color: var(--icon-color-hover);
+	border-color: var(--background-modifier-border-hover);
+	box-shadow: 0 2px 4px color-mix(in srgb, var(--background-modifier-border) 50%, transparent);
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete {
