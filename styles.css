@@ -88,6 +88,7 @@
 	flex-direction: row;
 	align-items: stretch;
 	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	margin-bottom: 8px;
 	overflow: hidden;
