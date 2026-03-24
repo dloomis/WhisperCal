@@ -58,7 +58,7 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 }
 
 function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): HTMLElement {
-	const notAccepted = event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
+	const notAccepted = !event.isOrganizer && event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
 	const gutterCls = notAccepted
 		? "whisper-cal-card-gutter whisper-cal-card-gutter-tentative"
 		: "whisper-cal-card-gutter";
