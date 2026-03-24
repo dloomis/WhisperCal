@@ -226,7 +226,8 @@ export class CalendarView extends ItemView {
 			if (e instanceof AuthError) {
 				this.renderError(e.message);
 			} else {
-				this.renderError("Failed to fetch calendar events.");
+				const detail = e instanceof Error ? e.message : String(e);
+				this.renderError(`Failed to fetch calendar events: ${detail}`);
 			}
 		}
 

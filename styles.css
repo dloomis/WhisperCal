@@ -401,7 +401,7 @@
 
 .whisper-cal-error {
 	background: var(--background-modifier-error);
-	color: var(--text-error);
+	color: var(--text-on-accent);
 	border-radius: var(--radius-m);
 	padding: 12px;
 	font-size: var(--font-ui-small);

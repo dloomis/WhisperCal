@@ -122,11 +122,18 @@ export class CachedCalendarProvider implements CalendarProvider {
 				return events;
 			}
 		} catch (e) {
-			// Live fetch failed — fall through to cache
+			// Live fetch failed — try cache, but re-throw if no cache exists
 			console.debug("[WhisperCal] Live fetch failed, trying cache:", e);
+			const cached = this.cache.days[dateKey];
+			if (cached) {
+				this.lastStatus = {source: "cache", fetchedAt: cached.fetchedAt, connected: false};
+				return this.deserializeEvents(cached.events);
+			}
+			// No cache — let the error propagate so the view shows a useful message
+			throw e;
 		}
 
-		// Fallback to cache
+		// Fallback to cache (upstream not available)
 		const cached = this.cache.days[dateKey];
 		if (cached) {
 			this.lastStatus = {source: "cache", fetchedAt: cached.fetchedAt, connected: false};
