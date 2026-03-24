@@ -805,9 +805,14 @@ export class CalendarView extends ItemView {
 				timezone: this.settings.timezone,
 				transcriptFolderPath: this.settings.transcriptFolderPath,
 			});
+
+			// Inject into timeline immediately (metadata cache may lag)
+			if (this.cachedEvents) {
+				this.cachedEvents.push({...event, id: `unscheduled-${notePath}`});
+			}
 		}
 
-		// Re-render timeline so findLocalNotes picks up the new note as a card
+		// Re-render timeline so the new/updated card appears
 		if (this.cachedEvents) {
 			this.renderEvents(this.cachedEvents);
 		}
