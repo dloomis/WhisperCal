@@ -343,7 +343,7 @@
 	--wc-conflict-color: var(--text-error);
 	position: relative;
 	margin-bottom: 8px;
-	background: color-mix(in srgb, var(--wc-conflict-color) 6%, transparent);
+	background: var(--background-primary);
 	border-radius: var(--radius-m);
 	padding: 8px 10px 10px;
 }
