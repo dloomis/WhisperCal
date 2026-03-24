@@ -272,6 +272,126 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
+		new Setting(containerEl)
+			.setName("Calendar")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Calendar provider")
+			.setDesc("Which calendar service to connect to")
+			.addDropdown(dropdown => {
+				dropdown.addOption("microsoft", "Microsoft 365");
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
+				dropdown.addOption("google", "Google Calendar");
+				dropdown.setValue(this.plugin.settings.calendarProvider);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.calendarProvider = value as CalendarProviderType;
+					await this.plugin.saveSettings();
+					this.display(); // Re-render to swap auth sections
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Timezone")
+			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
+			.addText(text => text
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setPlaceholder("America/New_York")
+				.setValue(this.plugin.settings.timezone)
+				.onChange(async (value) => {
+					try {
+						Intl.DateTimeFormat(undefined, {timeZone: value});
+					} catch {
+						return; // Ignore invalid timezone — keep previous value
+					}
+					this.plugin.settings.timezone = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Time format")
+			.setDesc("How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system")
+			.addDropdown(dropdown => {
+				dropdown.addOption("auto", "Auto");
+				dropdown.addOption("12h", "12-hour");
+				dropdown.addOption("24h", "24-hour");
+				dropdown.setValue(this.plugin.settings.timeFormat);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.timeFormat = value as "auto" | "12h" | "24h";
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Show all-day events")
+			.setDesc("Display all-day events in the calendar view")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showAllDayEvents)
+				.onChange(async (value) => {
+					this.plugin.settings.showAllDayEvents = value;
+					await this.plugin.saveSettings();
+				}));
+
+		this.renderImportantOrganizers(containerEl);
+
+		new Setting(containerEl)
+			.setName("Refresh interval (minutes)")
+			.setDesc("How often to refresh the calendar view")
+			.addText(text => text
+				.setPlaceholder("5")
+				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.refreshIntervalMinutes = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Cache future days")
+			.setDesc("Number of upcoming days to pre-fetch for offline access")
+			.addText(text => text
+				.setPlaceholder("5")
+				.setValue(String(this.plugin.settings.cacheFutureDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 0) {
+						this.plugin.settings.cacheFutureDays = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Cache retention (days)")
+			.setDesc("How many days of past calendar data to keep in the local cache")
+			.addText(text => text
+				.setPlaceholder("30")
+				.setValue(String(this.plugin.settings.cacheRetentionDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.cacheRetentionDays = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		// Provider-specific credential sections
+		if (this.plugin.settings.calendarProvider === "microsoft") {
+			this.renderMicrosoftAuthSettings(containerEl);
+		} else {
+			this.renderGoogleAuthSettings(containerEl);
+		}
+
+		// Auth status + actions
+		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
+		this.renderAuthStatus(this.plugin.auth.getState());
+
+		// Subscribe to auth state changes
+		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
+			this.renderAuthStatus(state);
+		});
+
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
 			.setName("LLM")
@@ -420,126 +540,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.plugin.settings.autoSummarizeAfterTagging = value;
 					await this.plugin.saveSettings();
 				}));
-
-		new Setting(containerEl)
-			.setName("Calendar")
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName("Calendar provider")
-			.setDesc("Which calendar service to connect to")
-			.addDropdown(dropdown => {
-				dropdown.addOption("microsoft", "Microsoft 365");
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
-				dropdown.addOption("google", "Google Calendar");
-				dropdown.setValue(this.plugin.settings.calendarProvider);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.calendarProvider = value as CalendarProviderType;
-					await this.plugin.saveSettings();
-					this.display(); // Re-render to swap auth sections
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Timezone")
-			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("America/New_York")
-				.setValue(this.plugin.settings.timezone)
-				.onChange(async (value) => {
-					try {
-						Intl.DateTimeFormat(undefined, {timeZone: value});
-					} catch {
-						return; // Ignore invalid timezone — keep previous value
-					}
-					this.plugin.settings.timezone = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName("Time format")
-			.setDesc("How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system")
-			.addDropdown(dropdown => {
-				dropdown.addOption("auto", "Auto");
-				dropdown.addOption("12h", "12-hour");
-				dropdown.addOption("24h", "24-hour");
-				dropdown.setValue(this.plugin.settings.timeFormat);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.timeFormat = value as "auto" | "12h" | "24h";
-					await this.plugin.saveSettings();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Show all-day events")
-			.setDesc("Display all-day events in the calendar view")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.showAllDayEvents)
-				.onChange(async (value) => {
-					this.plugin.settings.showAllDayEvents = value;
-					await this.plugin.saveSettings();
-				}));
-
-		this.renderImportantOrganizers(containerEl);
-
-		new Setting(containerEl)
-			.setName("Refresh interval (minutes)")
-			.setDesc("How often to refresh the calendar view")
-			.addText(text => text
-				.setPlaceholder("5")
-				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.refreshIntervalMinutes = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Cache future days")
-			.setDesc("Number of upcoming days to pre-fetch for offline access")
-			.addText(text => text
-				.setPlaceholder("5")
-				.setValue(String(this.plugin.settings.cacheFutureDays))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 0) {
-						this.plugin.settings.cacheFutureDays = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Cache retention (days)")
-			.setDesc("How many days of past calendar data to keep in the local cache")
-			.addText(text => text
-				.setPlaceholder("30")
-				.setValue(String(this.plugin.settings.cacheRetentionDays))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.cacheRetentionDays = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		// Provider-specific credential sections
-		if (this.plugin.settings.calendarProvider === "microsoft") {
-			this.renderMicrosoftAuthSettings(containerEl);
-		} else {
-			this.renderGoogleAuthSettings(containerEl);
-		}
-
-		// Auth status + actions
-		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
-		this.renderAuthStatus(this.plugin.auth.getState());
-
-		// Subscribe to auth state changes
-		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
-			this.renderAuthStatus(state);
-		});
 	}
 
 	hide(): void {
