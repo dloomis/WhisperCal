@@ -296,6 +296,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
+			.setName("Debug mode")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Open LLM commands in a Terminal window instead of running in the background")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.llmDebugMode)
+				.onChange(async (value) => {
+					this.plugin.settings.llmDebugMode = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName("Speaker tagging prompt")
 			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for tagging speakers (e.g. Prompts/Speaker Tagging.md)")
 			.addText(text => {
@@ -387,17 +398,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.plugin.settings.llmMaxConcurrent = n;
 						await this.plugin.saveSettings();
 					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Debug mode")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Open LLM commands in a Terminal window instead of running in the background")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.llmDebugMode)
-				.onChange(async (value) => {
-					this.plugin.settings.llmDebugMode = value;
-					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)
