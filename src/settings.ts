@@ -1,10 +1,12 @@
-import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, PluginSettingTab, Setting} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
+import type {CalendarProviderType} from "./types";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
+import type {PeopleSearchResult} from "./services/PeopleSearchProvider";
 
 export interface ImportantOrganizer {
 	name: string;
@@ -12,14 +14,21 @@ export interface ImportantOrganizer {
 }
 
 export interface WhisperCalSettings {
+	calendarProvider: CalendarProviderType;
 	timezone: string;
 	refreshIntervalMinutes: number;
 	noteFolderPath: string;
 	noteFilenameTemplate: string;
 	noteTemplatePath: string;
+	// Microsoft-specific
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
+	deviceLoginUrl: string;
+	// Google-specific
+	googleClientId: string;
+	googleClientSecret: string;
+	// Shared
 	peopleFolderPath: string;
 	transcriptFolderPath: string;
 	unscheduledSubject: string;
@@ -39,11 +48,11 @@ export interface WhisperCalSettings {
 	importantOrganizers: ImportantOrganizer[];
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
-	deviceLoginUrl: string;
 	timeFormat: "auto" | "12h" | "24h";
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
+	calendarProvider: "microsoft",
 	timezone: "America/New_York",
 	refreshIntervalMinutes: 5,
 	noteFolderPath: "Meetings",
@@ -52,6 +61,9 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	tenantId: "",
 	clientId: "",
 	cloudInstance: "Public",
+	deviceLoginUrl: "",
+	googleClientId: "",
+	googleClientSecret: "",
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
 	unscheduledSubject: "Unscheduled Meeting",
@@ -71,7 +83,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	importantOrganizers: [],
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
-	deviceLoginUrl: "",
 	timeFormat: "auto",
 };
 
@@ -415,6 +426,21 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		new Setting(containerEl)
+			.setName("Calendar provider")
+			.setDesc("Which calendar service to connect to")
+			.addDropdown(dropdown => {
+				dropdown.addOption("microsoft", "Microsoft 365");
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
+				dropdown.addOption("google", "Google Calendar");
+				dropdown.setValue(this.plugin.settings.calendarProvider);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.calendarProvider = value as CalendarProviderType;
+					await this.plugin.saveSettings();
+					this.display(); // Re-render to swap auth sections
+				});
+			});
+
+		new Setting(containerEl)
 			.setName("Timezone")
 			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
 			.addText(text => text
@@ -499,7 +525,29 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		// Microsoft account section
+		// Provider-specific credential sections
+		if (this.plugin.settings.calendarProvider === "microsoft") {
+			this.renderMicrosoftAuthSettings(containerEl);
+		} else {
+			this.renderGoogleAuthSettings(containerEl);
+		}
+
+		// Auth status + actions
+		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
+		this.renderAuthStatus(this.plugin.auth.getState());
+
+		// Subscribe to auth state changes
+		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
+			this.renderAuthStatus(state);
+		});
+	}
+
+	hide(): void {
+		this.authUnsubscribe?.();
+		this.authUnsubscribe = null;
+	}
+
+	private renderMicrosoftAuthSettings(containerEl: HTMLElement): void {
 		new Setting(containerEl)
 			.setName("Microsoft account")
 			.setHeading();
@@ -545,7 +593,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const oldDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
 					this.plugin.settings.cloudInstance = value as CloudInstance;
 					const newDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
-					// If the URL field is empty or matches the old cloud's default, clear it
 					const current = this.plugin.settings.deviceLoginUrl.trim();
 					if (!current || current === oldDefault) {
 						this.plugin.settings.deviceLoginUrl = "";
@@ -569,20 +616,36 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 			});
-
-		// Auth status + actions
-		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
-		this.renderAuthStatus(this.plugin.auth.getState());
-
-		// Subscribe to auth state changes
-		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
-			this.renderAuthStatus(state);
-		});
 	}
 
-	hide(): void {
-		this.authUnsubscribe?.();
-		this.authUnsubscribe = null;
+	private renderGoogleAuthSettings(containerEl: HTMLElement): void {
+		new Setting(containerEl)
+			.setName("Google account")
+			.setHeading();
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("Client ID")
+			.setDesc("OAuth client ID from your Google Cloud Console desktop app credentials")
+			.addText(text => text
+				.setPlaceholder("xxxxxxxxxxxx.apps.googleusercontent.com")
+				.setValue(this.plugin.settings.googleClientId)
+				.onChange(async (value) => {
+					this.plugin.settings.googleClientId = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Client secret")
+			.setDesc("OAuth client secret from your Google Cloud Console desktop app credentials")
+			.addText(text => text
+				.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
+				.setValue(this.plugin.settings.googleClientSecret)
+				.onChange(async (value) => {
+					this.plugin.settings.googleClientSecret = value;
+					await this.plugin.saveSettings();
+				}));
+		/* eslint-enable obsidianmd/ui/sentence-case */
 	}
 
 	private renderImportantOrganizers(containerEl: HTMLElement): void {
@@ -590,7 +653,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Important organizers")
 			.setDesc("Meetings organized by these people show an alert icon in the gutter");
 
-		// Add chip field inside the setting-item element so it's in the shaded area
 		const settingEl = setting.settingEl;
 		settingEl.addClass("whisper-cal-important-organizers-setting");
 
@@ -605,7 +667,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		const errorEl = settingEl.createDiv({cls: "whisper-cal-email-error"});
 
 		const renderChips = () => {
-			// Remove existing chips (keep the input)
 			chipField.querySelectorAll(".whisper-cal-chip").forEach(el => el.remove());
 			for (const org of this.plugin.settings.importantOrganizers) {
 				const chip = chipField.createDiv({cls: "whisper-cal-chip"});
@@ -628,16 +689,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		};
 
 		renderChips();
-
-		// Focus input when clicking the chip field
 		chipField.addEventListener("click", () => input.focus());
 
-		// Graph API people search with debounce
+		// People search via provider-agnostic PeopleSearchProvider
 		let searchTimer: number | null = null;
 		let selectedIndex = -1;
-
-		interface PeopleSuggestion { name: string; email: string }
-		let suggestions: PeopleSuggestion[] = [];
+		let suggestions: PeopleSearchResult[] = [];
 
 		const renderSuggestions = () => {
 			suggestionsEl.empty();
@@ -651,7 +708,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				const item = suggestionsEl.createDiv({
 					cls: `whisper-cal-email-suggestion${i === selectedIndex ? " is-selected" : ""}`,
 				});
-				// Initials avatar
 				const initials = s.name
 					.split(/\s+/)
 					.filter(Boolean)
@@ -669,7 +725,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			}
 		};
 
-		const pickSuggestion = (s: PeopleSuggestion) => {
+		const pickSuggestion = (s: PeopleSearchResult) => {
 			const exists = this.plugin.settings.importantOrganizers.some(o => o.email === s.email);
 			if (!exists) {
 				this.plugin.settings.importantOrganizers.push({name: s.name, email: s.email});
@@ -691,65 +747,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				return;
 			}
 			try {
-				if (!this.plugin.auth.isSignedIn()) return;
-				const token = await this.plugin.auth.getAccessToken();
-				const graphBase = this.plugin.auth.getGraphBaseUrl();
 				const alreadyAdded = new Set(
 					this.plugin.settings.importantOrganizers.map(o => o.email),
 				);
-
-				// Try /me/people first (People.Read), fall back to /users (User.ReadBasic.All)
-				let results: PeopleSuggestion[] = [];
-				try {
-					const encoded = encodeURIComponent(`"${query}"`);
-					const response = await requestUrl({
-						url: `${graphBase}/v1.0/me/people?$search=${encoded}&$top=8&$select=displayName,scoredEmailAddresses`,
-						method: "GET",
-						headers: {Authorization: `Bearer ${token}`},
-					});
-					const data = response.json as {
-						value?: Array<{
-							displayName?: string;
-							scoredEmailAddresses?: Array<{address?: string}>;
-						}>;
-					};
-					results = (data.value ?? [])
-						.filter(p => p.scoredEmailAddresses?.[0]?.address)
-						.map(p => ({
-							name: p.displayName ?? "",
-							email: (p.scoredEmailAddresses![0]!.address!).toLowerCase(),
-						}));
-				} catch {
-					// People API unavailable — try /users directory search
-					const searchExpr = encodeURIComponent(`"displayName:${query}"`);
-					const response = await requestUrl({
-						url: `${graphBase}/v1.0/users?$search=${searchExpr}&$top=8&$select=displayName,mail,userPrincipalName`,
-						method: "GET",
-						headers: {
-							Authorization: `Bearer ${token}`,
-							ConsistencyLevel: "eventual",
-						},
-					});
-					const data = response.json as {
-						value?: Array<{
-							displayName?: string;
-							mail?: string;
-							userPrincipalName?: string;
-						}>;
-					};
-					results = (data.value ?? [])
-						.filter(u => u.mail || u.userPrincipalName)
-						.map(u => ({
-							name: u.displayName ?? "",
-							email: (u.mail ?? u.userPrincipalName ?? "").toLowerCase(),
-						}));
-				}
-
+				const results = await this.plugin.peopleSearch.search(query);
 				suggestions = results.filter(s => !alreadyAdded.has(s.email));
 				selectedIndex = -1;
 				renderSuggestions();
 			} catch {
-				// Both endpoints failed — silently ignore
+				// Search failed — silently ignore
 			}
 		};
 
@@ -786,13 +792,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					return;
 				}
 			}
-			// Backspace on empty input removes last chip
 			if (e.key === "Backspace" && input.value === "" && this.plugin.settings.importantOrganizers.length > 0) {
 				this.plugin.settings.importantOrganizers.pop();
 				void this.plugin.saveSettings();
 				renderChips();
 			}
-			// Enter on raw email text (no suggestion selected)
 			if (e.key === "Enter" && selectedIndex < 0) {
 				e.preventDefault();
 				const value = input.value.trim().toLowerCase();
@@ -836,35 +840,46 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				cls: "whisper-cal-auth-label",
 				text: "Not signed in",
 			});
-			/* eslint-disable obsidianmd/ui/sentence-case */
 			const btn = statusContainer.createEl("button", {
 				cls: "whisper-cal-btn",
-				text: "Sign in with Microsoft",
+				text: "Sign in",
 			});
-			/* eslint-enable obsidianmd/ui/sentence-case */
 			btn.addEventListener("click", () => {
-				void this.plugin.auth.startDeviceCodeFlow();
+				void this.plugin.auth.startSignIn();
 			});
 			break;
 		}
 		case "signing-in": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label",
-				text: "Sign in: enter this code in your browser",
-			});
-			const codeEl = statusContainer.createDiv({cls: "whisper-cal-device-code"});
-			codeEl.setText(state.userCode);
-			const linkEl = statusContainer.createEl("a", {
-				cls: "whisper-cal-auth-link",
-				text: state.verificationUri,
-				href: state.verificationUri,
-			});
-			linkEl.setAttr("target", "_blank");
-			linkEl.setAttr("rel", "noopener");
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-hint",
-				text: "Waiting for authorization...",
-			});
+			if (state.userCode && state.verificationUri) {
+				// Microsoft Device Code Flow
+				statusContainer.createDiv({
+					cls: "whisper-cal-auth-label",
+					text: "Sign in: enter this code in your browser",
+				});
+				const codeEl = statusContainer.createDiv({cls: "whisper-cal-device-code"});
+				codeEl.setText(state.userCode);
+				const linkEl = statusContainer.createEl("a", {
+					cls: "whisper-cal-auth-link",
+					text: state.verificationUri,
+					href: state.verificationUri,
+				});
+				linkEl.setAttr("target", "_blank");
+				linkEl.setAttr("rel", "noopener");
+				statusContainer.createDiv({
+					cls: "whisper-cal-auth-hint",
+					text: "Waiting for authorization\u2026",
+				});
+			} else {
+				// Google loopback flow (or generic)
+				statusContainer.createDiv({
+					cls: "whisper-cal-auth-label",
+					text: state.message ?? "Signing in\u2026",
+				});
+				statusContainer.createDiv({
+					cls: "whisper-cal-auth-hint",
+					text: "Waiting for authorization\u2026",
+				});
+			}
 			const cancelBtn = statusContainer.createEl("button", {
 				cls: "whisper-cal-btn whisper-cal-btn-secondary",
 				text: "Cancel",
@@ -899,7 +914,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				text: "Try again",
 			});
 			btn.addEventListener("click", () => {
-				void this.plugin.auth.startDeviceCodeFlow();
+				void this.plugin.auth.startSignIn();
 			});
 			break;
 		}

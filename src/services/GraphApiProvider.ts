@@ -1,7 +1,54 @@
 import {htmlToMarkdown, requestUrl} from "obsidian";
-import type {CalendarEvent, CalendarProvider, EventCategory, GraphEvent} from "../types";
+import type {CalendarEvent, CalendarProvider, EventCategory} from "../types";
 import {getDayStartUTC, getDayEndUTC} from "../utils/time";
 import type {MsalAuth} from "./MsalAuth";
+
+// Graph API response shapes (Microsoft-specific)
+interface GraphDateTimeZone {
+	dateTime: string;
+	timeZone: string;
+}
+
+interface GraphEmailAddress {
+	name: string;
+	address: string;
+}
+
+interface GraphAttendee {
+	emailAddress: GraphEmailAddress;
+}
+
+interface GraphBody {
+	contentType: string;
+	content: string;
+}
+
+interface GraphOnlineMeeting {
+	joinUrl: string;
+}
+
+interface GraphResponseStatus {
+	response: string;
+	time: string;
+}
+
+interface GraphEvent {
+	id: string;
+	subject: string;
+	body: GraphBody;
+	isAllDay: boolean;
+	isOnlineMeeting: boolean;
+	onlineMeetingUrl: string | null;
+	onlineMeeting: GraphOnlineMeeting | null;
+	start: GraphDateTimeZone;
+	end: GraphDateTimeZone;
+	location: { displayName: string };
+	attendees: GraphAttendee[];
+	organizer: { emailAddress: GraphEmailAddress };
+	type: string;
+	responseStatus: GraphResponseStatus;
+	categories?: string[];
+}
 
 /** Outlook preset color names → CSS hex values */
 const PRESET_COLORS: Record<string, string> = {

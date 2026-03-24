@@ -11,7 +11,7 @@ import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getTodayString, isSameDay, parseDateTime} from "../utils/time";
-import {AuthError} from "../services/MsalAuth";
+import {AuthError} from "../services/CalendarAuth";
 
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
@@ -212,7 +212,7 @@ export class CalendarView extends ItemView {
 				// Check if we're truly disconnected with no cache
 				const status = this.callbacks.getCacheStatus();
 				if (status && !status.connected && status.fetchedAt === null) {
-					this.renderError("Not signed in. Open settings to sign in to your Microsoft account.");
+					this.renderError("Not signed in. Open settings to sign in to your calendar account.");
 					this.updateStatusIndicator();
 					this.updateTodayButtonVisibility();
 					void this.loadAndRenderUnlinkedSection();

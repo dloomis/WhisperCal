@@ -138,6 +138,10 @@ export class CachedCalendarProvider implements CalendarProvider {
 		return [];
 	}
 
+	getUserEmail(): string {
+		return this.upstream.getUserEmail();
+	}
+
 	async isAvailable(): Promise<boolean> {
 		// Available if upstream is available OR we have any cache
 		const upstreamAvailable = await this.upstream.isAvailable().catch(() => false);

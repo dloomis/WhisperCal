@@ -7,6 +7,8 @@ import type {
 	CloudInstance,
 } from "./AuthTypes";
 import {CLOUD_ENDPOINTS} from "./AuthTypes";
+import type {CalendarAuth} from "./CalendarAuth";
+import {AuthError} from "./CalendarAuth";
 
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000; // refresh 5 min early
 const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
@@ -24,7 +26,7 @@ export interface MsalAuthCallbacks {
 	onStateChange(state: AuthState): void;
 }
 
-export class MsalAuth {
+export class MsalAuth implements CalendarAuth {
 	private config: MsalAuthConfig;
 	private callbacks: MsalAuthCallbacks;
 	private tokenCache: TokenCache | null = null;
@@ -80,7 +82,7 @@ export class MsalAuth {
 		return this.refreshAccessToken();
 	}
 
-	async startDeviceCodeFlow(): Promise<void> {
+	async startSignIn(): Promise<void> {
 		const {tenantId, clientId, cloudInstance} = this.config;
 		if (!tenantId || !clientId) {
 			this.setState({status: "error", message: "Tenant ID and Client ID are required."});
@@ -258,16 +260,5 @@ export class MsalAuth {
 				resolve();
 			}, {once: true});
 		});
-	}
-}
-
-
-export class AuthError extends Error {
-	code: "NOT_AUTHENTICATED" | "AUTH_FAILED";
-
-	constructor(message: string, code: "NOT_AUTHENTICATED" | "AUTH_FAILED") {
-		super(message);
-		this.name = "AuthError";
-		this.code = code;
 	}
 }

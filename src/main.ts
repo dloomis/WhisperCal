@@ -3,7 +3,6 @@ import {execSync} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
-import {GraphApiProvider} from "./services/GraphApiProvider";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
 import {summarizeJobs, speakerTagJobs} from "./state";
@@ -14,45 +13,52 @@ import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
-import {MsalAuth} from "./services/MsalAuth";
-import type {AuthState} from "./services/AuthTypes";
-import type {TokenCache} from "./services/AuthTypes";
-import type {CalendarProvider} from "./types";
+import type {AuthState, TokenCache} from "./services/AuthTypes";
+import type {CalendarAuth} from "./services/CalendarAuth";
+import type {CalendarProvider, CalendarProviderType} from "./types";
+import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
+import {createCalendarStack} from "./services/CalendarProviderFactory";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 
 interface PluginData extends WhisperCalSettings {
+	// Legacy single token cache (migrated on load)
 	tokenCache?: TokenCache | null;
+	// Per-provider token caches
+	microsoftTokenCache?: TokenCache | null;
+	googleTokenCache?: TokenCache | null;
 }
 
 export default class WhisperCalPlugin extends Plugin {
 	settings: WhisperCalSettings;
-	auth: MsalAuth;
-	private upstream: GraphApiProvider;
+	auth: CalendarAuth;
+	peopleSearch: PeopleSearchProvider;
+	private upstream: CalendarProvider;
 	private provider: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private viewCallbacks!: CalendarViewCallbacks;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
-	private tokenCache: TokenCache | null = null;
+	private microsoftTokenCache: TokenCache | null = null;
+	private googleTokenCache: TokenCache | null = null;
+	private activeProviderType: CalendarProviderType = "microsoft";
 
 	async onload() {
 		await this.loadSettings();
 
-		this.auth = new MsalAuth(
-			{
-				tenantId: this.settings.tenantId,
-				clientId: this.settings.clientId,
-				cloudInstance: this.settings.cloudInstance,
-				deviceLoginUrl: this.settings.deviceLoginUrl,
-			},
+		this.activeProviderType = this.settings.calendarProvider;
+		const stack = createCalendarStack(
+			this.settings.calendarProvider,
+			this.settings,
 			{
 				loadTokenCache: () => this.loadTokenCache(),
 				saveTokenCache: (cache) => this.saveTokenCache(cache),
 				onStateChange: (state) => this.notifyAuthStateListeners(state),
 			},
 		);
+		this.auth = stack.auth;
+		this.upstream = stack.provider;
+		this.peopleSearch = stack.peopleSearch;
 		this.auth.initialize();
 
-		this.upstream = new GraphApiProvider(this.auth);
 		this.cachedProvider = new CachedCalendarProvider(
 			this.app,
 			this.upstream,
@@ -202,7 +208,15 @@ export default class WhisperCalPlugin extends Plugin {
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-		this.tokenCache = data?.tokenCache ?? null;
+
+		// Migrate legacy single tokenCache → microsoftTokenCache
+		if (data?.tokenCache && !data.microsoftTokenCache) {
+			this.microsoftTokenCache = data.tokenCache;
+		} else {
+			this.microsoftTokenCache = data?.microsoftTokenCache ?? null;
+		}
+		this.googleTokenCache = data?.googleTokenCache ?? null;
+
 		// Migrate old importantOrganizerEmails (string[]) to importantOrganizers ({name, email}[])
 		const legacy = data as Record<string, unknown> | null;
 		if (legacy?.importantOrganizerEmails && Array.isArray(legacy.importantOrganizerEmails)) {
@@ -219,7 +233,7 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!this.settings.microphoneUser) {
 			try {
 				this.settings.microphoneUser = execSync("id -F", {encoding: "utf-8"}).trim();
-				await this.saveData({...this.settings, tokenCache: this.tokenCache});
+				await this.persistData();
 			} catch {
 				// Leave empty — user can fill in manually
 			}
@@ -228,14 +242,40 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData({...this.settings, tokenCache: this.tokenCache});
-		// Update auth config if tenant/client/cloud changed
-		this.auth.updateConfig({
-			tenantId: this.settings.tenantId,
-			clientId: this.settings.clientId,
-			cloudInstance: this.settings.cloudInstance,
-			deviceLoginUrl: this.settings.deviceLoginUrl,
-		});
+		await this.persistData();
+
+		// If provider type changed, rebuild the entire stack
+		if (this.settings.calendarProvider !== this.activeProviderType) {
+			this.auth.cancelSignIn();
+			await this.cachedProvider?.flush();
+
+			this.activeProviderType = this.settings.calendarProvider;
+			const stack = createCalendarStack(
+				this.settings.calendarProvider,
+				this.settings,
+				{
+					loadTokenCache: () => this.loadTokenCache(),
+					saveTokenCache: (cache) => this.saveTokenCache(cache),
+					onStateChange: (state) => this.notifyAuthStateListeners(state),
+				},
+			);
+			this.auth = stack.auth;
+			this.upstream = stack.provider;
+			this.peopleSearch = stack.peopleSearch;
+			this.auth.initialize();
+
+			this.cachedProvider = new CachedCalendarProvider(
+				this.app,
+				this.upstream,
+				this.manifest.dir!,
+				this.settings.cacheFutureDays,
+				this.settings.cacheRetentionDays,
+				this.settings.timezone,
+			);
+			await this.cachedProvider.loadCache();
+			this.provider = this.cachedProvider;
+		}
+
 		// Update cache config
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
@@ -266,12 +306,26 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private loadTokenCache(): TokenCache | null {
-		return this.tokenCache;
+		return this.activeProviderType === "google"
+			? this.googleTokenCache
+			: this.microsoftTokenCache;
 	}
 
 	private async saveTokenCache(cache: TokenCache | null): Promise<void> {
-		this.tokenCache = cache;
-		await this.saveData({...this.settings, tokenCache: cache});
+		if (this.activeProviderType === "google") {
+			this.googleTokenCache = cache;
+		} else {
+			this.microsoftTokenCache = cache;
+		}
+		await this.persistData();
+	}
+
+	private async persistData(): Promise<void> {
+		await this.saveData({
+			...this.settings,
+			microsoftTokenCache: this.microsoftTokenCache,
+			googleTokenCache: this.googleTokenCache,
+		});
 	}
 
 	private resolveTagSpeakersContext(

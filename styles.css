@@ -106,7 +106,7 @@
 	--wc-category-color: var(--wc-subtle);
 	--wc-gutter-bg: var(--background-secondary);
 	background: var(--wc-gutter-bg);
-	border-right: 4px solid color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg));
+	border-right: 3px solid color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg));
 	position: relative;
 }
 
@@ -186,7 +186,7 @@
 
 /* Dashed border for not-accepted meetings — gaps show primary background */
 .whisper-cal-card-gutter-tentative {
-	border-right: 4px dashed var(--wc-category-color);
+	border-right: 3px dashed var(--wc-category-color);
 	border-image: repeating-linear-gradient(
 		to bottom,
 		var(--wc-category-color) 0px,

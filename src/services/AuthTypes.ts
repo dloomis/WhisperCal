@@ -24,7 +24,7 @@ export interface TokenResponse {
 
 export type AuthState =
 	| { status: "signed-out" }
-	| { status: "signing-in"; userCode: string; verificationUri: string }
+	| { status: "signing-in"; userCode?: string; verificationUri?: string; message?: string }
 	| { status: "signed-in" }
 	| { status: "error"; message: string };
 
