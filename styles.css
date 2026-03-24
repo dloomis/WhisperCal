@@ -160,7 +160,7 @@
 
 /* Gutter status shading */
 .whisper-cal-card-gutter-warning {
-	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
+	background: color-mix(in srgb, var(--text-warning) 25%, transparent);
 }
 
 .whisper-cal-card-gutter-done {
