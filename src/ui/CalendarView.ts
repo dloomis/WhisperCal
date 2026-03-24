@@ -10,7 +10,7 @@ import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
-import {formatDate, formatDisplayDate, formatRecordingDuration, getTodayString, isSameDay, parseDateTime} from "../utils/time";
+import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
 export interface CalendarViewCallbacks {
@@ -415,6 +415,19 @@ export class CalendarView extends ItemView {
 				const target = isConflict
 					? this.contentContainer.createDiv({cls: "whisper-cal-conflict-group"})
 					: this.contentContainer;
+
+				if (isConflict) {
+					const overlapStart = formatTime(group[0]!.startTime, this.settings.timezone);
+					const overlapEnd = formatTime(
+						new Date(Math.min(...group.map(e => e.endTime.getTime()))),
+						this.settings.timezone,
+					);
+					const banner = target.createDiv({cls: "whisper-cal-conflict-banner"});
+					setIcon(banner.createSpan({cls: "whisper-cal-conflict-banner-icon"}), "alert-triangle");
+					banner.createSpan({
+						text: `${group.length} meetings overlap at ${overlapStart} \u2013 ${overlapEnd}`,
+					});
+				}
 
 				for (const event of group) {
 					const opts: MeetingCardOpts = {
