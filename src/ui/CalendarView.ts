@@ -13,6 +13,31 @@ import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 
+/** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
+ *  YAML parses unquoted "16:39" as sexagesimal number 999. */
+function coerceFmTime(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (typeof val === "number") {
+		const h = Math.floor(val / 60);
+		const m = val % 60;
+		return `${h}:${String(m).padStart(2, "0")}`;
+	}
+	return String(val);
+}
+
+/** Coerce a YAML frontmatter date value to "YYYY-MM-DD" string.
+ *  YAML may parse unquoted dates as Date objects. */
+function coerceFmDate(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (val instanceof Date) {
+		const y = val.getFullYear();
+		const m = String(val.getMonth() + 1).padStart(2, "0");
+		const d = String(val.getDate()).padStart(2, "0");
+		return `${y}-${m}-${d}`;
+	}
+	return String(val);
+}
+
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
 	getUserEmail: () => string;
@@ -532,12 +557,14 @@ export class CalendarView extends ItemView {
 			// Only show local notes that are already linked to a MacWhisper recording
 			if (!fm["macwhisper_session_id"]) continue;
 
-			// Parse meeting_start from frontmatter (e.g. "9:30 AM")
-			const meetingStart = fm["meeting_start"] as string | undefined;
-			const meetingDate = fm["meeting_date"] as string | undefined;
+			// Parse meeting_start from frontmatter (e.g. "9:30 AM" or "16:39")
+			// YAML may parse unquoted times as sexagesimal numbers (16:39 → 999)
+			// and dates as Date objects, so normalize before matching.
+			const meetingStart = coerceFmTime(fm["meeting_start"]);
+			const meetingDate = coerceFmDate(fm["meeting_date"]);
 			const meetingSubject = fm["meeting_subject"] as string | undefined;
 
-			const meetingEnd = fm["meeting_end"] as string | undefined;
+			const meetingEnd = coerceFmTime(fm["meeting_end"]);
 
 			let startTime: Date;
 			if (meetingDate && meetingStart) {

@@ -126,15 +126,22 @@ export function parseDateTime(dateStr: string, timeStr: string): Date | null {
 	const dateParts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 	if (!dateParts) return null;
 
-	const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-	if (!timeMatch) return null;
+	const timeMatch12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+	const timeMatch24 = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+	if (!timeMatch12 && !timeMatch24) return null;
 
-	let hour = parseInt(timeMatch[1]!, 10);
-	const minute = parseInt(timeMatch[2]!, 10);
-	const meridiem = timeMatch[3]!.toUpperCase();
-
-	if (meridiem === "PM" && hour !== 12) hour += 12;
-	if (meridiem === "AM" && hour === 12) hour = 0;
+	let hour: number;
+	let minute: number;
+	if (timeMatch12) {
+		hour = parseInt(timeMatch12[1]!, 10);
+		minute = parseInt(timeMatch12[2]!, 10);
+		const meridiem = timeMatch12[3]!.toUpperCase();
+		if (meridiem === "PM" && hour !== 12) hour += 12;
+		if (meridiem === "AM" && hour === 12) hour = 0;
+	} else {
+		hour = parseInt(timeMatch24![1]!, 10);
+		minute = parseInt(timeMatch24![2]!, 10);
+	}
 
 	const d = new Date(
 		parseInt(dateParts[1]!, 10),
