@@ -1,7 +1,7 @@
 {
 	"id": "whisper-cal",
 	"name": "WhisperCal",
-	"version": "0.3.138",
+	"version": "0.3.139",
 	"minAppVersion": "1.4.10",
 	"description": "Microsoft 365 calendar sidebar with one-click meeting notes, MacWhisper transcript linking, LLM-powered speaker tagging, and meeting summarization.",
 	"author": "Dan Loomis",
