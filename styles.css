@@ -101,7 +101,7 @@
 	padding: 12px 10px;
 	width: 88px;
 	flex-shrink: 0;
-	--wc-category-color: var(--background-modifier-border);
+	--wc-category-color: var(--text-muted);
 	border-right: 4px solid var(--wc-category-color);
 	position: relative;
 }
@@ -117,13 +117,13 @@
 .whisper-cal-card-gutter-period {
 	font-size: var(--font-ui-smaller);
 	font-weight: normal;
-	color: var(--text-faint);
+	color: var(--text-muted);
 	line-height: 1.2;
 }
 
 .whisper-cal-card-gutter-duration {
 	font-size: var(--font-ui-smaller);
-	color: var(--text-faint);
+	color: var(--text-muted);
 	margin-top: 4px;
 }
 
@@ -337,7 +337,7 @@
 	top: 8px;
 	bottom: 8px;
 	width: 6px;
-	border: 4px solid var(--background-modifier-border);
+	border: 4px solid var(--text-muted);
 	border-right: none;
 	border-radius: 4px 0 0 4px;
 }
