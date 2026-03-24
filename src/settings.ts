@@ -87,7 +87,7 @@ class LlmConsentModal extends Modal {
 		contentEl.createEl("h2", {text: "Enable LLM features?"});
 		contentEl.createEl("p", {
 			text: "Speaker tagging and summarization send meeting transcripts and note content to a cloud LLM provider. " +
-				"This may include sensitive or classified information.",
+				"This may include sensitive or controlled information.",
 		});
 		contentEl.createEl("p", {
 			cls: "mod-warning",
