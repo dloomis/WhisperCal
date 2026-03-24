@@ -265,21 +265,25 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Enable LLM features")
 			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
 			.addToggle(toggle => {
+				let programmatic = false;
 				toggle.setValue(this.plugin.settings.llmEnabled);
 				toggle.onChange(async (value) => {
+					if (programmatic) return;
 					if (value) {
-						// Show consent modal before enabling
+						// Revert toggle immediately; modal will set it if accepted
+						programmatic = true;
 						toggle.setValue(false);
+						programmatic = false;
 						new LlmConsentModal(this.app, async () => {
 							this.plugin.settings.llmEnabled = true;
+							programmatic = true;
 							toggle.setValue(true);
+							programmatic = false;
 							await this.plugin.saveSettings();
-							this.display();
 						}).open();
 					} else {
 						this.plugin.settings.llmEnabled = false;
 						await this.plugin.saveSettings();
-						this.display();
 					}
 				});
 			});
