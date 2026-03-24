@@ -337,7 +337,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// are blocked immediately (e.g. auto-summarize + manual button press).
 		speakerTagJobs.add(transcriptPath);
 		this.activeLlmCount++;
-		this.refreshCalendarCards();
+		this.refreshCalendarCards(transcriptPath);
 
 		void this.runTagSpeakers(transcriptFile, transcriptPath);
 	}
@@ -446,7 +446,7 @@ export default class WhisperCalPlugin extends Plugin {
 					const msg = e instanceof Error ? e.message : String(e);
 					new Notice(`Failed to apply speaker tags: ${msg}`);
 				}
-				this.refreshCalendarCards();
+				this.refreshCalendarCards(transcriptPath);
 			});
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -455,7 +455,7 @@ export default class WhisperCalPlugin extends Plugin {
 		} finally {
 			speakerTagJobs.delete(transcriptPath);
 			this.activeLlmCount--;
-			this.refreshCalendarCards();
+			this.refreshCalendarCards(transcriptPath);
 		}
 	}
 
@@ -500,7 +500,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// are blocked immediately (e.g. auto-summarize + manual button press).
 		summarizeJobs.add(notePath);
 		this.activeLlmCount++;
-		this.refreshCalendarCards();
+		this.refreshCalendarCards(notePath);
 		this.updateSummarizeBanners(notePath);
 
 		void this.runSummarize(notePath);
@@ -567,16 +567,20 @@ export default class WhisperCalPlugin extends Plugin {
 		} finally {
 			summarizeJobs.delete(notePath);
 			this.activeLlmCount--;
-			this.refreshCalendarCards();
+			this.refreshCalendarCards(notePath);
 			this.updateSummarizeBanners(notePath);
 		}
 	}
 
-	private refreshCalendarCards(): void {
+	private refreshCalendarCards(filePath?: string): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
-				view.rerenderCards();
+				if (filePath) {
+					view.rerenderCard(filePath);
+				} else {
+					view.rerenderCards();
+				}
 			}
 		}
 	}

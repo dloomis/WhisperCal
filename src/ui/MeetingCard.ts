@@ -14,7 +14,7 @@ export interface MeetingCardOpts {
 	app: App;
 	transcriptFolderPath?: string;
 	recordingWindowMinutes?: number;
-	onNoteCreated?: () => void;
+	onNoteCreated?: (eventId: string) => void;
 	importantOrganizerEmails?: readonly string[];
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
@@ -192,7 +192,7 @@ function computePillStates(
 export function renderMeetingCard(
 	container: HTMLElement,
 	opts: MeetingCardOpts,
-): void {
+): HTMLElement {
 	const {
 		event, timezone, noteCreator, app,
 		transcriptFolderPath = "Transcripts",
@@ -200,6 +200,7 @@ export function renderMeetingCard(
 		onNoteCreated, onTagSpeakers, onSummarize,
 	} = opts;
 	const card = container.createDiv({cls: "whisper-cal-card"});
+	card.dataset.eventId = event.id;
 	card.dataset.notePath = noteCreator.getNotePath(event);
 	if (!event.isAllDay) {
 		card.dataset.startTime = String(event.startTime.getTime());
@@ -230,14 +231,14 @@ export function renderMeetingCard(
 					}).prompt();
 					if (!name) return;
 					await noteCreator.createNote({...event, subject: name});
-					if (onNoteCreated) onNoteCreated();
+					if (onNoteCreated) onNoteCreated(event.id);
 				} finally {
 					notePill.disabled = false;
 				}
 			};
 			void handleClick();
 		});
-		return;
+		return card;
 	}
 
 	// Compute workflow pill states
@@ -278,7 +279,7 @@ export function renderMeetingCard(
 						targetEvent = {...event, subject: name};
 					}
 					await noteCreator.createNote(targetEvent);
-					if (onNoteCreated) onNoteCreated();
+					if (onNoteCreated) onNoteCreated(event.id);
 				}
 			} finally {
 				notePill.disabled = false;
@@ -362,4 +363,6 @@ export function renderMeetingCard(
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Summarizing\u2026"});
 	}
+
+	return card;
 }

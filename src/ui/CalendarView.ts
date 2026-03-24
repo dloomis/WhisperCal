@@ -9,7 +9,7 @@ import {linkKnownRecording} from "../services/LinkRecording";
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
-import {renderMeetingCard} from "./MeetingCard";
+import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/MsalAuth";
 
@@ -43,6 +43,9 @@ export class CalendarView extends ItemView {
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
 	private nowLineTimerId: number | null = null;
+	private cardElements = new Map<string, HTMLElement>();
+	private cardOpts = new Map<string, MeetingCardOpts>();
+	private pendingFmPaths = new Set<string>();
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -134,12 +137,16 @@ export class CalendarView extends ItemView {
 				if (newKey === this.fmSnapshot.get(file.path)) return;
 				this.fmSnapshot.set(file.path, newKey);
 
+				this.pendingFmPaths.add(file.path);
+
 				if (this.cardRefreshTimer !== null) {
 					window.clearTimeout(this.cardRefreshTimer);
 				}
 				this.cardRefreshTimer = window.setTimeout(() => {
 					this.cardRefreshTimer = null;
-					this.renderEvents(this.cachedEvents!);
+					const paths = new Set(this.pendingFmPaths);
+					this.pendingFmPaths.clear();
+					this.updateCardsForPaths(paths);
 					void this.loadAndRenderUnlinkedSection();
 				}, 500);
 			}),
@@ -162,6 +169,9 @@ export class CalendarView extends ItemView {
 		this.stopNowLineTimer();
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
+		this.cardElements.clear();
+		this.cardOpts.clear();
+		this.pendingFmPaths.clear();
 		if (this.cardRefreshTimer !== null) {
 			window.clearTimeout(this.cardRefreshTimer);
 			this.cardRefreshTimer = null;
@@ -234,12 +244,14 @@ export class CalendarView extends ItemView {
 	}
 
 	rerenderCards(): void {
-		if (this.cachedEvents !== null) {
-			// Preserve scroll position across pill-state rerenders
-			const scrollTop = this.contentEl.scrollTop;
-			this.renderEvents(this.cachedEvents);
-			this.contentEl.scrollTop = scrollTop;
+		if (this.cachedEvents === null) return;
+		for (const eventId of this.cardElements.keys()) {
+			this.rerenderCardById(eventId);
 		}
+	}
+
+	rerenderCard(notePath: string): void {
+		this.rerenderCardByPath(notePath);
 	}
 
 	private renderLoading(): void {
@@ -273,11 +285,13 @@ export class CalendarView extends ItemView {
 		}
 		this.cachedEvents = events;
 		this.contentContainer.empty();
+		this.cardElements.clear();
+		this.cardOpts.clear();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 
-		const onNoteCreated = () => {
-			this.rerenderCards();
+		const onNoteCreated = (eventId: string) => {
+			this.rerenderCardById(eventId);
 		};
 		const importantEmails = this.settings.importantOrganizers.map(o => o.email);
 
@@ -301,7 +315,7 @@ export class CalendarView extends ItemView {
 			responseStatus: "organizer",
 			categories: [],
 		};
-		renderMeetingCard(this.contentContainer, {
+		const unscheduledOpts: MeetingCardOpts = {
 			event: unscheduledEvent,
 			timezone: this.settings.timezone,
 			noteCreator: this.noteCreator,
@@ -312,7 +326,8 @@ export class CalendarView extends ItemView {
 			onNoteCreated,
 			onTagSpeakers: this.callbacks.onTagSpeakers,
 			onSummarize: this.callbacks.onSummarize,
-		});
+		};
+		this.storeCard(unscheduledEvent.id, renderMeetingCard(this.contentContainer, unscheduledOpts), unscheduledOpts);
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
@@ -334,7 +349,7 @@ export class CalendarView extends ItemView {
 
 		if (allDay.length > 0) {
 			for (const event of allDay) {
-				renderMeetingCard(this.contentContainer, {
+				const opts: MeetingCardOpts = {
 					event,
 					timezone: this.settings.timezone,
 					noteCreator: this.noteCreator,
@@ -345,7 +360,8 @@ export class CalendarView extends ItemView {
 					onNoteCreated,
 					onTagSpeakers: this.callbacks.onTagSpeakers,
 					onSummarize: this.callbacks.onSummarize,
-				});
+				};
+				this.storeCard(event.id, renderMeetingCard(this.contentContainer, opts), opts);
 			}
 		}
 
@@ -400,18 +416,19 @@ export class CalendarView extends ItemView {
 					: this.contentContainer;
 
 				for (const event of group) {
-					renderMeetingCard(target, {
+					const opts: MeetingCardOpts = {
 						event,
 						timezone: this.settings.timezone,
 						noteCreator: this.noteCreator,
 						app: this.app,
-							transcriptFolderPath: this.settings.transcriptFolderPath,
+						transcriptFolderPath: this.settings.transcriptFolderPath,
 						recordingWindowMinutes: this.settings.recordingWindowMinutes,
 						importantOrganizerEmails: importantEmails,
 						onNoteCreated,
 						onTagSpeakers: this.callbacks.onTagSpeakers,
 						onSummarize: this.callbacks.onSummarize,
-					});
+					};
+					this.storeCard(event.id, renderMeetingCard(target, opts), opts);
 				}
 			}
 		}
@@ -422,6 +439,50 @@ export class CalendarView extends ItemView {
 
 		// Snapshot frontmatter so the changed handler can detect real changes
 		this.snapshotFrontmatter();
+	}
+
+	private storeCard(eventId: string, el: HTMLElement, opts: MeetingCardOpts): void {
+		this.cardElements.set(eventId, el);
+		this.cardOpts.set(eventId, opts);
+	}
+
+	/** Rebuild a single card in-place without touching any other DOM. */
+	private rerenderCardById(eventId: string): void {
+		const oldEl = this.cardElements.get(eventId);
+		const opts = this.cardOpts.get(eventId);
+		if (!oldEl || !opts) return;
+
+		// Build replacement off-DOM
+		const tmp = document.createElement("div");
+		const newEl = renderMeetingCard(tmp, opts);
+
+		// Preserve highlight class
+		if (oldEl.hasClass("whisper-cal-card-note-open")) {
+			newEl.addClass("whisper-cal-card-note-open");
+		}
+
+		oldEl.replaceWith(newEl);
+		this.cardElements.set(eventId, newEl);
+	}
+
+	/** Re-render only the cards affected by a set of changed file paths. */
+	private updateCardsForPaths(paths: Set<string>): void {
+		for (const [eventId, el] of this.cardElements) {
+			if ((el.dataset.notePath && paths.has(el.dataset.notePath))
+				|| (el.dataset.transcriptPath && paths.has(el.dataset.transcriptPath))) {
+				this.rerenderCardById(eventId);
+			}
+		}
+	}
+
+	/** Find the card whose note or transcript matches a file path, and re-render it. */
+	private rerenderCardByPath(filePath: string): void {
+		for (const [eventId, el] of this.cardElements) {
+			if (el.dataset.notePath === filePath || el.dataset.transcriptPath === filePath) {
+				this.rerenderCardById(eventId);
+				return;
+			}
+		}
 	}
 
 	/**
