@@ -47,8 +47,8 @@ export class MsalAuth implements CalendarAuth {
 		}
 	}
 
-	updateConfig(config: MsalAuthConfig): void {
-		this.config = config;
+	updateConfig(config: Record<string, string>): void {
+		this.config = config as unknown as MsalAuthConfig;
 	}
 
 	getState(): AuthState {

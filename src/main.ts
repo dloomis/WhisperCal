@@ -17,7 +17,7 @@ import type {AuthState, TokenCache} from "./services/AuthTypes";
 import type {CalendarAuth} from "./services/CalendarAuth";
 import type {CalendarProvider, CalendarProviderType} from "./types";
 import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
-import {createCalendarStack} from "./services/CalendarProviderFactory";
+import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFactory";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 
 interface PluginData extends WhisperCalSettings {
@@ -276,6 +276,8 @@ export default class WhisperCalPlugin extends Plugin {
 			this.provider = this.cachedProvider;
 		}
 
+		// Update auth config (e.g. client ID/secret changed)
+		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
 		// Update cache config
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,

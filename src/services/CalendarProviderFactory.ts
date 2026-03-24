@@ -56,3 +56,21 @@ export function createCalendarStack(
 	}
 	}
 }
+
+/** Build the provider-specific auth config from settings. */
+export function getAuthConfig(type: CalendarProviderType, settings: WhisperCalSettings): Record<string, string> {
+	switch (type) {
+	case "microsoft":
+		return {
+			tenantId: settings.tenantId,
+			clientId: settings.clientId,
+			cloudInstance: settings.cloudInstance,
+			deviceLoginUrl: settings.deviceLoginUrl,
+		};
+	case "google":
+		return {
+			clientId: settings.googleClientId,
+			clientSecret: settings.googleClientSecret,
+		};
+	}
+}

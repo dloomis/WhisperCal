@@ -12,6 +12,7 @@ export interface CalendarAuth {
 	getAccessToken(): Promise<string>;
 	isSignedIn(): boolean;
 	getState(): AuthState;
+	updateConfig(config: Record<string, string>): void;
 }
 
 export class AuthError extends Error {

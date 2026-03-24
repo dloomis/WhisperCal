@@ -46,8 +46,8 @@ export class GoogleAuth implements CalendarAuth {
 		}
 	}
 
-	updateConfig(config: GoogleAuthConfig): void {
-		this.config = config;
+	updateConfig(config: Record<string, string>): void {
+		this.config = config as unknown as GoogleAuthConfig;
 	}
 
 	getState(): AuthState {
