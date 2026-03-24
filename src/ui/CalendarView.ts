@@ -220,6 +220,7 @@ export class CalendarView extends ItemView {
 				}
 			}
 			this.renderEvents(events);
+			this.updateNowMarker();
 		} catch (e) {
 			console.error("[WhisperCal] refresh error:", e);
 			if (e instanceof AuthError) {

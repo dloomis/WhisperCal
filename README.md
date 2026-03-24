@@ -22,6 +22,9 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
   - [Gutter Icons](#gutter-icons)
+  - [Gutter Background Colors](#gutter-background-colors)
+  - [Category Bar](#category-bar)
+  - [Button Highlights](#button-highlights)
   - [Non-Accepted Meeting Indicator](#non-accepted-meeting-indicator)
   - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
@@ -192,23 +195,46 @@ When viewing today's calendar:
 
 ### Gutter Icons
 
-Below the time and duration, the gutter displays up to three inline icons:
+Below the time and duration, the gutter displays up to three inline icons (in this order):
 
 | Icon | Meaning |
 |------|---------|
 | **☆ Star** | You are the organizer of this meeting. Determined by comparing the event's organizer email against your Microsoft 365 account email. |
 | **⛔ Octagon-alert** | The organizer is in your **important organizers** list (configured in settings via the chip input with Graph API people autocomplete). |
-| **⊞ Layout-grid** | The meeting has an Outlook **category** assigned. The color matches the category color from your M365 master categories. Multiple categories show multiple icons. |
+| **⊞ Grid-2x2** | The meeting has an Outlook **category** assigned. The icon color matches the category color from your M365 master categories. Hover for the category name tooltip. |
 
-All three icons use an outline style for visual consistency.
+### Gutter Background Colors
+
+The gutter background tint reflects the pipeline workflow state:
+
+| Color | Meaning |
+|-------|---------|
+| **No tint** (default) | No meeting note created yet, or pipeline not started. |
+| **Warning tint** (amber/yellow, `--text-warning`) | Meeting note exists but the pipeline is incomplete — recording, speaker tagging, or summarization still needed. |
+| **Accent tint** (your theme accent color, `--interactive-accent`) | All four pipeline stages are complete. |
+
+### Category Bar
+
+The vertical bar on the right edge of the gutter indicates the Outlook category color. When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
+
+### Button Highlights
+
+The four pipeline pill buttons show their completion state via border color:
+
+| State | Appearance |
+|-------|------------|
+| **Default** | Neutral border, theme icon color. |
+| **Complete** | Accent-colored border and glow (`--interactive-accent`). |
+| **Hover** | Accent-tinted background and border. |
+| **Running** | Pulsing accent background, disabled. |
 
 ### Non-Accepted Meeting Indicator
 
-Meetings you haven't accepted (tentative, not responded, or declined) show a **barber-pole stripe** pattern on the time gutter, making them visually distinct from accepted meetings.
+Meetings you haven't accepted (tentative, not responded, or declined) show a **dashed category bar** on the time gutter, alternating between the category color and the primary background color, making them visually distinct from accepted meetings.
 
 ### Incomplete Workflow Highlighting
 
-Cards that have a meeting note but haven't completed the full pipeline (through summarization) show a **warning-colored bar** in the time gutter. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The warning uses the theme's `--text-warning` color (typically amber/orange) and disappears once the Summary stage is complete.
+Cards that have a meeting note but haven't completed the full pipeline (through summarization) show a **warning-tinted gutter** with a darkened category bar. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The tint disappears once the Summary stage is complete, replaced by the accent highlight.
 
 ### Note-Open Highlighting
 
