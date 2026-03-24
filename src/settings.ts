@@ -291,6 +291,20 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
+		// Provider-specific credential sections + auth status (colocated with provider dropdown)
+		if (this.plugin.settings.calendarProvider === "microsoft") {
+			this.renderMicrosoftAuthSettings(containerEl);
+		} else {
+			this.renderGoogleAuthSettings(containerEl);
+		}
+
+		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
+		this.renderAuthStatus(this.plugin.auth.getState());
+		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
+			this.renderAuthStatus(state);
+		});
+
+		// General calendar settings (apply to both providers)
 		new Setting(containerEl)
 			.setName("Timezone")
 			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
@@ -375,22 +389,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}
 				}));
-
-		// Provider-specific credential sections
-		if (this.plugin.settings.calendarProvider === "microsoft") {
-			this.renderMicrosoftAuthSettings(containerEl);
-		} else {
-			this.renderGoogleAuthSettings(containerEl);
-		}
-
-		// Auth status + actions
-		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
-		this.renderAuthStatus(this.plugin.auth.getState());
-
-		// Subscribe to auth state changes
-		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
-			this.renderAuthStatus(state);
-		});
 
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
