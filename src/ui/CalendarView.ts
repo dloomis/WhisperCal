@@ -118,7 +118,7 @@ export class CalendarView extends ItemView {
 		this.statusEl = stickyHeader.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
 
 		// Content area
-		this.contentContainer = root.createDiv();
+		this.contentContainer = root.createDiv({cls: "whisper-cal-content"});
 		this.unlinkedEl = root.createDiv({cls: "whisper-cal-unlinked-section"});
 
 		// Initial load
@@ -939,14 +939,8 @@ export class CalendarView extends ItemView {
 	private updateNowMarker(): void {
 		if (!this.contentContainer) return;
 
-		// Remove any existing marker and reset inline position on its parent
-		const oldMarker = this.contentContainer.querySelector(".whisper-cal-now-line");
-		if (oldMarker) {
-			if (oldMarker.classList.contains("whisper-cal-now-line-overlay")) {
-				(oldMarker.parentElement as HTMLElement | null)?.style.removeProperty("position");
-			}
-			oldMarker.remove();
-		}
+		// Remove any existing marker
+		this.contentContainer.querySelector(".whisper-cal-now-line")?.remove();
 
 		// Only show on today's view
 		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
@@ -958,45 +952,45 @@ export class CalendarView extends ItemView {
 		);
 		if (timedCards.length === 0) return;
 
+		// Find the element to center on: a gap spacer or the most recent started card
+		let target: HTMLElement | null = null;
+
 		// Check if now falls inside a gap spacer
 		const gaps = Array.from(
 			this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"),
 		);
-		const activeGap = gaps.find(g =>
+		target = gaps.find(g =>
 			nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd),
-		);
-		if (activeGap) {
-			activeGap.style.position = "relative";
-			const marker = createDiv({cls: "whisper-cal-now-line whisper-cal-now-line-overlay"});
-			activeGap.appendChild(marker);
-			return;
-		}
+		) ?? null;
 
-		// Find the card whose meeting is currently active (started but not yet ended,
-		// or the most recent started card if we're past its end but before the next start)
-		let activeCard: HTMLElement | null = null;
-		for (let i = timedCards.length - 1; i >= 0; i--) {
-			const card = timedCards[i]!;
-			const start = Number(card.dataset.startTime);
-			if (nowMs >= start) {
-				activeCard = card;
-				break;
+		// Otherwise find the most recent started card
+		if (!target) {
+			for (let i = timedCards.length - 1; i >= 0; i--) {
+				const card = timedCards[i]!;
+				if (nowMs >= Number(card.dataset.startTime)) {
+					target = (card.closest(".whisper-cal-conflict-group") as HTMLElement | null) ?? card;
+					break;
+				}
 			}
 		}
 
-		if (!activeCard) {
-			// Before all meetings — place before the first card
+		if (!target) {
+			// Before all meetings — place line before the first card
 			const first = timedCards[0]!;
 			const ref = first.closest(".whisper-cal-conflict-group") ?? first;
 			ref.parentElement!.insertBefore(createDiv({cls: "whisper-cal-now-line"}), ref);
 			return;
 		}
 
-		// Center the marker on the active card
-		const ref = activeCard.closest(".whisper-cal-conflict-group") ?? activeCard;
-		(ref as HTMLElement).style.position = "relative";
+		// Position marker at the vertical center of the target element
+		const containerRect = this.contentContainer.getBoundingClientRect();
+		const targetRect = target.getBoundingClientRect();
+		const topOffset = targetRect.top - containerRect.top + this.contentContainer.scrollTop
+			+ targetRect.height / 2;
+
 		const marker = createDiv({cls: "whisper-cal-now-line whisper-cal-now-line-overlay"});
-		ref.appendChild(marker);
+		marker.style.top = `${topOffset}px`;
+		this.contentContainer.appendChild(marker);
 	}
 
 	private static readonly NOW_MARKER_INTERVAL_MS = 60_000;

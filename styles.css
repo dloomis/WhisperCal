@@ -219,10 +219,13 @@
 	opacity: 0.8;
 }
 
-/* Overlay variant — centered on the parent card or gap */
+.whisper-cal-content {
+	position: relative;
+}
+
+/* Overlay variant — positioned absolutely within the content container */
 .whisper-cal-now-line-overlay {
 	position: absolute;
-	top: 50%;
 	left: 0;
 	right: 0;
 	margin: 0;
