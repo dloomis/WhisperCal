@@ -151,7 +151,7 @@
 }
 
 .whisper-cal-card-gutter-important {
-	color: var(--text-error);
+	color: var(--text-warning);
 	display: flex;
 	align-items: center;
 }
@@ -174,8 +174,8 @@
 
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
-	--wc-category-color: var(--text-error);
-	--wc-gutter-bg: color-mix(in srgb, var(--text-error) 10%, var(--background-primary));
+	--wc-category-color: var(--text-warning);
+	--wc-gutter-bg: color-mix(in srgb, var(--text-warning) 10%, var(--background-primary));
 }
 
 .whisper-cal-card-gutter-done {
@@ -215,7 +215,7 @@
 	height: 0;
 	border-top: 7px solid transparent;
 	border-bottom: 7px solid transparent;
-	border-left: 9px solid var(--text-error);
+	border-left: 9px solid var(--text-warning);
 	opacity: 0.8;
 }
 
@@ -343,7 +343,7 @@
 
 /* Conflict group — groups overlapping meetings */
 .whisper-cal-conflict-group {
-	--wc-conflict-color: var(--text-error);
+	--wc-conflict-color: var(--text-warning);
 	position: relative;
 	margin-bottom: 8px;
 	background: var(--background-primary);

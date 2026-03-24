@@ -5,6 +5,7 @@ import {NameInputModal} from "./NameInputModal";
 import {formatTime} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
+import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs} from "../state";
 
 export interface MeetingCardOpts {
@@ -198,6 +199,32 @@ function computePillStates(
 	return {note, transcript, speakers, summary, transcriptFile, transcriptPath, pipelineState};
 }
 
+/**
+ * If the meeting note is missing macwhisper_session_id but its linked
+ * transcript still has one, copy it back to the note.
+ */
+async function healMissingSessionId(
+	app: App,
+	noteCreator: NoteCreator,
+	event: CalendarEvent,
+): Promise<void> {
+	const noteFile = noteCreator.findNote(event);
+	if (!noteFile) return;
+
+	const noteFm = app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
+	if (noteFm["macwhisper_session_id"]) return; // already present
+
+	const transcriptFile = resolveWikiLink(app, noteFm, "transcript", noteFile.path);
+	if (!transcriptFile) return;
+
+	const transcriptFm = app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
+	const sessionId = transcriptFm["macwhisper_session_id"] as string | undefined;
+	if (!sessionId) return;
+
+	await updateFrontmatter(app, noteFile.path, "macwhisper_session_id", sessionId);
+	console.debug(`[WhisperCal] Healed macwhisper_session_id on ${noteFile.path} from transcript`);
+}
+
 export function renderMeetingCard(
 	container: HTMLElement,
 	opts: MeetingCardOpts,
@@ -276,6 +303,7 @@ export function renderMeetingCard(
 		const handleClick = async () => {
 			try {
 				if (noteCreator.noteExists(event)) {
+					await healMissingSessionId(app, noteCreator, event);
 					await noteCreator.openExistingNote(event);
 				} else {
 					const isUnscheduled = event.id.startsWith("unscheduled");
