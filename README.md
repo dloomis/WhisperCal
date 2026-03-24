@@ -8,6 +8,8 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 ![Transcript with speaker-tagged diarization and calendar sidebar](docs/screenshot-transcript.png)
 
+<br>
+
 **LLM-generated meeting summary with key decisions and action items:**
 
 ![Meeting summary with key decisions, action items, and discussion points](docs/screenshot-summary.png)
