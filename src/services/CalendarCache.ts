@@ -159,6 +159,18 @@ export class CachedCalendarProvider implements CalendarProvider {
 		this.timezone = timezone;
 	}
 
+	/** Clear all cached data (e.g. when switching calendar providers). */
+	async clear(): Promise<void> {
+		if (this.saveTimer !== null) {
+			window.clearTimeout(this.saveTimer);
+			this.saveTimer = null;
+		}
+		this.cache = {version: 1, days: {}};
+		this.dirty = false;
+		this.lastStatus = {source: "live", fetchedAt: null, connected: false};
+		await this.writeCacheToDisk();
+	}
+
 	/** Flush any pending cache writes to disk. Call on plugin unload. */
 	async flush(): Promise<void> {
 		if (this.saveTimer !== null) {

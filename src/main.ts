@@ -247,7 +247,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// If provider type changed, rebuild the entire stack
 		if (this.settings.calendarProvider !== this.activeProviderType) {
 			this.auth.cancelSignIn();
-			await this.cachedProvider?.flush();
+			await this.cachedProvider?.clear();
 
 			this.activeProviderType = this.settings.calendarProvider;
 			const stack = createCalendarStack(
