@@ -653,9 +653,9 @@
 }
 
 .whisper-cal-pill:hover:not(:disabled) {
-	background: var(--interactive-hover);
-	color: var(--icon-color-hover);
-	border-color: var(--background-modifier-border-hover);
+	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
+	color: var(--interactive-accent);
+	border-color: var(--interactive-accent);
 	box-shadow: 0 2px 4px color-mix(in srgb, var(--background-modifier-border) 50%, transparent);
 }
 
