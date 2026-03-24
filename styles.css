@@ -104,7 +104,9 @@
 	width: 88px;
 	flex-shrink: 0;
 	--wc-category-color: var(--text-error);
-	border-right: 4px solid color-mix(in srgb, var(--wc-category-color) 90%, black);
+	--wc-gutter-bg: color-mix(in srgb, var(--wc-category-color) 10%, var(--background-primary));
+	background: var(--wc-gutter-bg);
+	border-right: 4px solid color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg));
 	position: relative;
 }
 
@@ -173,12 +175,12 @@
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
 	--wc-category-color: var(--text-warning);
-	background: color-mix(in srgb, var(--text-warning) 25%, transparent);
+	--wc-gutter-bg: color-mix(in srgb, var(--text-warning) 25%, var(--background-primary));
 }
 
 .whisper-cal-card-gutter-done {
 	--wc-category-color: var(--interactive-accent);
-	background: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+	--wc-gutter-bg: color-mix(in srgb, var(--interactive-accent) 25%, var(--background-primary));
 }
 
 /* Dashed border for not-accepted meetings — gaps show primary background */
