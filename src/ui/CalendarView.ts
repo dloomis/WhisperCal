@@ -935,61 +935,37 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	/** Place (or reposition) the current-time marker centered on the active card or gap. */
+	/** Place the current-time marker centered on the active card or gap. */
 	private updateNowMarker(): void {
 		if (!this.contentContainer) return;
-
-		// Remove any existing marker
 		this.contentContainer.querySelector(".whisper-cal-now-line")?.remove();
-
-		// Only show on today's view
 		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
 
 		const nowMs = Date.now();
+		const cards = this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]");
+		if (cards.length === 0) return;
 
-		const timedCards = Array.from(
-			this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]"),
-		);
-		if (timedCards.length === 0) return;
-
-		// Find the element to center on: a gap spacer or the most recent started card
+		// Find target: gap spacer containing now, or most-recent started card/group
 		let target: HTMLElement | null = null;
-
-		// Check if now falls inside a gap spacer
-		const gaps = Array.from(
-			this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"),
-		);
-		target = gaps.find(g =>
-			nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd),
-		) ?? null;
-
-		// Otherwise find the most recent started card
+		for (const g of Array.from(this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"))) {
+			if (nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd)) { target = g; break; }
+		}
 		if (!target) {
-			for (let i = timedCards.length - 1; i >= 0; i--) {
-				const card = timedCards[i]!;
-				if (nowMs >= Number(card.dataset.startTime)) {
-					target = (card.closest(".whisper-cal-conflict-group") as HTMLElement | null) ?? card;
+			for (let i = cards.length - 1; i >= 0; i--) {
+				if (nowMs >= Number(cards[i]!.dataset.startTime)) {
+					target = (cards[i]!.closest(".whisper-cal-conflict-group") as HTMLElement | null) ?? cards[i]!;
 					break;
 				}
 			}
 		}
+		if (!target) return; // before all meetings — no marker
 
-		if (!target) {
-			// Before all meetings — place line before the first card
-			const first = timedCards[0]!;
-			const ref = first.closest(".whisper-cal-conflict-group") ?? first;
-			ref.parentElement!.insertBefore(createDiv({cls: "whisper-cal-now-line"}), ref);
-			return;
-		}
-
-		// Position marker at the vertical center of the target element
-		const containerRect = this.contentContainer.getBoundingClientRect();
-		const targetRect = target.getBoundingClientRect();
-		const topOffset = targetRect.top - containerRect.top + this.contentContainer.scrollTop
-			+ targetRect.height / 2;
-
-		const marker = createDiv({cls: "whisper-cal-now-line whisper-cal-now-line-overlay"});
-		marker.style.top = `${topOffset}px`;
+		// Place marker at vertical center of target
+		const cRect = this.contentContainer.getBoundingClientRect();
+		const tRect = target.getBoundingClientRect();
+		const marker = createDiv({cls: "whisper-cal-now-line"});
+		marker.style.position = "absolute";
+		marker.style.top = `${tRect.top - cRect.top + this.contentContainer.scrollTop + tRect.height / 2}px`;
 		this.contentContainer.appendChild(marker);
 	}
 

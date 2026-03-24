@@ -199,8 +199,6 @@
 /* Current-time marker — triangle in the gutter margin */
 .whisper-cal-now-line {
 	height: 0;
-	position: relative;
-	margin: -5px 0;
 	z-index: 1;
 	pointer-events: none;
 }
@@ -221,14 +219,6 @@
 
 .whisper-cal-content {
 	position: relative;
-}
-
-/* Overlay variant — positioned absolutely within the content container */
-.whisper-cal-now-line-overlay {
-	position: absolute;
-	left: 0;
-	right: 0;
-	margin: 0;
 }
 
 .whisper-cal-card-note-open .whisper-cal-card-content {
