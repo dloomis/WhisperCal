@@ -233,45 +233,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				new FileSuggest(this.app, text.inputEl);
 			});
 
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		new Setting(containerEl)
-			.setName("MacWhisper")
-			.setHeading();
-		/* eslint-enable obsidianmd/ui/sentence-case */
-
-		new Setting(containerEl)
-			.setName("Database path")
-			.setDesc(MACWHISPER_DB_PATH)
-			.setDisabled(true);
-
-		new Setting(containerEl)
-			.setName("Recording match window (minutes)")
-			.setDesc("How close a recording start must be to the scheduled meeting time to be suggested for linking")
-			.addText(text => text
-				.setPlaceholder("10")
-				.setValue(String(this.plugin.settings.recordingWindowMinutes))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.recordingWindowMinutes = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Unlinked lookback (days)")
-			.setDesc("How far back to check for unlinked recordings")
-			.addText(text => text
-				.setPlaceholder("30")
-				.setValue(String(this.plugin.settings.unlinkedLookbackDays))
-				.onChange(async (value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.unlinkedLookbackDays = num;
-						await this.plugin.saveSettings();
-					}
-				}));
-
 		new Setting(containerEl)
 			.setName("Calendar")
 			.setHeading();
@@ -386,6 +347,45 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.cacheRetentionDays = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("MacWhisper")
+			.setHeading();
+		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		new Setting(containerEl)
+			.setName("Database path")
+			.setDesc(MACWHISPER_DB_PATH)
+			.setDisabled(true);
+
+		new Setting(containerEl)
+			.setName("Recording match window (minutes)")
+			.setDesc("How close a recording start must be to the scheduled meeting time to be suggested for linking")
+			.addText(text => text
+				.setPlaceholder("10")
+				.setValue(String(this.plugin.settings.recordingWindowMinutes))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.recordingWindowMinutes = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Unlinked lookback (days)")
+			.setDesc("How far back to check for unlinked recordings")
+			.addText(text => text
+				.setPlaceholder("30")
+				.setValue(String(this.plugin.settings.unlinkedLookbackDays))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 1) {
+						this.plugin.settings.unlinkedLookbackDays = num;
 						await this.plugin.saveSettings();
 					}
 				}));
