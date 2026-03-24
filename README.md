@@ -1,6 +1,6 @@
 # WhisperCal
 
-A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sidebar, creates templated meeting notes with one click, links [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings and transcripts to those notes, and drives an LLM-powered pipeline to tag speakers and summarize meetings.
+A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 365 or Google Calendar), creates templated meeting notes with one click, links [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings and transcripts to those notes, and drives an LLM-powered pipeline to tag speakers and summarize meetings.
 
 > **Desktop only.** WhisperCal uses Node APIs and AppleScript and will not load on Obsidian mobile.
 
@@ -12,9 +12,11 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Setup](#setup)
-  - [Azure AD App Registration](#azure-ad-app-registration)
+  - [Choosing a Calendar Provider](#choosing-a-calendar-provider)
+  - [Microsoft 365 Setup](#microsoft-365-setup)
+  - [Google Calendar Setup](#google-calendar-setup)
   - [Signing In](#signing-in)
-  - [Cloud Instances](#cloud-instances)
+  - [Cloud Instances (Microsoft)](#cloud-instances-microsoft)
 - [The Calendar View](#the-calendar-view)
   - [Navigation](#navigation)
   - [Status Indicator](#status-indicator)
@@ -64,7 +66,7 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 
 ## Features at a Glance
 
-- **Calendar sidebar** — Browse your Outlook calendar day by day inside Obsidian, with automatic refresh and offline caching.
+- **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh and offline caching.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
 - **MacWhisper recording linking** — Match MacWhisper recordings to meetings by timestamp, link them to the note, and auto-generate a transcript file.
 - **Speaker tagging** — Run an LLM in the background to identify speakers, then review and approve proposed names in an in-Obsidian confirmation modal.
@@ -76,8 +78,9 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 ## Prerequisites
 
 - **Obsidian** 1.4.10 or later (desktop only)
-- A **Microsoft 365** account with calendar access
-- An **Azure AD app registration** (see [Setup](#azure-ad-app-registration))
+- A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
+- For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
+- For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
 - **MacWhisper** (optional — needed for transcript features)
 - An **LLM CLI tool** (optional — needed for speaker tagging and summarization; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
 
@@ -102,7 +105,16 @@ A desktop-only Obsidian plugin that puts your Microsoft 365 calendar in a sideba
 
 ## Setup
 
-### Azure AD App Registration
+### Choosing a Calendar Provider
+
+WhisperCal supports two calendar providers. In **Settings > WhisperCal > Calendar**, select your provider from the **Calendar provider** dropdown:
+
+- **Microsoft 365** — Connects via Microsoft Graph API using a Device Code Flow.
+- **Google Calendar** — Connects via Google Calendar API using an OAuth2 loopback flow.
+
+The rest of the settings UI adapts to show only the fields relevant to your chosen provider. You can switch providers at any time — each provider's auth tokens are stored separately, so switching back preserves your sign-in.
+
+### Microsoft 365 Setup
 
 WhisperCal connects to your calendar through the Microsoft Graph API. You need to register an app in Azure AD:
 
@@ -120,20 +132,40 @@ Then in WhisperCal settings:
 - Paste the **Tenant ID** and **Client ID** into the corresponding fields.
 - Select your **Cloud instance** (most users should leave this on "Public").
 
+### Google Calendar Setup
+
+WhisperCal connects to Google Calendar through the Google Calendar API. You need to create OAuth credentials in the Google Cloud Console:
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or select an existing one).
+3. Navigate to **APIs & Services > Library** and enable the **Google Calendar API** and the **People API**.
+4. Go to **APIs & Services > Credentials** > **Create credentials** > **OAuth client ID**.
+5. Set the application type to **Desktop app** and give it a name (e.g., "WhisperCal").
+6. Click **Create** and copy the **Client ID** and **Client secret**.
+7. If your app will be used by more than 100 users, complete the [OAuth consent screen verification](https://support.google.com/cloud/answer/7454865). For personal use this is not required.
+
+Then in WhisperCal settings:
+- Paste the **Client ID** and **Client secret** into the corresponding fields under "Google account".
+
 ### Signing In
 
-WhisperCal uses the **Device Code Flow** — a two-step process designed for apps that can't open a browser popup:
+The sign-in flow depends on your chosen provider:
 
-1. Click **Sign in with Microsoft** in the WhisperCal settings panel.
+**Microsoft 365** uses the **Device Code Flow**:
+1. Click **Sign in** in the WhisperCal settings panel.
 2. A **user code** appears (e.g., `ABC12DEF`) along with a link to the Microsoft device login page.
 3. Open the link in your browser, enter the code, and sign in with your Microsoft account.
 4. Once you complete sign-in in the browser, WhisperCal detects it automatically and shows "Signed in".
 
-Your tokens are stored locally in the plugin's `data.json` file within your vault. Access tokens refresh automatically; you should rarely need to sign in again.
+**Google Calendar** uses an **OAuth2 loopback flow**:
+1. Click **Sign in** in the WhisperCal settings panel.
+2. Your default browser opens to the Google sign-in page.
+3. Sign in and grant WhisperCal access to your calendar and contacts.
+4. The browser redirects to a local page confirming success. You can close the tab and return to Obsidian.
 
-To sign out, click **Sign out** in settings.
+For both providers, tokens are stored locally in the plugin's `data.json` file within your vault. Access tokens refresh automatically; you should rarely need to sign in again. To sign out, click **Sign out** in settings.
 
-### Cloud Instances
+### Cloud Instances (Microsoft)
 
 If your organization uses a government or sovereign cloud, select the appropriate instance in settings:
 
@@ -157,7 +189,7 @@ Open the calendar sidebar by clicking the **calendar ribbon icon** or running th
 
 - **Left / right chevron** — Move one day backward or forward.
 - **Today button** — Jump to the current date (hidden when already viewing today).
-- **Refresh button** — Manually refresh calendar data from Microsoft 365.
+- **Refresh button** — Manually refresh calendar data from your calendar provider.
 
 The calendar auto-refreshes on a configurable interval (default: every 5 minutes). At midnight, the view automatically advances to the new day.
 
@@ -165,7 +197,7 @@ The calendar auto-refreshes on a configurable interval (default: every 5 minutes
 
 A small dot below the header shows connection status:
 
-- **Green dot** + "Updated X min ago" — Live data from Microsoft 365.
+- **Green dot** + "Updated X min ago" — Live data from your calendar provider.
 - **Gray dot** + "Cached X min ago" — Showing previously fetched data (offline or between refreshes).
 - **Gray dot** + "Offline" — No cached data available for this day.
 
@@ -199,9 +231,9 @@ Below the time and duration, the gutter displays up to three inline icons (in th
 
 | Icon | Meaning |
 |------|---------|
-| **☆ Star** | You are the organizer of this meeting. Determined by comparing the event's organizer email against your Microsoft 365 account email. |
-| **⛔ Octagon-alert** | The organizer is in your **important organizers** list (configured in settings via the chip input with Graph API people autocomplete). |
-| **⊞ Grid-2x2** | The meeting has an Outlook **category** assigned. The icon color matches the category color from your M365 master categories. Hover for the category name tooltip. |
+| **☆ Star** | You are the organizer of this meeting. Determined by comparing the event's organizer email against your calendar account email. |
+| **⛔ Octagon-alert** | The organizer is in your **important organizers** list (configured in settings with people autocomplete from your calendar provider). |
+| **⊞ Grid-2x2** | The meeting has a **category** assigned (Outlook categories for Microsoft, color labels for Google). The icon color matches the category color. Hover for the category name tooltip. |
 
 ### Gutter Background Colors
 
@@ -215,7 +247,7 @@ The gutter background tint reflects the pipeline workflow state:
 
 ### Category Bar
 
-The vertical bar on the right edge of the gutter indicates the Outlook category color. When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
+The vertical bar on the right edge of the gutter indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
 
 ### Button Highlights
 
@@ -359,7 +391,7 @@ Use `{{variableName}}` placeholders in your template body. All available variabl
 | `{{attendees}}` | Comma-separated wiki links | `"[[Jane Smith]]", "[[Bob Lee]]"` |
 | `{{attendeeList}}` | Bullet list of wiki links | `- [[Jane Smith]]` (one per line) |
 | `{{isOnlineMeeting}}` | Whether it has an online link | `true` |
-| `{{onlineMeetingUrl}}` | Teams/Zoom join URL | `https://teams.microsoft.com/...` |
+| `{{onlineMeetingUrl}}` | Online meeting join URL (Teams, Google Meet, Zoom, etc.) | `https://teams.microsoft.com/...` |
 | `{{isAllDay}}` | All-day event flag | `false` |
 | `{{description}}` | Event body (HTML converted to Markdown) | Meeting agenda text |
 
@@ -705,6 +737,7 @@ All commands are available from the command palette (`Cmd+P`):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| **Calendar provider** | Microsoft 365 | Which calendar service to connect to (Microsoft 365 or Google Calendar). |
 | **Timezone** | `America/New_York` | IANA timezone for displaying meeting times. |
 | **Refresh interval** | `5` min | Auto-refresh frequency for the calendar view. |
 | **Show all-day events** | Off | Display all-day events in the calendar view. |
@@ -713,6 +746,8 @@ All commands are available from the command palette (`Cmd+P`):
 
 ### Microsoft Account
 
+Shown when Calendar provider is set to "Microsoft 365".
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Tenant ID** | *(empty)* | Directory (tenant) ID from your Azure AD app registration. |
@@ -720,11 +755,20 @@ All commands are available from the command palette (`Cmd+P`):
 | **Cloud instance** | Public | Microsoft cloud environment. |
 | **Device login URL** | *(empty = auto)* | Override the device code login URL for non-standard environments. |
 
+### Google Account
+
+Shown when Calendar provider is set to "Google Calendar".
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Client ID** | *(empty)* | OAuth client ID from your Google Cloud Console desktop app credentials. |
+| **Client secret** | *(empty)* | OAuth client secret from your Google Cloud Console desktop app credentials. |
+
 ---
 
 ## Disclosures
 
-- **Remote services:** This plugin connects to the **Microsoft Graph API** to fetch calendar events. Authentication uses the OAuth 2.0 Device Code Flow. OAuth tokens are stored locally in the plugin's `data.json` file within your vault.
+- **Remote services:** This plugin connects to the **Microsoft Graph API** or the **Google Calendar API** (depending on your chosen provider) to fetch calendar events. For Microsoft, authentication uses the OAuth 2.0 Device Code Flow. For Google, authentication uses an OAuth 2.0 Authorization Code flow with PKCE via a localhost redirect. OAuth tokens for both providers are stored locally in the plugin's `data.json` file within your vault.
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
 - **LLM invocation:** When you use the speaker tagging or summarization features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
 - **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
@@ -733,8 +777,11 @@ All commands are available from the command palette (`Cmd+P`):
 
 ## Troubleshooting
 
-### "Tenant ID and Client ID are required"
-Both fields must be filled in before you can sign in. See [Azure AD App Registration](#azure-ad-app-registration).
+### "Tenant ID and Client ID are required" (Microsoft)
+Both fields must be filled in before you can sign in. See [Microsoft 365 Setup](#microsoft-365-setup).
+
+### "Client ID and Client secret are required" (Google)
+Both fields must be filled in before you can sign in. See [Google Calendar Setup](#google-calendar-setup).
 
 ### Device code expired
 The device code is valid for about 15 minutes. If it expires before you complete sign-in in the browser, click **"Try again"** in settings to get a new code.
