@@ -104,14 +104,15 @@ class LlmConsentModal extends Modal {
 		/* eslint-enable obsidianmd/ui/sentence-case */
 		acceptBtn.addEventListener("click", () => {
 			this.accepted = true;
-			this.onAccept();
 			this.close();
 		});
 	}
 
 	onClose(): void {
 		this.contentEl.empty();
-		if (!this.accepted) {
+		if (this.accepted) {
+			this.onAccept();
+		} else {
 			// If closed without accepting, ensure toggle stays off
 			// (handled by the caller checking the callback)
 		}
