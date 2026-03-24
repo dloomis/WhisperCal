@@ -525,15 +525,9 @@ export class CalendarView extends ItemView {
 			const eventId = fm["calendar_event_id"] as string | undefined;
 			if (!eventId || calendarEventIds.has(eventId)) continue;
 
-			// Skip notes created by a different calendar provider
+			// Skip notes from a different provider (or legacy notes without the field)
 			const noteProvider = fm["calendar_provider"] as string | undefined;
-			if (noteProvider && noteProvider !== this.settings.calendarProvider) continue;
-			// Legacy notes without calendar_provider: infer from event ID format
-			if (!noteProvider && eventId !== "unscheduled") {
-				const looksLikeMicrosoft = eventId.startsWith("AAMk");
-				if (this.settings.calendarProvider === "google" && looksLikeMicrosoft) continue;
-				if (this.settings.calendarProvider === "microsoft" && !looksLikeMicrosoft) continue;
-			}
+			if (noteProvider !== this.settings.calendarProvider) continue;
 
 			// Only show local notes that are already linked to a MacWhisper recording
 			if (!fm["macwhisper_session_id"]) continue;
