@@ -120,6 +120,8 @@ Sort by date prefix (descending), take top 2 (excluding the current transcript).
 
 Collect all unique names from: stub speakers (frontmatter), calendar attendees (Step 5), and recurring meeting speakers (6b).
 
+**Completeness check:** After collection, verify every calendar invitee produced at least one candidate name. If any invitee was not resolved to a name (e.g., unparseable email format), log a warning: `"Could not extract name from invitee: {raw_value}"` and skip that entry rather than silently dropping it.
+
 #### 6c-cache: Roster Cache Check
 
 **Priority order:** `People Roster:` parameter (highest — skips 6a-6c entirely) > cache hit (skips Phase 1+2 Globs/Reads below) > full rebuild (existing behavior).
@@ -213,6 +215,10 @@ Match detected vocatives against the People context table:
 - **Nicknames** from the `Nickname` column
 
 Each vocative detection is a signal. Multiple vocative detections for the same name = stronger signal.
+
+**Unmatched vocative recovery:** If a vocative name does not match any candidate in the People context table (first name, nickname, or full name), attempt recovery:
+1. Glob `{People Folder}/*{vocative_name}*.md` — if a People note exists, add that person to the candidate pool and apply vocative-response mapping (Rule 5) normally
+2. If no People note found, flag in the evidence as `unmatched_vocative: "{name}"` — this may indicate an uninvited attendee or a transcription error
 
 #### Rule 5: Vocative-to-Response Mapping
 

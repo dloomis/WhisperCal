@@ -6,6 +6,7 @@ import {updateFrontmatter} from "../utils/frontmatter";
 import {getLinkedSessionIds} from "../utils/vault";
 import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
+import {parseDisplayName} from "../utils/nameParser";
 
 /**
  * Internal helper — performs the actual recording→note link: sets MacWhisper
@@ -65,7 +66,7 @@ async function performLink(opts: {
 				recordingStart,
 				timezone,
 				calendarEvent: subject,
-				calendarAttendees: attendees.map(a => a.name),
+				calendarAttendees: attendees.map(a => parseDisplayName(a.name, a.email)),
 				isRecurring,
 			});
 			if (transcriptPath) {
