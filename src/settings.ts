@@ -111,10 +111,8 @@ class LlmConsentModal extends Modal {
 	onClose(): void {
 		this.contentEl.empty();
 		if (this.accepted) {
-			this.onAccept();
-		} else {
-			// If closed without accepting, ensure toggle stays off
-			// (handled by the caller checking the callback)
+			// Defer callback so the modal DOM is fully removed first
+			window.setTimeout(() => this.onAccept(), 50);
 		}
 	}
 }
