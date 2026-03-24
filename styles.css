@@ -641,15 +641,9 @@
 	display: none;
 }
 
-/* Green status dot — bottom-right corner */
+/* Badge element hidden — complete state uses border accent instead */
 .whisper-cal-pill-badge {
-	position: absolute;
-	top: -4px;
-	right: -4px;
-	width: 12px;
-	height: 12px;
-	border-radius: 50%;
-	background: var(--text-success);
+	display: none;
 }
 
 .whisper-cal-pill:hover:not(:disabled) {
@@ -660,9 +654,13 @@
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete {
+	border-color: var(--text-success);
+	box-shadow: 0 0 0 1px var(--text-success);
 }
 
 .whisper-cal-pill.whisper-cal-pill-complete:hover:not(:disabled) {
+	border-color: var(--text-success);
+	box-shadow: 0 0 0 1px var(--text-success), 0 2px 4px color-mix(in srgb, var(--text-success) 25%, transparent);
 }
 
 .whisper-cal-pill-running {
