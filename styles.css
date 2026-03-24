@@ -640,25 +640,15 @@
 	display: none;
 }
 
-/* Green checkmark badge — bottom-right corner */
+/* Green status dot — bottom-right corner */
 .whisper-cal-pill-badge {
 	position: absolute;
-	bottom: -4px;
-	right: -4px;
-	width: 16px;
-	height: 16px;
-	border-radius: 50%;
-	background: var(--text-success);
-	color: white;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.whisper-cal-pill-badge svg {
+	bottom: -2px;
+	right: -2px;
 	width: 10px;
 	height: 10px;
-	stroke-width: 3px;
+	border-radius: 50%;
+	background: var(--text-success);
 }
 
 .whisper-cal-pill:hover:not(:disabled) {

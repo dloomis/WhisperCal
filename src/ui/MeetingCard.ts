@@ -47,8 +47,7 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
 	setIcon(iconEl, icon);
 	if (state === "complete") {
-		const badge = btn.createSpan({cls: "whisper-cal-pill-badge"});
-		setIcon(badge, "check");
+		btn.createSpan({cls: "whisper-cal-pill-badge"});
 	}
 	if (state === "disabled" || state === "running") {
 		btn.disabled = true;
