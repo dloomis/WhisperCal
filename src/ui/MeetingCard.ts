@@ -95,8 +95,12 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		}
 	}
 
-	const hasIcons = event.isOrganizer
-		|| (opts.importantOrganizerEmails ?? []).length > 0;
+	const importantEmails = opts.importantOrganizerEmails ?? [];
+	const isImportantOrganizer = importantEmails.length > 0
+		&& event.organizerEmail
+		&& importantEmails.includes(event.organizerEmail.toLowerCase());
+	const hasCategory = event.categories.length > 0;
+	const hasIcons = event.isOrganizer || isImportantOrganizer || hasCategory;
 
 	if (hasIcons) {
 		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
@@ -106,13 +110,18 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 			setIcon(starEl, "star");
 		}
 
-		const importantEmails = opts.importantOrganizerEmails ?? [];
-		if (importantEmails.length > 0 && event.organizerEmail) {
-			const normalized = event.organizerEmail.toLowerCase();
-			if (importantEmails.includes(normalized)) {
-				const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
-				setIcon(importantEl, "octagon-alert");
-			}
+		if (isImportantOrganizer) {
+			const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
+			setIcon(importantEl, "octagon-alert");
+		}
+
+		if (hasCategory) {
+			const catEl = iconRow.createDiv({
+				cls: "whisper-cal-card-gutter-category",
+				attr: {"aria-label": event.categories[0]!.name},
+			});
+			catEl.style.color = event.categories[0]!.color;
+			setIcon(catEl, "grid-2x2");
 		}
 	}
 
