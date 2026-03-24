@@ -807,6 +807,10 @@ export class CalendarView extends ItemView {
 			});
 		}
 
+		// Re-render timeline so findLocalNotes picks up the new note as a card
+		if (this.cachedEvents) {
+			this.renderEvents(this.cachedEvents);
+		}
 		// Rebuild the unlinked section from truth (frontmatter now has session ID)
 		void this.loadAndRenderUnlinkedSection();
 	}
