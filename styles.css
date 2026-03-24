@@ -103,7 +103,7 @@
 	padding: 12px 10px;
 	width: 88px;
 	flex-shrink: 0;
-	--wc-category-color: var(--wc-subtle);
+	--wc-category-color: var(--text-error);
 	border-right: 4px solid color-mix(in srgb, var(--wc-category-color) 90%, black);
 	position: relative;
 }
