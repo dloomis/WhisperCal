@@ -183,6 +183,7 @@ export class NoteCreator {
 			`meeting_organizer: "${yamlEscape(variables["organizer"] ?? "")}"`,
 			`tags: [meeting]`,
 			`calendar_event_id: "${yamlEscape(event.id)}"`,
+			`calendar_provider: ${this.settings.calendarProvider}`,
 			`note_created: "${noteCreated.toISOString()}"`,
 			`is_recurring: ${event.isRecurring}`,
 			`macwhisper_session_id: ""`,
