@@ -219,6 +219,15 @@
 	opacity: 0.8;
 }
 
+/* Overlay variant — centered on the parent card or gap */
+.whisper-cal-now-line-overlay {
+	position: absolute;
+	top: 50%;
+	left: 0;
+	right: 0;
+	margin: 0;
+}
+
 .whisper-cal-card-note-open .whisper-cal-card-content {
 	background: var(--background-modifier-hover);
 }
