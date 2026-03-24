@@ -167,9 +167,16 @@
 	background: color-mix(in srgb, var(--text-success) 25%, transparent);
 }
 
-/* Dashed border for not-accepted meetings */
+/* Dashed border for not-accepted meetings — gaps show primary background */
 .whisper-cal-card-gutter-tentative {
-	border-right-style: dashed;
+	border-right: 4px dashed var(--wc-category-color);
+	border-image: repeating-linear-gradient(
+		to bottom,
+		var(--wc-category-color) 0px,
+		var(--wc-category-color) 6px,
+		var(--background-primary) 6px,
+		var(--background-primary) 12px
+	) 4;
 }
 
 /* Current-time marker — triangle in the gutter margin */
