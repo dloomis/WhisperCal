@@ -323,6 +323,7 @@ export class CalendarView extends ItemView {
 			transcriptFolderPath: this.settings.transcriptFolderPath,
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: importantEmails,
+			llmEnabled: this.settings.llmEnabled,
 			onNoteCreated,
 			onTagSpeakers: this.callbacks.onTagSpeakers,
 			onSummarize: this.callbacks.onSummarize,

@@ -1,4 +1,4 @@
-import {App, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
@@ -28,6 +28,7 @@ export interface WhisperCalSettings {
 	speakerTaggingPromptPath: string;
 	summarizerPromptPath: string;
 	microphoneUser: string;
+	llmEnabled: boolean;
 	llmCli: string;
 	llmExtraFlags: string;
 	llmTimeoutMinutes: number;
@@ -59,6 +60,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	speakerTaggingPromptPath: "",
 	summarizerPromptPath: "",
 	microphoneUser: "",
+	llmEnabled: false,
 	llmCli: "claude",
 	llmExtraFlags: "--dangerously-skip-permissions",
 	llmTimeoutMinutes: 5,
@@ -72,6 +74,49 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	deviceLoginUrl: "",
 	timeFormat: "auto",
 };
+
+class LlmConsentModal extends Modal {
+	private accepted = false;
+
+	constructor(app: App, private readonly onAccept: () => void) {
+		super(app);
+	}
+
+	onOpen(): void {
+		const {contentEl} = this;
+		contentEl.createEl("h2", {text: "Enable LLM features?"});
+		contentEl.createEl("p", {
+			text: "Speaker tagging and summarization send meeting transcripts and note content to a cloud LLM provider. " +
+				"This may include sensitive or classified information.",
+		});
+		contentEl.createEl("p", {
+			cls: "mod-warning",
+			text: "Only enable this if you are authorized to send this data to external services.",
+		});
+		const btnRow = contentEl.createDiv({cls: "modal-button-container"});
+		const cancelBtn = btnRow.createEl("button", {text: "Cancel"});
+		cancelBtn.addEventListener("click", () => this.close());
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		const acceptBtn = btnRow.createEl("button", {
+			cls: "mod-cta",
+			text: "I understand, enable LLM features",
+		});
+		/* eslint-enable obsidianmd/ui/sentence-case */
+		acceptBtn.addEventListener("click", () => {
+			this.accepted = true;
+			this.onAccept();
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		if (!this.accepted) {
+			// If closed without accepting, ensure toggle stays off
+			// (handled by the caller checking the callback)
+		}
+	}
+}
 
 export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
@@ -215,6 +260,30 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("LLM")
 			.setHeading();
+
+		new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setName("Enable LLM features")
+			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
+			.addToggle(toggle => {
+				toggle.setValue(this.plugin.settings.llmEnabled);
+				toggle.onChange(async (value) => {
+					if (value) {
+						// Show consent modal before enabling
+						toggle.setValue(false);
+						new LlmConsentModal(this.app, async () => {
+							this.plugin.settings.llmEnabled = true;
+							toggle.setValue(true);
+							await this.plugin.saveSettings();
+							this.display();
+						}).open();
+					} else {
+						this.plugin.settings.llmEnabled = false;
+						await this.plugin.saveSettings();
+						this.display();
+					}
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Speaker tagging prompt")

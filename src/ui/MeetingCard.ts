@@ -16,6 +16,7 @@ export interface MeetingCardOpts {
 	recordingWindowMinutes?: number;
 	onNoteCreated?: (eventId: string) => void;
 	importantOrganizerEmails?: readonly string[];
+	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
 }
@@ -62,9 +63,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		: "whisper-cal-card-gutter";
 	const gutter = card.createDiv({cls: gutterCls});
 
-	if (event.categories.length > 0) {
-		gutter.style.setProperty("--wc-category-color", event.categories[0]!.color);
-	}
+	// Category color is shown via the grid icon only; the vertical bar mirrors gutter state
 
 	if (event.isAllDay) {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
@@ -121,7 +120,9 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 				attr: {"aria-label": event.categories[0]!.name},
 			});
 			catEl.style.color = event.categories[0]!.color;
-			setIcon(catEl, "grid-2x2");
+			setIcon(catEl, "square");
+			const svg = catEl.querySelector("svg");
+			if (svg) svg.style.fill = event.categories[0]!.color;
 		}
 	}
 
@@ -332,41 +333,45 @@ export function renderMeetingCard(
 		});
 	}
 
-	// Speakers pill
-	const speakersPill = renderPill(actions, "users-round", "Speakers", states.speakers);
-	if (states.speakers === "incomplete" && onTagSpeakers) {
-		speakersPill.addEventListener("click", () => {
-			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-			if (!tf) return;
-			const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
-			onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
-		});
-	} else if (states.speakers === "complete") {
-		speakersPill.addEventListener("click", () => {
-			const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-			if (tf) void app.workspace.openLinkText(tf.path, "", false);
-		});
+	// Speakers pill (LLM feature)
+	if (opts.llmEnabled !== false) {
+		const speakersPill = renderPill(actions, "users-round", "Speakers", states.speakers);
+		if (states.speakers === "incomplete" && onTagSpeakers) {
+			speakersPill.addEventListener("click", () => {
+				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+				if (!tf) return;
+				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
+				onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
+			});
+		} else if (states.speakers === "complete") {
+			speakersPill.addEventListener("click", () => {
+				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+				if (tf) void app.workspace.openLinkText(tf.path, "", false);
+			});
+		}
 	}
 
-	// Summary pill
-	const summaryPill = renderPill(actions, "sparkles", "Summary", states.summary);
-	if (states.summary === "incomplete" && onSummarize) {
-		summaryPill.addEventListener("click", () => {
-			onSummarize(notePath);
-		});
-	} else if (states.summary === "complete") {
-		summaryPill.addEventListener("click", () => {
-			void app.workspace.openLinkText(notePath, "", false);
-		});
+	// Summary pill (LLM feature)
+	if (opts.llmEnabled !== false) {
+		const summaryPill = renderPill(actions, "sparkles", "Summary", states.summary);
+		if (states.summary === "incomplete" && onSummarize) {
+			summaryPill.addEventListener("click", () => {
+				onSummarize(notePath);
+			});
+		} else if (states.summary === "complete") {
+			summaryPill.addEventListener("click", () => {
+				void app.workspace.openLinkText(notePath, "", false);
+			});
+		}
 	}
 
 	// Status lines below actions
-	if (states.speakers === "running") {
+	if (opts.llmEnabled !== false && states.speakers === "running") {
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Tagging speakers\u2026"});
 	}
-	if (states.summary === "running") {
+	if (opts.llmEnabled !== false && states.summary === "running") {
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
 		status.createSpan({text: "Summarizing\u2026"});
