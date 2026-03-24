@@ -4,7 +4,7 @@
 }
 
 .whisper-cal-container {
-	--wc-subtle: var(--text-faint);
+	--wc-subtle: color-mix(in srgb, var(--text-faint) 60%, var(--background-primary));
 	padding: 0 12px 12px 20px;
 	min-height: 100%;
 	background: var(--background-primary);
