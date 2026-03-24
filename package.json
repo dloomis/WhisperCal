@@ -1,6 +1,6 @@
 {
 	"name": "whisper-cal",
-	"version": "0.3.128",
+	"version": "0.3.129",
 	"description": "WhisperCal Obsidian plugin",
 	"main": "main.js",
 	"type": "module",
