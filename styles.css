@@ -613,8 +613,8 @@
 	align-items: center;
 	justify-content: center;
 	position: relative;
-	width: 48px;
-	height: 30px;
+	width: 52px;
+	height: 26px;
 	padding: 0;
 	border-radius: var(--radius-s);
 	border: 1px solid var(--background-modifier-border);
@@ -632,8 +632,8 @@
 }
 
 .whisper-cal-pill-icon svg {
-	width: 18px;
-	height: 18px;
+	width: 15px;
+	height: 15px;
 }
 
 .whisper-cal-pill-label {
