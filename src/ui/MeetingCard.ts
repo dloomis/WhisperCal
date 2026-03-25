@@ -6,7 +6,7 @@ import {formatTime, formatRecordingDuration} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs} from "../state";
+import {summarizeJobs, speakerTagJobs, researchJobs} from "../state";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 
 export interface MeetingCardOpts {
@@ -21,6 +21,7 @@ export interface MeetingCardOpts {
 	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
+	onResearch?: (notePath: string) => void;
 	peopleFolderPath?: string;
 }
 
@@ -28,6 +29,7 @@ type PillState = "incomplete" | "complete" | "disabled" | "running";
 
 interface PillStates {
 	note: PillState;
+	research: PillState;
 	transcript: PillState;
 	speakers: PillState;
 	summary: PillState;
@@ -168,6 +170,11 @@ function computePillStates(
 		: {};
 
 	const note: PillState = noteExists ? "complete" : "incomplete";
+	const research: PillState = !noteExists
+		? "disabled"
+		: researchJobs.has(notePath) ? "running"
+		: noteFm["research_notes"] ? "complete"
+		: "incomplete";
 	const transcript: PillState = !noteExists
 		? "disabled"
 		: noteFm["transcript"] ? "complete" : "incomplete";
@@ -190,7 +197,7 @@ function computePillStates(
 		: summarizeJobs.has(notePath) ? "running"
 		: "incomplete";
 
-	return {note, transcript, speakers, summary, transcriptFile, transcriptPath, pipelineState};
+	return {note, research, transcript, speakers, summary, transcriptFile, transcriptPath, pipelineState};
 }
 
 /**
@@ -227,7 +234,7 @@ export function renderMeetingCard(
 		event, timezone, noteCreator, app,
 		transcriptFolderPath = "Transcripts",
 		recordingWindowMinutes = 10,
-		onNoteCreated, onTagSpeakers, onSummarize,
+		onNoteCreated, onTagSpeakers, onSummarize, onResearch,
 	} = opts;
 	const card = container.createDiv({cls: "whisper-cal-card"});
 	card.dataset.eventId = event.id;
@@ -345,6 +352,20 @@ export function renderMeetingCard(
 		void handleClick();
 	});
 
+	// Research pill (LLM feature, independent of pipeline workflow)
+	if (opts.llmEnabled !== false) {
+		const researchPill = renderPill(actions, "book-open", "Research", states.research);
+		if (states.research === "incomplete" && onResearch) {
+			researchPill.addEventListener("click", () => {
+				onResearch(notePath);
+			});
+		} else if (states.research === "complete") {
+			researchPill.addEventListener("click", () => {
+				void app.workspace.openLinkText(notePath, "", false);
+			});
+		}
+	}
+
 	// Transcript pill
 	const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
 	if (states.transcript !== "disabled") {
@@ -414,6 +435,11 @@ export function renderMeetingCard(
 	}
 
 	// Status lines below actions
+	if (opts.llmEnabled !== false && states.research === "running") {
+		const status = content.createDiv({cls: "whisper-cal-card-status"});
+		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		status.createSpan({text: "Researching\u2026"});
+	}
 	if (opts.llmEnabled !== false && states.speakers === "running") {
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});

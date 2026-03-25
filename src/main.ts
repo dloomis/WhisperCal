@@ -1,14 +1,15 @@
 import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
-import {summarizeJobs, speakerTagJobs} from "./state";
+import {summarizeJobs, speakerTagJobs, researchJobs} from "./state";
 import {parseSpeakerTagOutput} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
+import {ResearchModal} from "./ui/ResearchModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
@@ -78,6 +79,9 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			onSummarize: (notePath: string) => {
 				this.doSummarize(notePath);
+			},
+			onResearch: (notePath: string) => {
+				this.doResearch(notePath);
 			},
 		};
 
@@ -185,6 +189,20 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: COMMAND_RESEARCH,
+			name: "Research meeting",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (!fm?.["calendar_event_id"]) return false;
+				if (checking) return true;
+				this.doResearch(file.path);
+				return true;
+			},
+		});
+
 		// Show/hide summarize banner when switching between notes
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.updateAllSummarizeBanners()),
@@ -203,6 +221,7 @@ export default class WhisperCalPlugin extends Plugin {
 		activeProcesses.clear();
 		speakerTagJobs.clear();
 		summarizeJobs.clear();
+		researchJobs.clear();
 	}
 
 	async onExternalSettingsChange(): Promise<void> {
@@ -536,6 +555,63 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 			},
 		});
+	}
+
+	private doResearch(notePath: string): void {
+		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
+		if (!(noteFile instanceof TFile)) {
+			new Notice("Meeting note not found");
+			return;
+		}
+		if (!this.settings.researchPromptPath) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("Research prompt not configured \u2014 set it in WhisperCal settings");
+			return;
+		}
+
+		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+		const title = (fm?.["meeting_subject"] as string) || noteFile.basename;
+
+		void (async () => {
+			const result = await new ResearchModal(this.app, title).prompt();
+			if (!result || result.paths.length === 0) return;
+
+			// Store selected research notes in frontmatter
+			const wikilinks = result.paths.map(p => `[[${p.replace(/\.md$/, "")}]]`).join(", ");
+			await updateFrontmatter(this.app, notePath, "research_notes", wikilinks);
+
+			this.runLlmJob({
+				jobSet: researchJobs,
+				filePath: notePath,
+				label: "Research",
+				promptPath: this.settings.researchPromptPath,
+				spawnOpts: (vaultPath) => ({
+					targetPath: notePath,
+					targetLabel: "Meeting note",
+					vaultPath,
+					promptPath: this.settings.researchPromptPath,
+					llmCli: this.settings.llmCli,
+					llmExtraFlags: this.settings.llmExtraFlags,
+					researchNotePaths: result.paths,
+					additionalInstructions: result.instructions || undefined,
+					peopleFolderPath: this.settings.peopleFolderPath || undefined,
+					timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
+					debugMode: this.settings.llmDebugMode,
+				}),
+				onSuccess: ({exitCode, stderr}) => {
+					if (exitCode === 0) {
+						if (!this.app.vault.getAbstractFileByPath(notePath)) {
+							new Notice("Meeting note was deleted while research was running");
+						} else {
+							new Notice("Research complete");
+						}
+					} else {
+						const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
+						new Notice(`Research failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
+					}
+				},
+			});
+		})();
 	}
 
 	/**

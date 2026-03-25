@@ -36,6 +36,7 @@ export interface WhisperCalSettings {
 	unlinkedLookbackDays: number;
 	speakerTaggingPromptPath: string;
 	summarizerPromptPath: string;
+	researchPromptPath: string;
 	microphoneUser: string;
 	llmEnabled: boolean;
 	llmCli: string;
@@ -71,6 +72,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	unlinkedLookbackDays: 30,
 	speakerTaggingPromptPath: "",
 	summarizerPromptPath: "",
+	researchPromptPath: "",
 	microphoneUser: "",
 	llmEnabled: false,
 	llmCli: "claude",
@@ -456,6 +458,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.summarizerPromptPath)
 					.onChange(async (value) => {
 						this.plugin.settings.summarizerPromptPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Research prompt")
+			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Meeting Research.md")
+					.setValue(this.plugin.settings.researchPromptPath)
+					.onChange(async (value) => {
+						this.plugin.settings.researchPromptPath = value;
 						await this.plugin.saveSettings();
 					});
 				new FileSuggest(this.app, text.inputEl);

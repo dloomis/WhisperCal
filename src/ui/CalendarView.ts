@@ -47,6 +47,7 @@ export interface CalendarViewCallbacks {
 	getUserEmail: () => string;
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize: (notePath: string) => void;
+	onResearch: (notePath: string) => void;
 }
 
 export class CalendarView extends ItemView {
@@ -459,6 +460,7 @@ export class CalendarView extends ItemView {
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
 			onSummarize: this.callbacks.onSummarize,
+			onResearch: this.callbacks.onResearch,
 		};
 	}
 
@@ -828,7 +830,7 @@ export class CalendarView extends ItemView {
 
 	/** Keys from frontmatter that affect card rendering. */
 	private static readonly FM_KEYS = [
-		"macwhisper_session_id", "transcript", "pipeline_state", "calendar_event_id",
+		"macwhisper_session_id", "transcript", "pipeline_state", "calendar_event_id", "research_notes",
 	] as const;
 
 	/** Build a stable string from card-relevant frontmatter values. */

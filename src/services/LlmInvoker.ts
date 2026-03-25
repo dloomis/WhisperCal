@@ -15,6 +15,8 @@ interface LlmInvokerOpts {
 	transcriptFolderPath?: string;  // folder name for transcript files
 	peopleFolderPath?: string;      // folder name for People notes
 	outputFormat?: string;          // appended to trigger to specify expected output format
+	researchNotePaths?: string[];   // vault-relative paths to research context notes
+	additionalInstructions?: string; // free-text instructions appended to trigger
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
 }
 
@@ -76,6 +78,8 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.microphoneUser) parts.push(`Microphone user: ${opts.microphoneUser}.`);
 	if (opts.transcriptFolderPath) parts.push(`Transcripts Folder: ${opts.transcriptFolderPath}.`);
 	if (opts.peopleFolderPath) parts.push(`People Folder: ${opts.peopleFolderPath}.`);
+	if (opts.researchNotePaths && opts.researchNotePaths.length > 0) parts.push(`Research notes: ${opts.researchNotePaths.join(", ")}.`);
+	if (opts.additionalInstructions) parts.push(`Additional instructions: ${opts.additionalInstructions}`);
 	if (opts.outputFormat) parts.push(opts.outputFormat);
 	const trigger = parts.join(" ");
 

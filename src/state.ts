@@ -5,3 +5,6 @@ export const summarizeJobs = new Set<string>();
 
 /** Transcript paths currently being speaker-tagged. */
 export const speakerTagJobs = new Set<string>();
+
+/** Note paths currently running meeting research. */
+export const researchJobs = new Set<string>();
