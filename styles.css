@@ -181,7 +181,7 @@
 .whisper-cal-card-gutter-done {
 	--wc-category-color: var(--interactive-accent);
 	--wc-gutter-bg: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
-	border-right-color: var(--interactive-accent);
+	border-right-color: color-mix(in srgb, var(--interactive-accent) 40%, var(--wc-gutter-bg));
 }
 
 /* Dashed border for not-accepted meetings — gaps show primary background */
@@ -189,8 +189,8 @@
 	border-right: 3px dashed var(--wc-category-color);
 	border-image: repeating-linear-gradient(
 		to bottom,
-		var(--wc-category-color) 0px,
-		var(--wc-category-color) 6px,
+		color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg)) 0px,
+		color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg)) 6px,
 		var(--background-primary) 6px,
 		var(--background-primary) 12px
 	) 4;
