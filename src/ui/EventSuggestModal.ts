@@ -2,7 +2,7 @@ import {App, SuggestModal} from "obsidian";
 import type {CalendarEvent} from "../types";
 import {formatTime} from "../utils/time";
 
-export type EventChoice =
+type EventChoice =
 	| {type: "event"; event: CalendarEvent}
 	| {type: "new-meeting"};
 
@@ -46,7 +46,7 @@ export class EventSuggestModal extends SuggestModal<EventChoice> {
 		}
 		const event = choice.event;
 		el.createDiv({text: event.subject});
-		const date = event.startTime.toLocaleDateString("en-US", {
+		const date = event.startTime.toLocaleDateString(undefined, {
 			month: "short", day: "numeric", timeZone: this.timezone,
 		});
 		const time = event.isAllDay

@@ -165,10 +165,12 @@ export class SpeakerTagModal extends Modal {
 	}
 
 	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement, originalProposed: string): void {
-		const dropdown = wrapper.createDiv({cls: "whisper-cal-autocomplete-dropdown"});
-		dropdown.style.display = "none";
+		const dropdown = wrapper.createDiv({cls: "whisper-cal-autocomplete-dropdown whisper-cal-hidden"});
 		let selectedIdx = -1;
 		let userEdited = !originalProposed;
+
+		const showDropdown = (visible: boolean) => dropdown.toggleClass("whisper-cal-hidden", !visible);
+		const isDropdownVisible = () => !dropdown.hasClass("whisper-cal-hidden");
 
 		input.addEventListener("input", () => {
 			userEdited = input.value.trim() !== originalProposed;
@@ -181,7 +183,7 @@ export class SpeakerTagModal extends Modal {
 
 			// Only show autocomplete when user has edited away from the LLM proposal, or it was empty
 			if (!userEdited || !query) {
-				dropdown.style.display = "none";
+				showDropdown(false);
 				return;
 			}
 
@@ -194,7 +196,7 @@ export class SpeakerTagModal extends Modal {
 			);
 
 			if (matches.length === 0 && !this.peopleFolderPath) {
-				dropdown.style.display = "none";
+				showDropdown(false);
 				return;
 			}
 
@@ -207,7 +209,7 @@ export class SpeakerTagModal extends Modal {
 					e.preventDefault();
 					input.value = person.name;
 					userEdited = false;
-					dropdown.style.display = "none";
+					showDropdown(false);
 				});
 			}
 
@@ -224,12 +226,11 @@ export class SpeakerTagModal extends Modal {
 				createItem.addEventListener("mousedown", (e) => {
 					e.preventDefault();
 					void this.createPersonNote(input.value.trim(), input);
-					dropdown.style.display = "none";
+					showDropdown(false);
 				});
 			}
 
-			dropdown.style.display = (matches.length > 0 || (!exactMatch && this.peopleFolderPath))
-				? "" : "none";
+			showDropdown(matches.length > 0 || (!exactMatch && !!this.peopleFolderPath));
 		};
 
 		const highlightItem = (items: HTMLElement[]): void => {
@@ -242,7 +243,7 @@ export class SpeakerTagModal extends Modal {
 
 		input.addEventListener("keydown", (e) => {
 			const items = Array.from(dropdown.querySelectorAll<HTMLElement>(".whisper-cal-autocomplete-item"));
-			if (dropdown.style.display === "none" || items.length === 0) return;
+			if (!isDropdownVisible() || items.length === 0) return;
 
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
@@ -257,14 +258,14 @@ export class SpeakerTagModal extends Modal {
 				e.stopPropagation();
 				items[selectedIdx]!.dispatchEvent(new MouseEvent("mousedown", {bubbles: true}));
 			} else if (e.key === "Escape") {
-				dropdown.style.display = "none";
+				showDropdown(false);
 				selectedIdx = -1;
 			}
 		});
 
 		input.addEventListener("blur", () => {
 			// Delay to allow mousedown on dropdown items
-			setTimeout(() => { dropdown.style.display = "none"; }, 150);
+			setTimeout(() => showDropdown(false), 150);
 		});
 
 		input.addEventListener("focus", () => {

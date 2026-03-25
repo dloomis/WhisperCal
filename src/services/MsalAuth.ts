@@ -3,60 +3,32 @@ import type {
 	TokenCache,
 	DeviceCodeResponse,
 	TokenResponse,
-	AuthState,
 	CloudInstance,
 } from "./AuthTypes";
 import {CLOUD_ENDPOINTS} from "./AuthTypes";
-import type {CalendarAuth} from "./CalendarAuth";
 import {AuthError} from "./CalendarAuth";
+import {BaseCalendarAuth, type AuthCallbacks} from "./BaseCalendarAuth";
 
-const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000; // refresh 5 min early
 const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
-export interface MsalAuthConfig {
+interface MsalAuthConfig {
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
 	deviceLoginUrl?: string;
 }
 
-export interface MsalAuthCallbacks {
-	loadTokenCache(): TokenCache | null;
-	saveTokenCache(cache: TokenCache | null): Promise<void>;
-	onStateChange(state: AuthState): void;
-}
-
-export class MsalAuth implements CalendarAuth {
+export class MsalAuth extends BaseCalendarAuth {
 	private config: MsalAuthConfig;
-	private callbacks: MsalAuthCallbacks;
-	private tokenCache: TokenCache | null = null;
 	private abortController: AbortController | null = null;
-	private state: AuthState = {status: "signed-out"};
 
-	constructor(config: MsalAuthConfig, callbacks: MsalAuthCallbacks) {
+	constructor(config: MsalAuthConfig, callbacks: AuthCallbacks) {
+		super(callbacks);
 		this.config = config;
-		this.callbacks = callbacks;
-	}
-
-	initialize(): void {
-		this.tokenCache = this.callbacks.loadTokenCache();
-		if (this.tokenCache) {
-			this.setState({status: "signed-in"});
-		} else {
-			this.setState({status: "signed-out"});
-		}
 	}
 
 	updateConfig(config: Record<string, string>): void {
 		this.config = config as unknown as MsalAuthConfig;
-	}
-
-	getState(): AuthState {
-		return this.state;
-	}
-
-	isSignedIn(): boolean {
-		return this.tokenCache !== null;
 	}
 
 	getGraphBaseUrl(): string {
@@ -67,19 +39,6 @@ export class MsalAuth implements CalendarAuth {
 	private getScopes(): string {
 		const graphBaseUrl = CLOUD_ENDPOINTS[this.config.cloudInstance].graphBaseUrl;
 		return `${graphBaseUrl}/Calendars.Read ${graphBaseUrl}/People.Read ${graphBaseUrl}/User.ReadBasic.All offline_access`;
-	}
-
-	async getAccessToken(): Promise<string> {
-		if (!this.tokenCache) {
-			throw new AuthError("Not signed in.", "NOT_AUTHENTICATED");
-		}
-
-		if (Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-			return this.tokenCache.accessToken;
-		}
-
-		// Token expired or near expiry — refresh
-		return this.refreshAccessToken();
 	}
 
 	async startSignIn(): Promise<void> {
@@ -166,12 +125,11 @@ export class MsalAuth implements CalendarAuth {
 				}
 
 				// Success
-				this.tokenCache = {
+				await this.saveToken({
 					accessToken: token.access_token,
 					refreshToken: token.refresh_token ?? "",
 					expiresAt: Date.now() + token.expires_in * 1000,
-				};
-				await this.callbacks.saveTokenCache(this.tokenCache);
+				});
 				this.setState({status: "signed-in"});
 				return;
 			}
@@ -189,67 +147,41 @@ export class MsalAuth implements CalendarAuth {
 		}
 	}
 
-	async signOut(): Promise<void> {
-		this.cancelSignIn();
-		this.tokenCache = null;
-		await this.callbacks.saveTokenCache(null);
-		this.setState({status: "signed-out"});
-	}
-
 	cancelSignIn(): void {
 		this.abortController?.abort();
 		this.abortController = null;
 	}
 
-	private async refreshAccessToken(): Promise<string> {
-		if (!this.tokenCache?.refreshToken) {
-			await this.signOut();
-			throw new AuthError("No refresh token. Please sign in again.", "NOT_AUTHENTICATED");
-		}
-
+	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
 		const {tenantId, clientId, cloudInstance} = this.config;
 		const endpoints = CLOUD_ENDPOINTS[cloudInstance];
 		const tokenUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/token`;
 
-		try {
-			const response = await requestUrl({
-				url: tokenUrl,
-				method: "POST",
-				headers: {"Content-Type": "application/x-www-form-urlencoded"},
-				body: new URLSearchParams({
-					grant_type: "refresh_token",
-					client_id: clientId,
-					refresh_token: this.tokenCache.refreshToken,
-					scope: this.getScopes(),
-				}).toString(),
-			});
+		const response = await requestUrl({
+			url: tokenUrl,
+			method: "POST",
+			headers: {"Content-Type": "application/x-www-form-urlencoded"},
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				client_id: clientId,
+				refresh_token: refreshToken,
+				scope: this.getScopes(),
+			}).toString(),
+		});
 
-			const token = response.json as TokenResponse;
-			if (token.error) {
-				throw new AuthError(
-					token.error_description ?? token.error,
-					"AUTH_FAILED"
-				);
-			}
-
-			this.tokenCache = {
-				accessToken: token.access_token,
-				refreshToken: token.refresh_token ?? this.tokenCache.refreshToken,
-				expiresAt: Date.now() + token.expires_in * 1000,
-			};
-			await this.callbacks.saveTokenCache(this.tokenCache);
-			return this.tokenCache.accessToken;
-		} catch (e) {
-			if (e instanceof AuthError) throw e;
-			// Refresh token likely revoked
-			await this.signOut();
-			throw new AuthError("Session expired. Please sign in again.", "NOT_AUTHENTICATED");
+		const token = response.json as TokenResponse;
+		if (token.error) {
+			throw new AuthError(
+				token.error_description ?? token.error,
+				"AUTH_FAILED"
+			);
 		}
-	}
 
-	private setState(state: AuthState): void {
-		this.state = state;
-		this.callbacks.onStateChange(state);
+		return {
+			accessToken: token.access_token,
+			refreshToken: token.refresh_token ?? refreshToken,
+			expiresAt: Date.now() + token.expires_in * 1000,
+		};
 	}
 
 	private sleep(ms: number): Promise<void> {

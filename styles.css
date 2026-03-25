@@ -165,11 +165,13 @@
 .whisper-cal-card-gutter-category {
 	display: flex;
 	align-items: center;
+	color: var(--wc-cat-color);
 }
 
 .whisper-cal-card-gutter-category .svg-icon {
 	width: 14px;
 	height: 14px;
+	fill: var(--wc-cat-color);
 }
 
 /* Gutter status shading — bar darkens to match */
@@ -198,6 +200,8 @@
 
 /* Current-time marker — triangle in the gutter margin */
 .whisper-cal-now-line {
+	position: absolute;
+	top: var(--wc-now-top, 0);
 	height: 0;
 	z-index: 1;
 	pointer-events: none;

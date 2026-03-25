@@ -43,7 +43,6 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 		const timeOpts: Intl.DateTimeFormatOptions = {
 			hour: "numeric",
 			minute: "2-digit",
-			hour12: true,
 		};
 		const dateOpts: Intl.DateTimeFormatOptions = {
 			month: "short",
@@ -53,10 +52,10 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 		const displayStart = recording.durationSeconds > 0
 			? ceilToMinute(new Date(displayEnd.getTime() - recording.durationSeconds * 1000))
 			: displayEnd;
-		const startDate = displayStart.toLocaleDateString("en-US", dateOpts);
-		const startTime = displayStart.toLocaleTimeString("en-US", timeOpts);
+		const startDate = displayStart.toLocaleDateString(undefined, dateOpts);
+		const startTime = displayStart.toLocaleTimeString(undefined, timeOpts);
 		const endTime = recording.dateCreated
-			? recording.dateCreated.toLocaleTimeString("en-US", timeOpts)
+			? recording.dateCreated.toLocaleTimeString(undefined, timeOpts)
 			: "";
 		const duration = formatRecordingDuration(recording.durationSeconds);
 		const speakers = recording.speakerCount > 0

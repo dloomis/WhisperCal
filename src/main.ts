@@ -1,5 +1,5 @@
 import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
-import {execSync} from "child_process";
+import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
@@ -29,11 +29,11 @@ interface PluginData extends WhisperCalSettings {
 }
 
 export default class WhisperCalPlugin extends Plugin {
-	settings: WhisperCalSettings;
-	auth: CalendarAuth;
-	peopleSearch: PeopleSearchProvider;
-	private upstream: CalendarProvider;
-	private provider: CalendarProvider;
+	settings!: WhisperCalSettings;
+	auth!: CalendarAuth;
+	peopleSearch!: PeopleSearchProvider;
+	private upstream!: CalendarProvider;
+	private provider!: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private viewCallbacks!: CalendarViewCallbacks;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
@@ -205,6 +205,20 @@ export default class WhisperCalPlugin extends Plugin {
 		summarizeJobs.clear();
 	}
 
+	async onExternalSettingsChange(): Promise<void> {
+		await this.loadSettings();
+	}
+
+	/** Get the vault's absolute filesystem path (undocumented but stable on desktop). */
+	private getVaultPath(): string {
+		const adapter = this.app.vault.adapter as unknown as Record<string, unknown>;
+		const basePath = adapter["basePath"];
+		if (typeof basePath !== "string") {
+			throw new Error("Cannot determine vault path — unsupported platform");
+		}
+		return basePath;
+	}
+
 	async loadSettings() {
 		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
@@ -232,8 +246,15 @@ export default class WhisperCalPlugin extends Plugin {
 		// Auto-populate microphoneUser from macOS account on first install
 		if (!this.settings.microphoneUser) {
 			try {
-				this.settings.microphoneUser = execSync("id -F", {encoding: "utf-8"}).trim();
-				await this.persistData();
+				const fullName = await new Promise<string>((resolve) => {
+					execFile("id", ["-F"], {encoding: "utf-8", timeout: 3000}, (err, stdout) => {
+						resolve(err ? "" : stdout.trim());
+					});
+				});
+				if (fullName) {
+					this.settings.microphoneUser = fullName;
+					await this.persistData();
+				}
 			} catch {
 				// Leave empty — user can fill in manually
 			}
@@ -379,54 +400,13 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
 			return;
 		}
-		if (speakerTagJobs.has(transcriptPath)) {
-			new Notice("Speaker tagging already in progress for this transcript");
-			return;
-		}
-		if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("LLM concurrency limit reached — try again when a running job finishes");
-			return;
-		}
 
-		// Register job synchronously BEFORE any async work so duplicate launches
-		// are blocked immediately (e.g. auto-summarize + manual button press).
-		speakerTagJobs.add(transcriptPath);
-		this.activeLlmCount++;
-		this.refreshCalendarCards(transcriptPath);
-
-		void this.runTagSpeakers(transcriptFile, transcriptPath);
-	}
-
-	private async runTagSpeakers(transcriptFile: TFile, transcriptPath: string): Promise<void> {
-		// Job already registered synchronously in doTagSpeakers.
-		// The finally block below always cleans up, even on early validation failures.
-		try {
-			// basePath is undocumented but stable on desktop — no Vault API alternative
-			// exists for obtaining the absolute filesystem path to the vault root.
-			const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-
-			// Validate CLI exists
-			if (!await validateLlmCli(this.settings.llmCli)) {
-				new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
-				return;
-			}
-
-			// Validate prompt file exists
-			const resolvedPrompt = resolvePromptPath(this.settings.speakerTaggingPromptPath, vaultPath);
-			try {
-				await access(resolvedPrompt);
-			} catch {
-				new Notice(`Speaker tagging prompt file not found: ${resolvedPrompt}`);
-				return;
-			}
-
-			new Notice("Speaker tagging started");
-
-			const timeoutMs = this.settings.llmTimeoutMinutes > 0
-				? this.settings.llmTimeoutMinutes * 60000 : 0;
-
-			const {exitCode, stdout, stderr} = await spawnLlmPrompt({
+		this.runLlmJob({
+			jobSet: speakerTagJobs,
+			filePath: transcriptPath,
+			label: "Speaker tagging",
+			promptPath: this.settings.speakerTaggingPromptPath,
+			spawnOpts: (vaultPath) => ({
 				targetPath: transcriptPath,
 				targetLabel: "Transcript",
 				vaultPath,
@@ -437,82 +417,65 @@ export default class WhisperCalPlugin extends Plugin {
 				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
-				timeoutMs,
+				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
-			});
+			}),
+			onSuccess: (result) => this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath),
+		});
+	}
 
-			// Debug mode opens an interactive Terminal session — nothing to parse
-			if (this.settings.llmDebugMode) {
-				new Notice("LLM debug session opened in Terminal");
+	private handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string): void {
+		// Verify the transcript file still exists after the LLM run
+		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
+			new Notice("Transcript was deleted while speaker tagging was running");
+			return;
+		}
+
+		const {mappings, warning} = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
+		if (warning) {
+			console.warn("[WhisperCal]", warning);
+		}
+		if (mappings.length === 0) {
+			new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
+			return;
+		}
+		if (warning) {
+			new Notice(warning);
+		}
+
+		// Queue the modal so parallel completions are presented one at a time
+		this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
+			const title = transcriptFile.basename;
+			const decisions = await new SpeakerTagModal(this.app, mappings, title, this.settings.peopleFolderPath).prompt();
+			if (!decisions) return;
+
+			const hasTagged = decisions.some(d => d.confirmedName);
+			if (!hasTagged) {
+				new Notice("No speakers tagged — no changes made");
 				return;
 			}
 
-			if (exitCode !== 0) {
-				const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
-				new Notice(`Speaker tagging failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
-				return;
-			}
+			try {
+				await applySpeakerTags(this.app, transcriptPath, decisions);
+				new Notice("Speaker tags applied");
 
-			// Verify the transcript file still exists after the LLM run
-			if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
-				new Notice("Transcript was deleted while speaker tagging was running");
-				return;
-			}
-
-			const {mappings, warning} = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
-			if (warning) {
-				console.warn("[WhisperCal]", warning);
-			}
-			if (mappings.length === 0) {
-				new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
-				return;
-			}
-			if (warning) {
-				new Notice(warning);
-			}
-
-			// Queue the modal so parallel completions are presented one at a time
-			this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
-				const title = transcriptFile.basename;
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, this.settings.peopleFolderPath).prompt();
-				if (!decisions) return;
-
-				const hasTagged = decisions.some(d => d.confirmedName);
-				if (!hasTagged) {
-					new Notice("No speakers tagged — no changes made");
-					return;
-				}
-
-				try {
-					await applySpeakerTags(this.app, transcriptPath, decisions);
-					new Notice("Speaker tags applied");
-
-					// Auto-summarize if enabled — skip the pipeline_state check
-					// because the metadata cache mirror hasn't fired yet.
-					if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
-						const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
-						if (tFm) {
-							const meetingFile = resolveWikiLink(this.app, tFm as Record<string, unknown>, "meeting_note", transcriptPath);
-							if (meetingFile) {
-								this.doSummarize(meetingFile.path, true);
-							}
+				// Auto-summarize if enabled — skip the pipeline_state check
+				// because the metadata cache mirror hasn't fired yet.
+				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
+					const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
+					if (tFm) {
+						const meetingFile = resolveWikiLink(this.app, tFm as Record<string, unknown>, "meeting_note", transcriptPath);
+						if (meetingFile) {
+							this.doSummarize(meetingFile.path, true);
 						}
 					}
-				} catch (e) {
-					const msg = e instanceof Error ? e.message : String(e);
-					new Notice(`Failed to apply speaker tags: ${msg}`);
 				}
-				this.refreshCalendarCards(transcriptPath);
-			});
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			new Notice(`Speaker tagging encountered an unexpected error: ${msg}`);
-			console.error("[WhisperCal] Speaker tagging error:", e);
-		} finally {
-			speakerTagJobs.delete(transcriptPath);
-			this.activeLlmCount--;
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				new Notice(`Failed to apply speaker tags: ${msg}`);
+			}
 			this.refreshCalendarCards(transcriptPath);
-		}
+		});
 	}
 
 	private doSummarize(notePath: string, skipPipelineCheck = false): void {
@@ -542,8 +505,57 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Summarizer prompt not configured — set it in WhisperCal settings");
 			return;
 		}
-		if (summarizeJobs.has(notePath)) {
-			new Notice("Summarization already in progress for this meeting");
+
+		this.runLlmJob({
+			jobSet: summarizeJobs,
+			filePath: notePath,
+			label: "Summarization",
+			promptPath: this.settings.summarizerPromptPath,
+			onRegister: () => this.updateSummarizeBanners(notePath),
+			onCleanup: () => this.updateSummarizeBanners(notePath),
+			spawnOpts: (vaultPath) => ({
+				targetPath: notePath,
+				targetLabel: "Meeting note",
+				vaultPath,
+				promptPath: this.settings.summarizerPromptPath,
+				llmCli: this.settings.llmCli,
+				llmExtraFlags: this.settings.llmExtraFlags,
+				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
+				debugMode: this.settings.llmDebugMode,
+			}),
+			onSuccess: ({exitCode, stderr}) => {
+				if (exitCode === 0) {
+					if (!this.app.vault.getAbstractFileByPath(notePath)) {
+						new Notice("Meeting note was deleted while summarization was running");
+					} else {
+						new Notice("Summarization complete");
+					}
+				} else {
+					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
+					new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
+				}
+			},
+		});
+	}
+
+	/**
+	 * Shared LLM job runner. Handles concurrency gating, CLI/prompt validation,
+	 * process spawning, debug mode, error handling, and cleanup.
+	 */
+	private runLlmJob(opts: {
+		jobSet: Set<string>;
+		filePath: string;
+		label: string;
+		promptPath: string;
+		spawnOpts: (vaultPath: string) => Parameters<typeof spawnLlmPrompt>[0];
+		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void;
+		onRegister?: () => void;
+		onCleanup?: () => void;
+	}): void {
+		const {jobSet, filePath, label, promptPath} = opts;
+
+		if (jobSet.has(filePath)) {
+			new Notice(`${label} already in progress`);
 			return;
 		}
 		if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
@@ -552,80 +564,51 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		// Register job synchronously BEFORE any async work so duplicate launches
-		// are blocked immediately (e.g. auto-summarize + manual button press).
-		summarizeJobs.add(notePath);
+		// Register job synchronously before any async work
+		jobSet.add(filePath);
 		this.activeLlmCount++;
-		this.refreshCalendarCards(notePath);
-		this.updateSummarizeBanners(notePath);
+		this.refreshCalendarCards(filePath);
+		opts.onRegister?.();
 
-		void this.runSummarize(notePath);
-	}
-
-	private async runSummarize(notePath: string): Promise<void> {
-		// Job already registered synchronously in doSummarize.
-		// The finally block below always cleans up, even on early validation failures.
-		try {
-			const vaultPath = (this.app.vault.adapter as unknown as {basePath: string}).basePath;
-
-			// Validate CLI exists
-			if (!await validateLlmCli(this.settings.llmCli)) {
-				new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
-				return;
-			}
-
-			// Validate prompt file exists
-			const resolvedPrompt = resolvePromptPath(this.settings.summarizerPromptPath, vaultPath);
+		void (async () => {
 			try {
-				await access(resolvedPrompt);
-			} catch {
-				new Notice(`Summarizer prompt file not found: ${resolvedPrompt}`);
-				return;
-			}
+				const vaultPath = this.getVaultPath();
 
-			new Notice("Summarization started");
-
-			const timeoutMs = this.settings.llmTimeoutMinutes > 0
-				? this.settings.llmTimeoutMinutes * 60000 : 0;
-
-			const {exitCode, stderr} = await spawnLlmPrompt({
-				targetPath: notePath,
-				targetLabel: "Meeting note",
-				vaultPath,
-				promptPath: this.settings.summarizerPromptPath,
-				llmCli: this.settings.llmCli,
-				llmExtraFlags: this.settings.llmExtraFlags,
-				timeoutMs,
-				debugMode: this.settings.llmDebugMode,
-			});
-
-			// Debug mode opens an interactive Terminal session
-			if (this.settings.llmDebugMode) {
-				new Notice("LLM debug session opened in Terminal");
-				return;
-			}
-
-			if (exitCode === 0) {
-				// Verify note still exists
-				if (!this.app.vault.getAbstractFileByPath(notePath)) {
-					new Notice("Meeting note was deleted while summarization was running");
-				} else {
-					new Notice("Summarization complete");
+				if (!await validateLlmCli(this.settings.llmCli)) {
+					new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+					return;
 				}
-			} else {
-				const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
-				new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
+
+				const resolvedPrompt = resolvePromptPath(promptPath, vaultPath);
+				try {
+					await access(resolvedPrompt);
+				} catch {
+					new Notice(`${label} prompt file not found: ${resolvedPrompt}`);
+					return;
+				}
+
+				new Notice(`${label} started`);
+
+				const result = await spawnLlmPrompt(opts.spawnOpts(vaultPath));
+
+				if (this.settings.llmDebugMode) {
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
+					new Notice("LLM debug session opened in Terminal");
+					return;
+				}
+
+				opts.onSuccess(result);
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				new Notice(`${label} encountered an unexpected error: ${msg}`);
+				console.error(`[WhisperCal] ${label} error:`, e);
+			} finally {
+				jobSet.delete(filePath);
+				this.activeLlmCount--;
+				this.refreshCalendarCards(filePath);
+				opts.onCleanup?.();
 			}
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			new Notice(`Summarization encountered an unexpected error: ${msg}`);
-			console.error("[WhisperCal] Summarization error:", e);
-		} finally {
-			summarizeJobs.delete(notePath);
-			this.activeLlmCount--;
-			this.refreshCalendarCards(notePath);
-			this.updateSummarizeBanners(notePath);
-		}
+		})();
 	}
 
 	private refreshCalendarCards(filePath?: string): void {

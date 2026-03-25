@@ -54,8 +54,8 @@ let configuredHour12: boolean | undefined;
 
 /** Detect system hour cycle (h23/h24 = 24-hour, h11/h12 = 12-hour). */
 function detectSystemHour12(): boolean {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const hourCycle = (new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions() as any).hourCycle as string | undefined;
+	const resolved = new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions();
+	const hourCycle = (resolved as unknown as {hourCycle?: string}).hourCycle;
 	return hourCycle === "h11" || hourCycle === "h12";
 }
 
@@ -95,7 +95,7 @@ export function formatDate(date: Date, timezone: string): string {
  * Format a Date as a readable date string for display (e.g. "Friday, February 28, 2026").
  */
 export function formatDisplayDate(date: Date, timezone: string): string {
-	return date.toLocaleDateString("en-US", {
+	return date.toLocaleDateString(undefined, {
 		timeZone: timezone,
 		weekday: "long",
 		year: "numeric",

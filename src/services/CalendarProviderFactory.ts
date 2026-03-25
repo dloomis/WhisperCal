@@ -1,20 +1,14 @@
 import type {CalendarProviderType, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
-import type {TokenCache, AuthState} from "./AuthTypes";
 import type {CalendarAuth} from "./CalendarAuth";
 import type {PeopleSearchProvider} from "./PeopleSearchProvider";
+import type {AuthCallbacks} from "./BaseCalendarAuth";
 import {MsalAuth} from "./MsalAuth";
 import {GraphApiProvider} from "./GraphApiProvider";
 import {GraphPeopleSearch} from "./GraphPeopleSearch";
 import {GoogleAuth} from "./GoogleAuth";
 import {GoogleCalendarProvider} from "./GoogleCalendarProvider";
 import {GooglePeopleSearch} from "./GooglePeopleSearch";
-
-export interface AuthCallbacks {
-	loadTokenCache(): TokenCache | null;
-	saveTokenCache(cache: TokenCache | null): Promise<void>;
-	onStateChange(state: AuthState): void;
-}
 
 export interface CalendarStack {
 	auth: CalendarAuth;

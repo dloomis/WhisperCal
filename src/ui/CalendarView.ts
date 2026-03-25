@@ -22,7 +22,9 @@ function coerceFmTime(val: unknown): string | undefined {
 		const m = val % 60;
 		return `${h}:${String(m).padStart(2, "0")}`;
 	}
-	return String(val);
+	if (typeof val === "string") return val;
+	// YAML may produce unexpected types — coerce to string as last resort
+	return `${val as string}`;
 }
 
 /** Coerce a YAML frontmatter date value to "YYYY-MM-DD" string.
@@ -35,7 +37,8 @@ function coerceFmDate(val: unknown): string | undefined {
 		const d = String(val.getDate()).padStart(2, "0");
 		return `${y}-${m}-${d}`;
 	}
-	return String(val);
+	if (typeof val === "string") return val;
+	return `${val as string}`;
 }
 
 export interface CalendarViewCallbacks {
@@ -68,8 +71,7 @@ export class CalendarView extends ItemView {
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
 	private nowLineTimerId: number | null = null;
-	private cardElements = new Map<string, HTMLElement>();
-	private cardOpts = new Map<string, MeetingCardOpts>();
+	private cards = new Map<string, {el: HTMLElement; opts: MeetingCardOpts}>();
 	private pendingFmPaths = new Set<string>();
 
 	constructor(
@@ -194,8 +196,7 @@ export class CalendarView extends ItemView {
 		this.stopNowLineTimer();
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
-		this.cardElements.clear();
-		this.cardOpts.clear();
+		this.cards.clear();
 		this.pendingFmPaths.clear();
 		if (this.cardRefreshTimer !== null) {
 			window.clearTimeout(this.cardRefreshTimer);
@@ -272,7 +273,7 @@ export class CalendarView extends ItemView {
 
 	rerenderCards(): void {
 		if (this.cachedEvents === null) return;
-		for (const eventId of this.cardElements.keys()) {
+		for (const eventId of this.cards.keys()) {
 			this.rerenderCardById(eventId);
 		}
 	}
@@ -312,15 +313,9 @@ export class CalendarView extends ItemView {
 		}
 		this.cachedEvents = events;
 		this.contentContainer.empty();
-		this.cardElements.clear();
-		this.cardOpts.clear();
+		this.cards.clear();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
-
-		const onNoteCreated = (eventId: string) => {
-			this.rerenderCardById(eventId);
-		};
-		const importantEmails = this.settings.importantOrganizers.map(o => o.email);
 
 		// Unscheduled card — always at the top
 		const unscheduledEvent: CalendarEvent = {
@@ -342,20 +337,7 @@ export class CalendarView extends ItemView {
 			responseStatus: "organizer",
 			categories: [],
 		};
-		const unscheduledOpts: MeetingCardOpts = {
-			event: unscheduledEvent,
-			timezone: this.settings.timezone,
-			noteCreator: this.noteCreator,
-			app: this.app,
-			transcriptFolderPath: this.settings.transcriptFolderPath,
-			recordingWindowMinutes: this.settings.recordingWindowMinutes,
-			importantOrganizerEmails: importantEmails,
-			llmEnabled: this.settings.llmEnabled,
-			onNoteCreated,
-			onTagSpeakers: this.callbacks.onTagSpeakers,
-			onSummarize: this.callbacks.onSummarize,
-		};
-		this.storeCard(unscheduledEvent.id, renderMeetingCard(this.contentContainer, unscheduledOpts), unscheduledOpts);
+		this.renderAndStoreCard(this.contentContainer, unscheduledEvent);
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({
@@ -377,19 +359,7 @@ export class CalendarView extends ItemView {
 
 		if (allDay.length > 0) {
 			for (const event of allDay) {
-				const opts: MeetingCardOpts = {
-					event,
-					timezone: this.settings.timezone,
-					noteCreator: this.noteCreator,
-					app: this.app,
-					transcriptFolderPath: this.settings.transcriptFolderPath,
-					recordingWindowMinutes: this.settings.recordingWindowMinutes,
-					importantOrganizerEmails: importantEmails,
-					onNoteCreated,
-					onTagSpeakers: this.callbacks.onTagSpeakers,
-					onSummarize: this.callbacks.onSummarize,
-				};
-				this.storeCard(event.id, renderMeetingCard(this.contentContainer, opts), opts);
+				this.renderAndStoreCard(this.contentContainer, event);
 			}
 		}
 
@@ -420,16 +390,8 @@ export class CalendarView extends ItemView {
 					const prevGroup = groups[g - 1]!;
 					const prevEnd = Math.max(...prevGroup.map(e => e.endTime.getTime()));
 					const gapMs = group[0]!.startTime.getTime() - prevEnd;
-					if (gapMs >= 60_000) {
-						const gapMin = Math.round(gapMs / 60_000);
-						let gapText: string;
-						if (gapMin >= 60) {
-							const h = Math.floor(gapMin / 60);
-							const m = gapMin % 60;
-							gapText = m > 0 ? `${h}h ${m}m` : `${h}h`;
-						} else {
-							gapText = `${gapMin}m`;
-						}
+					const gapText = formatRecordingDuration(Math.round(gapMs / 1000));
+					if (gapText) {
 						const spacer = this.contentContainer.createDiv({cls: "whisper-cal-gap"});
 						spacer.dataset.gapStart = String(prevEnd);
 						spacer.dataset.gapEnd = String(group[0]!.startTime.getTime());
@@ -459,19 +421,7 @@ export class CalendarView extends ItemView {
 				}
 
 				for (const event of group) {
-					const opts: MeetingCardOpts = {
-						event,
-						timezone: this.settings.timezone,
-						noteCreator: this.noteCreator,
-						app: this.app,
-						transcriptFolderPath: this.settings.transcriptFolderPath,
-						recordingWindowMinutes: this.settings.recordingWindowMinutes,
-						importantOrganizerEmails: importantEmails,
-						onNoteCreated,
-						onTagSpeakers: this.callbacks.onTagSpeakers,
-						onSummarize: this.callbacks.onSummarize,
-					};
-					this.storeCard(event.id, renderMeetingCard(target, opts), opts);
+					this.renderAndStoreCard(target, event);
 				}
 			}
 		}
@@ -484,16 +434,33 @@ export class CalendarView extends ItemView {
 		this.snapshotFrontmatter();
 	}
 
-	private storeCard(eventId: string, el: HTMLElement, opts: MeetingCardOpts): void {
-		this.cardElements.set(eventId, el);
-		this.cardOpts.set(eventId, opts);
+	private buildCardOpts(event: CalendarEvent): MeetingCardOpts {
+		return {
+			event,
+			timezone: this.settings.timezone,
+			noteCreator: this.noteCreator,
+			app: this.app,
+			transcriptFolderPath: this.settings.transcriptFolderPath,
+			recordingWindowMinutes: this.settings.recordingWindowMinutes,
+			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
+			llmEnabled: this.settings.llmEnabled,
+			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
+			onTagSpeakers: this.callbacks.onTagSpeakers,
+			onSummarize: this.callbacks.onSummarize,
+		};
+	}
+
+	private renderAndStoreCard(container: HTMLElement, event: CalendarEvent): void {
+		const opts = this.buildCardOpts(event);
+		const el = renderMeetingCard(container, opts);
+		this.cards.set(event.id, {el, opts});
 	}
 
 	/** Rebuild a single card in-place without touching any other DOM. */
 	private rerenderCardById(eventId: string): void {
-		const oldEl = this.cardElements.get(eventId);
-		const opts = this.cardOpts.get(eventId);
-		if (!oldEl || !opts) return;
+		const card = this.cards.get(eventId);
+		if (!card) return;
+		const {el: oldEl, opts} = card;
 
 		// Build replacement off-DOM
 		const tmp = document.createElement("div");
@@ -505,12 +472,12 @@ export class CalendarView extends ItemView {
 		}
 
 		oldEl.replaceWith(newEl);
-		this.cardElements.set(eventId, newEl);
+		this.cards.set(eventId, {el: newEl, opts});
 	}
 
 	/** Re-render only the cards affected by a set of changed file paths. */
 	private updateCardsForPaths(paths: Set<string>): void {
-		for (const [eventId, el] of this.cardElements) {
+		for (const [eventId, {el}] of this.cards) {
 			if ((el.dataset.notePath && paths.has(el.dataset.notePath))
 				|| (el.dataset.transcriptPath && paths.has(el.dataset.transcriptPath))) {
 				this.rerenderCardById(eventId);
@@ -520,7 +487,7 @@ export class CalendarView extends ItemView {
 
 	/** Find the card whose note or transcript matches a file path, and re-render it. */
 	private rerenderCardByPath(filePath: string): void {
-		for (const [eventId, el] of this.cardElements) {
+		for (const [eventId, {el}] of this.cards) {
 			if (el.dataset.notePath === filePath || el.dataset.transcriptPath === filePath) {
 				this.rerenderCardById(eventId);
 				return;
@@ -883,8 +850,8 @@ export class CalendarView extends ItemView {
 		const sameYear = date.getFullYear() === now.getFullYear();
 		const dateOpts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric"};
 		if (!sameYear) dateOpts.year = "numeric";
-		const datePart = date.toLocaleDateString("en-US", dateOpts);
-		const timePart = date.toLocaleTimeString("en-US", {
+		const datePart = date.toLocaleDateString(undefined, dateOpts);
+		const timePart = date.toLocaleTimeString(undefined, {
 			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone,
 		});
 		return `${datePart}, ${timePart}`;
@@ -993,8 +960,10 @@ export class CalendarView extends ItemView {
 		}
 		if (!target) {
 			for (let i = cards.length - 1; i >= 0; i--) {
-				if (nowMs >= Number(cards[i]!.dataset.startTime)) {
-					target = (cards[i]!.closest(".whisper-cal-conflict-group") as HTMLElement | null) ?? cards[i]!;
+				const card = cards[i]!;
+				if (nowMs >= Number(card.dataset.startTime)) {
+					const group = card.closest<HTMLElement>(".whisper-cal-conflict-group");
+					target = group ?? card;
 					break;
 				}
 			}
@@ -1004,10 +973,9 @@ export class CalendarView extends ItemView {
 		// Place marker at vertical center of target
 		const cRect = this.contentContainer.getBoundingClientRect();
 		const tRect = target.getBoundingClientRect();
-		const marker = createDiv({cls: "whisper-cal-now-line"});
-		marker.style.position = "absolute";
-		marker.style.top = `${tRect.top - cRect.top + this.contentContainer.scrollTop + tRect.height / 2}px`;
-		this.contentContainer.appendChild(marker);
+		const topPx = `${tRect.top - cRect.top + this.contentContainer.scrollTop + tRect.height / 2}px`;
+		const marker = this.contentContainer.createDiv({cls: "whisper-cal-now-line"});
+		marker.setCssProps({"--wc-now-top": topPx});
 	}
 
 	private static readonly NOW_MARKER_INTERVAL_MS = 60_000;

@@ -2,7 +2,7 @@ import {spawn, execSync, type ChildProcess} from "child_process";
 import * as os from "os";
 import * as path from "path";
 
-export interface LlmInvokerOpts {
+interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on
 	targetLabel?: string;     // label for the target in the trigger string (default: "Transcript")
 	vaultPath: string;        // absolute path to vault root

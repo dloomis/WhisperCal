@@ -99,6 +99,7 @@ class LlmConsentModal extends Modal {
 
 	onOpen(): void {
 		const {contentEl} = this;
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		contentEl.createEl("h2", {text: "Enable LLM features?"});
 		contentEl.createEl("p", {
 			text: "Speaker tagging and summarization send meeting transcripts and note content to a cloud LLM provider. " +
@@ -285,6 +286,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Time format")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setDesc("How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system")
 			.addDropdown(dropdown => {
 				dropdown.addOption("auto", "Auto");
@@ -396,7 +398,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		new Setting(containerEl)
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setName("Enable LLM features")
 			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
 			.addToggle(toggle => {
@@ -426,7 +427,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Debug mode")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setDesc("Open LLM commands in a Terminal window instead of running in the background")
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.llmDebugMode)

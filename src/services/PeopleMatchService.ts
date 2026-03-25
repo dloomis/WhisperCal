@@ -2,7 +2,7 @@ import {App, TFolder} from "obsidian";
 import {getMarkdownFilesRecursive} from "../utils/vault";
 import type {EventAttendee} from "../types";
 
-export interface MatchedAttendee {
+interface MatchedAttendee {
 	name: string;
 	email: string;
 	notePath: string;

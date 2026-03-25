@@ -61,8 +61,8 @@ export function getLinkedSessionIds(app: App): Set<string> {
 		const fm = app.metadataCache.getFileCache(file)?.frontmatter;
 		if (!fm) continue;
 		// Skip transcript files — the owning meeting note holds the canonical link
-		const tags = fm["tags"];
-		if (Array.isArray(tags) && tags.includes("transcript")) continue;
+		const tags: unknown = fm["tags"];
+		if (Array.isArray(tags) && (tags as string[]).includes("transcript")) continue;
 		const sid = fm["macwhisper_session_id"] as string | undefined;
 		if (sid) linked.add(sid);
 	}

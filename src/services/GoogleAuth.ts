@@ -1,11 +1,10 @@
 import {requestUrl} from "obsidian";
 import {createServer, type Server} from "http";
 import {createHash, randomBytes} from "crypto";
-import type {TokenCache, AuthState} from "./AuthTypes";
-import type {CalendarAuth} from "./CalendarAuth";
+import type {TokenCache} from "./AuthTypes";
 import {AuthError} from "./CalendarAuth";
+import {BaseCalendarAuth, type AuthCallbacks} from "./BaseCalendarAuth";
 
-const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPES = [
@@ -14,60 +13,22 @@ const SCOPES = [
 	"https://www.googleapis.com/auth/contacts.readonly",
 ].join(" ");
 
-export interface GoogleAuthConfig {
+interface GoogleAuthConfig {
 	clientId: string;
 	clientSecret: string;
 }
 
-export interface GoogleAuthCallbacks {
-	loadTokenCache(): TokenCache | null;
-	saveTokenCache(cache: TokenCache | null): Promise<void>;
-	onStateChange(state: AuthState): void;
-}
-
-export class GoogleAuth implements CalendarAuth {
+export class GoogleAuth extends BaseCalendarAuth {
 	private config: GoogleAuthConfig;
-	private callbacks: GoogleAuthCallbacks;
-	private tokenCache: TokenCache | null = null;
 	private server: Server | null = null;
-	private state: AuthState = {status: "signed-out"};
 
-	constructor(config: GoogleAuthConfig, callbacks: GoogleAuthCallbacks) {
+	constructor(config: GoogleAuthConfig, callbacks: AuthCallbacks) {
+		super(callbacks);
 		this.config = config;
-		this.callbacks = callbacks;
-	}
-
-	initialize(): void {
-		this.tokenCache = this.callbacks.loadTokenCache();
-		if (this.tokenCache) {
-			this.setState({status: "signed-in"});
-		} else {
-			this.setState({status: "signed-out"});
-		}
 	}
 
 	updateConfig(config: Record<string, string>): void {
 		this.config = config as unknown as GoogleAuthConfig;
-	}
-
-	getState(): AuthState {
-		return this.state;
-	}
-
-	isSignedIn(): boolean {
-		return this.tokenCache !== null;
-	}
-
-	async getAccessToken(): Promise<string> {
-		if (!this.tokenCache) {
-			throw new AuthError("Not signed in.", "NOT_AUTHENTICATED");
-		}
-
-		if (Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-			return this.tokenCache.accessToken;
-		}
-
-		return this.refreshAccessToken();
 	}
 
 	async startSignIn(): Promise<void> {
@@ -101,10 +62,15 @@ export class GoogleAuth implements CalendarAuth {
 
 			this.setState({status: "signing-in", message: "Complete sign-in in your browser\u2026"});
 
-			// Open the browser using Electron shell (electron is external at bundle time)
-			// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
-			const electron = require("electron") as {shell: {openExternal(url: string): Promise<void>}};
-			void electron.shell.openExternal(authUrl);
+			// Open the browser using Electron shell
+			try {
+				// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
+				const electron = require("electron") as {shell: {openExternal(url: string): Promise<void>}};
+				void electron.shell.openExternal(authUrl);
+			} catch {
+				this.setState({status: "error", message: "Failed to open browser — Electron not available"});
+				return;
+			}
 
 			// Wait for the auth code from the redirect
 			const authCode = await codePromise;
@@ -141,12 +107,11 @@ export class GoogleAuth implements CalendarAuth {
 				throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
 			}
 
-			this.tokenCache = {
+			await this.saveToken({
 				accessToken: token.access_token,
 				refreshToken: token.refresh_token ?? "",
 				expiresAt: Date.now() + token.expires_in * 1000,
-			};
-			await this.callbacks.saveTokenCache(this.tokenCache);
+			});
 			this.setState({status: "signed-in"});
 		} catch (e) {
 			if (e instanceof AuthError) {
@@ -164,57 +129,37 @@ export class GoogleAuth implements CalendarAuth {
 		this.stopLoopbackServer();
 	}
 
-	async signOut(): Promise<void> {
-		this.cancelSignIn();
-		this.tokenCache = null;
-		await this.callbacks.saveTokenCache(null);
-		this.setState({status: "signed-out"});
-	}
-
-	private async refreshAccessToken(): Promise<string> {
-		if (!this.tokenCache?.refreshToken) {
-			await this.signOut();
-			throw new AuthError("No refresh token. Please sign in again.", "NOT_AUTHENTICATED");
-		}
-
+	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
 		const {clientId, clientSecret} = this.config;
 
-		try {
-			const response = await requestUrl({
-				url: GOOGLE_TOKEN_URL,
-				method: "POST",
-				headers: {"Content-Type": "application/x-www-form-urlencoded"},
-				body: new URLSearchParams({
-					grant_type: "refresh_token",
-					client_id: clientId,
-					client_secret: clientSecret,
-					refresh_token: this.tokenCache.refreshToken,
-				}).toString(),
-			});
+		const response = await requestUrl({
+			url: GOOGLE_TOKEN_URL,
+			method: "POST",
+			headers: {"Content-Type": "application/x-www-form-urlencoded"},
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				client_id: clientId,
+				client_secret: clientSecret,
+				refresh_token: refreshToken,
+			}).toString(),
+		});
 
-			const token = response.json as {
-				access_token: string;
-				expires_in: number;
-				error?: string;
-				error_description?: string;
-			};
+		const token = response.json as {
+			access_token: string;
+			expires_in: number;
+			error?: string;
+			error_description?: string;
+		};
 
-			if (token.error) {
-				throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
-			}
-
-			this.tokenCache = {
-				accessToken: token.access_token,
-				refreshToken: this.tokenCache.refreshToken, // Google doesn't return new refresh token
-				expiresAt: Date.now() + token.expires_in * 1000,
-			};
-			await this.callbacks.saveTokenCache(this.tokenCache);
-			return this.tokenCache.accessToken;
-		} catch (e) {
-			if (e instanceof AuthError) throw e;
-			await this.signOut();
-			throw new AuthError("Session expired. Please sign in again.", "NOT_AUTHENTICATED");
+		if (token.error) {
+			throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
 		}
+
+		return {
+			accessToken: token.access_token,
+			refreshToken, // Google doesn't return new refresh token
+			expiresAt: Date.now() + token.expires_in * 1000,
+		};
 	}
 
 	private startLoopbackServer(): Promise<{port: number; code: Promise<string | null>}> {
@@ -261,10 +206,5 @@ export class GoogleAuth implements CalendarAuth {
 			this.server.close();
 			this.server = null;
 		}
-	}
-
-	private setState(state: AuthState): void {
-		this.state = state;
-		this.callbacks.onStateChange(state);
 	}
 }

@@ -2,7 +2,7 @@ import {App, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
-import {formatTime} from "../utils/time";
+import {formatTime, formatRecordingDuration} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
@@ -81,17 +81,11 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 			timeDiv.textContent = timeStr;
 		}
 		if (event.startTime.getTime() !== event.endTime.getTime()) {
-			const durationMs = event.endTime.getTime() - event.startTime.getTime();
-			const durationMin = Math.round(durationMs / 60_000);
-			let durText: string;
-			if (durationMin >= 60) {
-				const hours = Math.floor(durationMin / 60);
-				const mins = durationMin % 60;
-				durText = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-			} else {
-				durText = `${durationMin}m`;
+			const durationSec = Math.round((event.endTime.getTime() - event.startTime.getTime()) / 1000);
+			const durText = formatRecordingDuration(durationSec);
+			if (durText) {
+				gutter.createDiv({cls: "whisper-cal-card-gutter-duration", text: durText});
 			}
-			gutter.createDiv({cls: "whisper-cal-card-gutter-duration", text: durText});
 		}
 	}
 
@@ -120,10 +114,8 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 				cls: "whisper-cal-card-gutter-category",
 				attr: {"aria-label": event.categories[0]!.name},
 			});
-			catEl.style.color = event.categories[0]!.color;
+			catEl.setCssProps({"--wc-cat-color": event.categories[0]!.color});
 			setIcon(catEl, "square");
-			const svg = catEl.querySelector("svg");
-			if (svg) svg.style.fill = event.categories[0]!.color;
 		}
 	}
 

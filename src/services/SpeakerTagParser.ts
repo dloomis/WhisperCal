@@ -11,7 +11,7 @@ export interface ProposedSpeakerMapping {
 	lineCount: number;
 }
 
-export interface ParseResult {
+interface ParseResult {
 	mappings: ProposedSpeakerMapping[];
 	/** Explains why the result is empty/degraded, if applicable. */
 	warning?: string;
