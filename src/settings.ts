@@ -72,7 +72,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	unlinkedLookbackDays: 30,
 	speakerTaggingPromptPath: "",
 	summarizerPromptPath: "",
-	researchPromptPath: "",
+	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
 	llmEnabled: false,
 	llmCli: "claude",
