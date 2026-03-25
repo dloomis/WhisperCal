@@ -7,6 +7,7 @@ import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs} from "../state";
+import {PeopleMatchService} from "../services/PeopleMatchService";
 
 export interface MeetingCardOpts {
 	event: CalendarEvent;
@@ -20,6 +21,7 @@ export interface MeetingCardOpts {
 	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
 	onSummarize?: (notePath: string) => void;
+	peopleFolderPath?: string;
 }
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
@@ -151,13 +153,6 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 		setIcon(attIcon, "users-round");
 		attEl.createSpan({text: `${event.attendeeCount}`});
 	}
-
-	if (event.organizerName) {
-		const orgEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
-		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
-		setIcon(orgIcon, "user");
-		orgEl.createSpan({text: event.organizerName});
-	}
 }
 
 function computePillStates(
@@ -250,6 +245,32 @@ export function renderMeetingCard(
 	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
 
 	renderMetadata(content, event);
+
+	// Organizer row
+	if (event.organizerName) {
+		const orgRow = content.createDiv({cls: "whisper-cal-card-meta"});
+		const orgEl = orgRow.createSpan({cls: "whisper-cal-card-meta-item"});
+		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
+		setIcon(orgIcon, "user");
+
+		const peoplePath = opts.peopleFolderPath;
+		const peopleMatch = peoplePath
+			? new PeopleMatchService(app, peoplePath).matchOne(event.organizerName, event.organizerEmail)
+			: null;
+
+		if (peopleMatch) {
+			const link = orgEl.createEl("a", {
+				cls: "whisper-cal-card-meta-link",
+				text: event.organizerName,
+			});
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				void app.workspace.openLinkText(peopleMatch, "", false);
+			});
+		} else {
+			orgEl.createSpan({text: event.organizerName});
+		}
+	}
 
 	// Actions row
 	const actions = content.createDiv({cls: "whisper-cal-card-actions"});
