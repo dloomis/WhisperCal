@@ -33,12 +33,10 @@ async function performLink(opts: {
 		new Notice("Failed to update note frontmatter (check for invalid YAML)");
 		return false;
 	}
-	new Notice("Recording linked to note");
-
 	// Phase 2: Create transcript file in background (fire-and-forget)
 	// Polls for transcript lines in case MacWhisper is still transcribing.
 	void (async () => {
-		const notice = new Notice("Creating transcript\u2026", 0);
+		const notice = new Notice("Recording linked \u2014 creating transcript\u2026", 0);
 		try {
 			// Wait for MacWhisper transcription to finish
 			const TRANSCRIPTION_POLL_INTERVAL_MS = 3000;
@@ -70,9 +68,9 @@ async function performLink(opts: {
 				isRecurring,
 			});
 			if (transcriptPath) {
-				notice.setMessage("Transcript linked to note");
+				notice.setMessage("Recording & transcript linked to note");
 			} else {
-				notice.hide();
+				notice.setMessage("Recording linked to note");
 			}
 		} catch (err) {
 			console.error("[WhisperCal] Transcript creation failed:", err);
