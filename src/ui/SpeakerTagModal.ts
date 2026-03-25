@@ -27,11 +27,22 @@ export class SpeakerTagModal extends Modal {
 	private inputs: HTMLInputElement[] = [];
 	private peopleFolderPath: string;
 	private people: PersonEntry[] = [];
+	private microphoneUser: string;
+	private micMappings: ProposedSpeakerMapping[] = [];
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, peopleFolderPath: string) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, peopleFolderPath: string, microphoneUser: string) {
 		super(app);
+		this.microphoneUser = microphoneUser;
 		// Keep original index order so speakers appear in transcript sequence
-		this.mappings = [...mappings].sort((a, b) => a.index - b.index);
+		const sorted = [...mappings].sort((a, b) => a.index - b.index);
+		// Separate out the microphone user — they're always the same person
+		if (microphoneUser) {
+			const micLower = microphoneUser.toLowerCase();
+			this.micMappings = sorted.filter(m => m.proposedName.toLowerCase() === micLower);
+			this.mappings = sorted.filter(m => m.proposedName.toLowerCase() !== micLower);
+		} else {
+			this.mappings = sorted;
+		}
 		this.title = title;
 		this.peopleFolderPath = peopleFolderPath;
 		this.people = this.buildPeopleList();
@@ -67,10 +78,10 @@ export class SpeakerTagModal extends Modal {
 		this.containerEl.querySelector(".modal-bg")
 			?.addEventListener("click", (e) => e.stopImmediatePropagation());
 
-		contentEl.createEl("h3", {text: "Tag speakers"});
+		contentEl.createEl("h3", {text: this.title});
 		contentEl.createEl("p", {
 			cls: "whisper-cal-speaker-tag-subtitle",
-			text: `${this.title} \u00B7 ${this.mappings.length} speaker${this.mappings.length !== 1 ? "s" : ""}`,
+			text: `Speaker tagging \u00B7 ${this.mappings.length} speaker${this.mappings.length !== 1 ? "s" : ""}`,
 		});
 
 		const rows = contentEl.createDiv({cls: "whisper-cal-speaker-tag-rows"});
@@ -298,13 +309,24 @@ export class SpeakerTagModal extends Modal {
 
 	onClose(): void {
 		const decisions: SpeakerTagDecision[] | null = this.submitted
-			? this.mappings.map((m, i) => ({
-				speakerId: m.speakerId,
-				originalName: m.originalName,
-				confirmedName: this.inputs[i]?.value.trim() ?? "",
-				confidence: m.confidence,
-				evidence: m.evidence,
-			}))
+			? [
+				// Auto-confirm microphone user mappings
+				...this.micMappings.map(m => ({
+					speakerId: m.speakerId,
+					originalName: m.originalName,
+					confirmedName: this.microphoneUser,
+					confidence: m.confidence,
+					evidence: m.evidence,
+				})),
+				// User-confirmed mappings from the modal
+				...this.mappings.map((m, i) => ({
+					speakerId: m.speakerId,
+					originalName: m.originalName,
+					confirmedName: this.inputs[i]?.value.trim() ?? "",
+					confidence: m.confidence,
+					evidence: m.evidence,
+				})),
+			]
 			: null;
 
 		this.contentEl.empty();
