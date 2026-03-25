@@ -54,7 +54,7 @@ export interface WhisperCalSettings {
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	calendarProvider: "microsoft",
-	timezone: "America/New_York",
+	timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "America/New_York",
 	refreshIntervalMinutes: 5,
 	noteFolderPath: "Meetings",
 	noteFilenameTemplate: "{{date}} - {{subject}}",
