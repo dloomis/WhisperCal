@@ -12,6 +12,7 @@ import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
+import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 
 /** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
  *  YAML parses unquoted "16:39" as sexagesimal number 999. */
@@ -247,6 +248,16 @@ export class CalendarView extends ItemView {
 			}
 			this.renderEvents(events);
 			this.updateNowMarker();
+
+			// Auto-create People notes for unmatched organizers (fire-and-forget)
+			if (this.settings.peopleFolderPath) {
+				void autoCreatePeopleNotes(
+					this.app,
+					this.settings.peopleFolderPath,
+					events,
+					this.callbacks.getUserEmail(),
+				);
+			}
 		} catch (e) {
 			console.error("[WhisperCal] refresh error:", e);
 			if (e instanceof AuthError) {
