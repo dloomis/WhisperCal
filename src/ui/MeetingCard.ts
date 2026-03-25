@@ -151,6 +151,13 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 		setIcon(attIcon, "users-round");
 		attEl.createSpan({text: `${event.attendeeCount}`});
 	}
+
+	if (event.organizerName) {
+		const orgEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
+		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
+		setIcon(orgIcon, "user");
+		orgEl.createSpan({text: event.organizerName});
+	}
 }
 
 function computePillStates(
