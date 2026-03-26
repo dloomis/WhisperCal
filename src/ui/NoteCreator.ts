@@ -80,6 +80,8 @@ export class NoteCreator {
 		if (file) {
 			const leaf = this.getLeafForFile(file);
 			await leaf.openFile(file);
+			const content = await this.app.vault.read(file);
+			this.setCursorToNotesSection(leaf, content);
 		}
 	}
 
@@ -132,20 +134,39 @@ export class NoteCreator {
 
 		const lines = content.split("\n");
 		// Find the last "## Notes" or "# Notes" heading
-		let targetLine = -1;
+		let headingLine = -1;
 		for (let i = lines.length - 1; i >= 0; i--) {
 			if (/^#{1,6}\s+Notes\s*$/i.test(lines[i] as string)) {
-				targetLine = i + 1;
+				headingLine = i;
 				break;
 			}
 		}
 
-		if (targetLine < 0) {
+		if (headingLine < 0) {
 			// No notes header — place cursor at end of file
-			targetLine = editor.lastLine();
+			editor.setCursor({line: editor.lastLine(), ch: 0});
+			editor.focus();
+			return;
 		}
 
-		editor.setCursor({line: targetLine, ch: 0});
+		// Ensure two blank lines after the heading, then place cursor there.
+		// Skip past any existing blank lines to find the first content line.
+		let firstContentLine = headingLine + 1;
+		while (firstContentLine < lines.length && lines[firstContentLine]!.trim() === "") {
+			firstContentLine++;
+		}
+
+		const blanksNeeded = 2;
+		const existingBlanks = firstContentLine - headingLine - 1;
+
+		if (existingBlanks < blanksNeeded) {
+			// Insert missing blank lines right after the heading
+			const insertAt = {line: headingLine + 1, ch: 0};
+			editor.replaceRange("\n".repeat(blanksNeeded - existingBlanks), insertAt);
+		}
+
+		// Cursor goes on the last blank line (line after heading + 1 blank = 2 lines down)
+		editor.setCursor({line: headingLine + blanksNeeded, ch: 0});
 		editor.focus();
 	}
 
