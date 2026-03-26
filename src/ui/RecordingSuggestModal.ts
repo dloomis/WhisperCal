@@ -1,6 +1,6 @@
 import {App, SuggestModal} from "obsidian";
 import type {MacWhisperRecording} from "../services/MacWhisperDb";
-import {formatRecordingDuration} from "../utils/time";
+import {formatRecordingDuration, getHour12} from "../utils/time";
 
 /** Ceil a Date to the next minute (matches MacWhisper's display rounding). */
 function ceilToMinute(d: Date): Date {
@@ -33,7 +33,7 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 		if (!q) return this.recordings;
 		return this.recordings.filter(r => {
 			const title = r.title?.toLowerCase() ?? "";
-			const time = r.recordingStart.toLocaleTimeString();
+			const time = r.recordingStart.toLocaleTimeString(undefined, {hour12: getHour12()});
 			return title.includes(q) || time.includes(q);
 		});
 	}
@@ -43,6 +43,7 @@ export class RecordingSuggestModal extends SuggestModal<MacWhisperRecording> {
 		const timeOpts: Intl.DateTimeFormatOptions = {
 			hour: "numeric",
 			minute: "2-digit",
+			hour12: getHour12(),
 		};
 		const dateOpts: Intl.DateTimeFormatOptions = {
 			month: "short",

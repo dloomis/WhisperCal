@@ -64,6 +64,11 @@ function resolveHour12(): boolean {
 	return detectSystemHour12();
 }
 
+/** Return the resolved hour12 flag for use in custom Intl formatters. */
+export function getHour12(): boolean {
+	return resolveHour12();
+}
+
 export function setTimeFormat(format: "auto" | "12h" | "24h"): void {
 	if (format === "12h") configuredHour12 = true;
 	else if (format === "24h") configuredHour12 = false;

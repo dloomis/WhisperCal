@@ -10,7 +10,7 @@ import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
-import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getTodayString, isSameDay, parseDateTime} from "../utils/time";
+import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 
@@ -869,7 +869,7 @@ export class CalendarView extends ItemView {
 		if (!sameYear) dateOpts.year = "numeric";
 		const datePart = date.toLocaleDateString(undefined, dateOpts);
 		const timePart = date.toLocaleTimeString(undefined, {
-			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone,
+			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone, hour12: getHour12(),
 		});
 		return `${datePart}, ${timePart}`;
 	}
