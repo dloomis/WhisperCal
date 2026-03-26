@@ -1,4 +1,4 @@
-import {App, Modal, PluginSettingTab, Setting} from "obsidian";
+import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
@@ -41,6 +41,7 @@ export interface WhisperCalSettings {
 	llmEnabled: boolean;
 	llmCli: string;
 	llmExtraFlags: string;
+	llmModel: string;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	llmDebugMode: boolean;
@@ -77,6 +78,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmEnabled: false,
 	llmCli: "claude",
 	llmExtraFlags: "--dangerously-skip-permissions",
+	llmModel: "",
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	llmDebugMode: false,
@@ -512,6 +514,35 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		let modelSelect: HTMLSelectElement | null = null;
+		new Setting(containerEl)
+			.setName("Model")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Claude model for LLM prompts. Set ANTHROPIC_API_KEY to load available models.")
+			.addDropdown(dropdown => {
+				modelSelect = dropdown.selectEl;
+				dropdown.addOption("", "Default");
+				if (this.plugin.settings.llmModel) {
+					dropdown.addOption(this.plugin.settings.llmModel, this.plugin.settings.llmModel);
+				}
+				dropdown.setValue(this.plugin.settings.llmModel);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.llmModel = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		void this.fetchAnthropicModels().then(models => {
+			if (!modelSelect || models.length === 0) return;
+			const current = this.plugin.settings.llmModel;
+			modelSelect.replaceChildren();
+			modelSelect.add(new Option("Default", ""));
+			for (const m of models) {
+				modelSelect.add(new Option(m.display_name, m.id));
+			}
+			modelSelect.value = current;
+		});
+
 		/* eslint-enable obsidianmd/ui/sentence-case */
 
 		new Setting(containerEl)
@@ -558,6 +589,31 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+	}
+
+	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
+		try {
+			const apiKey = process.env["ANTHROPIC_API_KEY"];
+			if (!apiKey) return [];
+
+			const response = await requestUrl({
+				url: "https://api.anthropic.com/v1/models?limit=100",
+				method: "GET",
+				headers: {
+					"x-api-key": apiKey,
+					"anthropic-version": "2023-06-01",
+				},
+			});
+
+			interface ModelEntry { id: string; display_name?: string }
+			const data = response.json as {data?: ModelEntry[]};
+			return (data.data ?? [])
+				.filter(m => m.id.startsWith("claude-"))
+				.map(m => ({id: m.id, display_name: m.display_name ?? m.id}))
+				.sort((a, b) => a.display_name.localeCompare(b.display_name));
+		} catch {
+			return [];
+		}
 	}
 
 	private renderMicrosoftAuthSettings(containerEl: HTMLElement): void {

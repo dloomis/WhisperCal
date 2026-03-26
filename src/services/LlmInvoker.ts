@@ -9,6 +9,7 @@ interface LlmInvokerOpts {
 	promptPath: string;       // absolute or vault-relative path to the prompt file
 	llmCli: string;
 	llmExtraFlags: string;
+	llmModel?: string;        // model ID to pass via --model flag (empty = CLI default)
 	timeoutMs?: number;       // kill the process after this many ms (0 = no timeout)
 	// Optional parameters that skip prompt steps when provided
 	microphoneUser?: string;
@@ -83,7 +84,10 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.outputFormat) parts.push(opts.outputFormat);
 	const trigger = parts.join(" ");
 
-	const flags = [opts.llmExtraFlags.trim()].filter(Boolean).join(" ");
+	const flagParts: string[] = [];
+	if (opts.llmModel) flagParts.push(`--model ${shellQuote(opts.llmModel)}`);
+	if (opts.llmExtraFlags.trim()) flagParts.push(opts.llmExtraFlags.trim());
+	const flags = flagParts.join(" ");
 	const cmd = `${opts.llmCli}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
 	return {cmd, vaultPath: opts.vaultPath};
 }
