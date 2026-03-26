@@ -258,6 +258,13 @@ export default class WhisperCalPlugin extends Plugin {
 				this.settings.importantOrganizers = oldEmails.map(e => ({name: e, email: e}));
 			}
 		}
+		// Migrate legacy single llmModel → per-prompt model settings
+		if (legacy?.llmModel && typeof legacy.llmModel === "string") {
+			const old = legacy.llmModel as string;
+			if (!this.settings.speakerTagModel) this.settings.speakerTagModel = old;
+			if (!this.settings.summarizerModel) this.settings.summarizerModel = old;
+			if (!this.settings.researchModel) this.settings.researchModel = old;
+		}
 		// Backfill llmExtraFlags for installs that saved before the default existed
 		if (!this.settings.llmExtraFlags) {
 			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
@@ -433,7 +440,7 @@ export default class WhisperCalPlugin extends Plugin {
 				microphoneUser: this.settings.microphoneUser,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-				llmModel: this.settings.llmModel || undefined,
+				llmModel: this.settings.speakerTagModel || undefined,
 				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
@@ -540,7 +547,7 @@ export default class WhisperCalPlugin extends Plugin {
 				promptPath: this.settings.summarizerPromptPath,
 				llmCli: this.settings.llmCli,
 				llmExtraFlags: this.settings.llmExtraFlags,
-				llmModel: this.settings.llmModel || undefined,
+				llmModel: this.settings.summarizerModel || undefined,
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
 			}),
@@ -594,7 +601,7 @@ export default class WhisperCalPlugin extends Plugin {
 					promptPath: this.settings.researchPromptPath,
 					llmCli: this.settings.llmCli,
 					llmExtraFlags: this.settings.llmExtraFlags,
-					llmModel: this.settings.llmModel || undefined,
+					llmModel: this.settings.researchModel || undefined,
 					researchNotePaths: result.paths,
 					additionalInstructions: result.instructions || undefined,
 					peopleFolderPath: this.settings.peopleFolderPath || undefined,

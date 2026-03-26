@@ -41,7 +41,9 @@ export interface WhisperCalSettings {
 	llmEnabled: boolean;
 	llmCli: string;
 	llmExtraFlags: string;
-	llmModel: string;
+	speakerTagModel: string;
+	summarizerModel: string;
+	researchModel: string;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	llmDebugMode: boolean;
@@ -78,7 +80,9 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmEnabled: false,
 	llmCli: "claude",
 	llmExtraFlags: "--dangerously-skip-permissions",
-	llmModel: "",
+	speakerTagModel: "",
+	summarizerModel: "",
+	researchModel: "",
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	llmDebugMode: false,
@@ -439,44 +443,69 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
-			.setName("Speaker tagging prompt")
-			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for tagging speakers (e.g. Prompts/Speaker Tagging.md)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Speaker Tagging.md")
-					.setValue(this.plugin.settings.speakerTaggingPromptPath)
-					.onChange(async (value) => {
-						this.plugin.settings.speakerTaggingPromptPath = value;
-						await this.plugin.saveSettings();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			});
+		// Per-prompt settings: each prompt has a file path + model selector
+		const modelSelects: HTMLSelectElement[] = [];
 
-		new Setting(containerEl)
-			.setName("Summarizer prompt")
-			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Meeting Summarizer.md")
-					.setValue(this.plugin.settings.summarizerPromptPath)
-					.onChange(async (value) => {
-						this.plugin.settings.summarizerPromptPath = value;
-						await this.plugin.saveSettings();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			});
+		const addPromptSetting = (
+			name: string,
+			desc: string,
+			placeholder: string,
+			pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
+			modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
+		) => {
+			new Setting(containerEl)
+				.setName(`${name} prompt`)
+				.setDesc(desc)
+				.addText(text => {
+					text.setPlaceholder(placeholder)
+						.setValue(this.plugin.settings[pathKey])
+						.onChange(async (value) => {
+							this.plugin.settings[pathKey] = value;
+							await this.plugin.saveSettings();
+						});
+					new FileSuggest(this.app, text.inputEl);
+				});
 
-		new Setting(containerEl)
-			.setName("Research prompt")
-			.setDesc("Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Meeting Research.md")
-					.setValue(this.plugin.settings.researchPromptPath)
-					.onChange(async (value) => {
-						this.plugin.settings.researchPromptPath = value;
+			new Setting(containerEl)
+				.setName(`${name} model`)
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				.setDesc(`Claude model for ${name.toLowerCase()}. Set ANTHROPIC_API_KEY to load available models.`)
+				.addDropdown(dropdown => {
+					modelSelects.push(dropdown.selectEl);
+					dropdown.addOption("", "Default");
+					const current = this.plugin.settings[modelKey];
+					if (current) {
+						dropdown.addOption(current, current);
+					}
+					dropdown.setValue(current);
+					dropdown.onChange(async (value) => {
+						this.plugin.settings[modelKey] = value;
 						await this.plugin.saveSettings();
 					});
-				new FileSuggest(this.app, text.inputEl);
-			});
+				});
+		};
+
+		addPromptSetting(
+			"Speaker tagging",
+			"Vault-relative or absolute path to the Claude Code prompt file for tagging speakers (e.g. Prompts/Speaker Tagging.md)",
+			"Prompts/Speaker Tagging.md",
+			"speakerTaggingPromptPath",
+			"speakerTagModel",
+		);
+		addPromptSetting(
+			"Summarizer",
+			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
+			"Prompts/Meeting Summarizer.md",
+			"summarizerPromptPath",
+			"summarizerModel",
+		);
+		addPromptSetting(
+			"Research",
+			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
+			"Prompts/Meeting Research.md",
+			"researchPromptPath",
+			"researchModel",
+		);
 
 		new Setting(containerEl)
 			.setName("Microphone user")
@@ -514,33 +543,21 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		let modelSelect: HTMLSelectElement | null = null;
-		new Setting(containerEl)
-			.setName("Model")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Claude model for LLM prompts. Set ANTHROPIC_API_KEY to load available models.")
-			.addDropdown(dropdown => {
-				modelSelect = dropdown.selectEl;
-				dropdown.addOption("", "Default");
-				if (this.plugin.settings.llmModel) {
-					dropdown.addOption(this.plugin.settings.llmModel, this.plugin.settings.llmModel);
-				}
-				dropdown.setValue(this.plugin.settings.llmModel);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.llmModel = value;
-					await this.plugin.saveSettings();
-				});
-			});
-
+		// Populate all model dropdowns once the API responds
 		void this.fetchAnthropicModels().then(models => {
-			if (!modelSelect || models.length === 0) return;
-			const current = this.plugin.settings.llmModel;
-			modelSelect.replaceChildren();
-			modelSelect.add(new Option("Default", ""));
-			for (const m of models) {
-				modelSelect.add(new Option(m.display_name, m.id));
+			if (models.length === 0) return;
+			const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
+				["speakerTagModel", "summarizerModel", "researchModel"];
+			for (let i = 0; i < modelSelects.length; i++) {
+				const sel = modelSelects[i]!;
+				const current = this.plugin.settings[modelKeys[i]!];
+				sel.replaceChildren();
+				sel.add(new Option("Default", ""));
+				for (const m of models) {
+					sel.add(new Option(m.display_name, m.id));
+				}
+				sel.value = current;
 			}
-			modelSelect.value = current;
 		});
 
 		/* eslint-enable obsidianmd/ui/sentence-case */

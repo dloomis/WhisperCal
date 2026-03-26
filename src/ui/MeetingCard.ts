@@ -23,6 +23,20 @@ export interface MeetingCardOpts {
 	onSummarize?: (notePath: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleFolderPath?: string;
+	speakerTagModel?: string;
+	summarizerModel?: string;
+	researchModel?: string;
+}
+
+/** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
+function formatModelName(modelId: string): string {
+	if (!modelId) return "";
+	const match = modelId.match(/^claude-(\w+)-(\d+)-(\d+)/);
+	if (match) {
+		const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1);
+		return `${family} ${match[2]}.${match[3]}`;
+	}
+	return modelId;
 }
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
@@ -436,19 +450,22 @@ export function renderMeetingCard(
 
 	// Status lines below actions
 	if (opts.llmEnabled !== false && states.research === "running") {
+		const modelSuffix = opts.researchModel ? ` (${formatModelName(opts.researchModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
-		status.createSpan({text: "Researching\u2026"});
+		status.createSpan({text: `Researching${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.speakers === "running") {
+		const modelSuffix = opts.speakerTagModel ? ` (${formatModelName(opts.speakerTagModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
-		status.createSpan({text: "Tagging speakers\u2026"});
+		status.createSpan({text: `Tagging speakers${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.summary === "running") {
+		const modelSuffix = opts.summarizerModel ? ` (${formatModelName(opts.summarizerModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
 		status.createSpan({cls: "whisper-cal-card-status-dot"});
-		status.createSpan({text: "Summarizing\u2026"});
+		status.createSpan({text: `Summarizing${modelSuffix}\u2026`});
 	}
 
 	return card;
