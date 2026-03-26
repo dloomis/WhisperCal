@@ -443,6 +443,31 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		new Setting(containerEl)
+			.setName("CLI command")
+			.setDesc("Command used to invoke the LLM (default: claude)")
+			.addText(text => text
+				.setPlaceholder("claude")
+				.setValue(this.plugin.settings.llmCli)
+				.onChange(async (value) => {
+					this.plugin.settings.llmCli = value.trim() || "claude";
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Additional flags")
+			.setDesc("Extra CLI flags appended to the LLM command. " +
+				"⚠️ The default --dangerously-skip-permissions is required for " +
+				"non-interactive LLM usage — removing it will break speaker tagging " +
+				"and summarization.")
+			.addText(text => text
+				.setPlaceholder("--dangerously-skip-permissions")
+				.setValue(this.plugin.settings.llmExtraFlags)
+				.onChange(async (value) => {
+					this.plugin.settings.llmExtraFlags = value;
+					await this.plugin.saveSettings();
+				}));
+
 		// Per-prompt settings: each prompt has a file path + model selector
 		const modelSelects: HTMLSelectElement[] = [];
 
@@ -515,31 +540,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.microphoneUser)
 				.onChange(async (value) => {
 					this.plugin.settings.microphoneUser = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName("CLI command")
-			.setDesc("Command used to invoke the LLM (default: claude)")
-			.addText(text => text
-				.setPlaceholder("claude")
-				.setValue(this.plugin.settings.llmCli)
-				.onChange(async (value) => {
-					this.plugin.settings.llmCli = value.trim() || "claude";
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName("Additional flags")
-			.setDesc("Extra CLI flags appended to the LLM command. " +
-				"⚠️ The default --dangerously-skip-permissions is required for " +
-				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization.")
-			.addText(text => text
-				.setPlaceholder("--dangerously-skip-permissions")
-				.setValue(this.plugin.settings.llmExtraFlags)
-				.onChange(async (value) => {
-					this.plugin.settings.llmExtraFlags = value;
 					await this.plugin.saveSettings();
 				}));
 
