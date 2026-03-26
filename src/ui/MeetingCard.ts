@@ -19,7 +19,7 @@ export interface MeetingCardOpts {
 	onNoteCreated?: (eventId: string) => void;
 	importantOrganizerEmails?: readonly string[];
 	llmEnabled?: boolean;
-	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
+	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
 	onSummarize?: (notePath: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleFolderPath?: string;
@@ -424,7 +424,7 @@ export function renderMeetingCard(
 				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 				if (!tf) return;
 				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
-				onTagSpeakers(tf, transcriptFm as Record<string, unknown>);
+				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath);
 			});
 		} else if (states.speakers === "complete") {
 			speakersPill.addEventListener("click", () => {
@@ -452,19 +452,22 @@ export function renderMeetingCard(
 	if (opts.llmEnabled !== false && states.research === "running") {
 		const modelSuffix = opts.researchModel ? ` (${formatModelName(opts.researchModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
-		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
+		setIcon(ico, "book-open");
 		status.createSpan({text: `Researching${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.speakers === "running") {
 		const modelSuffix = opts.speakerTagModel ? ` (${formatModelName(opts.speakerTagModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
-		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
+		setIcon(ico, "users-round");
 		status.createSpan({text: `Tagging speakers${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.summary === "running") {
 		const modelSuffix = opts.summarizerModel ? ` (${formatModelName(opts.summarizerModel)})` : "";
 		const status = content.createDiv({cls: "whisper-cal-card-status"});
-		status.createSpan({cls: "whisper-cal-card-status-dot"});
+		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
+		setIcon(ico, "sparkles");
 		status.createSpan({text: `Summarizing${modelSuffix}\u2026`});
 	}
 

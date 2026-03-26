@@ -6,7 +6,8 @@ interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on
 	targetLabel?: string;     // label for the target in the trigger string (default: "Transcript")
 	vaultPath: string;        // absolute path to vault root
-	promptPath: string;       // absolute or vault-relative path to the prompt file
+	promptPath?: string;      // absolute or vault-relative path to the prompt file (omit when using inlinePrompt)
+	inlinePrompt?: string;    // direct prompt text — replaces the prompt file reference when set
 	llmCli: string;
 	llmExtraFlags: string;
 	llmModel?: string;        // model ID to pass via --model flag (empty = CLI default)
@@ -69,13 +70,15 @@ export function resolvePromptPath(promptPath: string, vaultPath: string): string
  * Build the shell command string and resolved trigger from LlmInvokerOpts.
  */
 function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string} {
-	const resolvedPromptPath = resolvePromptPath(opts.promptPath, opts.vaultPath);
-
 	// Build trigger string
-	const parts: string[] = [
-		`Follow the instructions in '${resolvedPromptPath}'.`,
-		`${opts.targetLabel || "Transcript"}: ${opts.targetPath}.`,
-	];
+	const parts: string[] = [];
+	if (opts.inlinePrompt) {
+		parts.push(opts.inlinePrompt);
+	} else if (opts.promptPath) {
+		const resolvedPromptPath = resolvePromptPath(opts.promptPath, opts.vaultPath);
+		parts.push(`Follow the instructions in '${resolvedPromptPath}'.`);
+	}
+	parts.push(`${opts.targetLabel || "Transcript"}: ${opts.targetPath}.`);
 	if (opts.microphoneUser) parts.push(`Microphone user: ${opts.microphoneUser}.`);
 	if (opts.transcriptFolderPath) parts.push(`Transcripts Folder: ${opts.transcriptFolderPath}.`);
 	if (opts.peopleFolderPath) parts.push(`People Folder: ${opts.peopleFolderPath}.`);

@@ -1,8 +1,10 @@
 import {Modal, App, TFile, setIcon} from "obsidian";
+import {renderModalHeader} from "./ModalHeader";
 
 export interface ResearchResult {
 	paths: string[];
 	instructions: string;
+	bypassPrompt: boolean;
 }
 
 /**
@@ -13,16 +15,20 @@ export class ResearchModal extends Modal {
 	private resolve: ((value: ResearchResult | null) => void) | null = null;
 	private submitted = false;
 	private meetingTitle: string;
+	private meetingSubtitle: string;
 	private selected: Set<string>;
 	private chipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
 	private searchInput!: HTMLInputElement;
 	private instructionsEl!: HTMLTextAreaElement;
+	private bypassCheckbox!: HTMLInputElement;
+	private instructionsLabel!: HTMLElement;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(app: App, meetingTitle: string, initialPaths?: string[]) {
+	constructor(app: App, meetingTitle: string, subtitle: string, initialPaths?: string[]) {
 		super(app);
 		this.meetingTitle = meetingTitle;
+		this.meetingSubtitle = subtitle;
 		this.selected = new Set(initialPaths ?? []);
 	}
 
@@ -37,11 +43,7 @@ export class ResearchModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-research-modal");
 
-		contentEl.createEl("h3", {text: "Meeting research"});
-		contentEl.createEl("p", {
-			text: this.meetingTitle,
-			cls: "whisper-cal-research-subtitle",
-		});
+		renderModalHeader(contentEl, this.meetingTitle, this.meetingSubtitle);
 
 		// Selected chips
 		this.chipsEl = contentEl.createDiv({cls: "whisper-cal-research-chips"});
@@ -62,8 +64,18 @@ export class ResearchModal extends Modal {
 		this.resultsEl = contentEl.createDiv({cls: "whisper-cal-research-results"});
 		this.renderResults();
 
-		// Additional instructions textarea
-		contentEl.createEl("label", {
+		// Bypass prompt checkbox
+		const bypassRow = contentEl.createDiv({cls: "whisper-cal-research-bypass"});
+		this.bypassCheckbox = bypassRow.createEl("input", {type: "checkbox"});
+		this.bypassCheckbox.id = "whisper-cal-bypass-prompt";
+		bypassRow.createEl("label", {
+			text: "Use as direct prompt (bypass prompt file)",
+			attr: {"for": "whisper-cal-bypass-prompt"},
+		});
+		this.bypassCheckbox.addEventListener("change", () => this.updateBypassState());
+
+		// Instructions / direct prompt textarea
+		this.instructionsLabel = contentEl.createEl("label", {
 			text: "Additional instructions",
 			cls: "whisper-cal-research-label",
 		});
@@ -103,6 +115,15 @@ export class ResearchModal extends Modal {
 				this.renderResults();
 			});
 		}
+	}
+
+	private updateBypassState(): void {
+		const bypass = this.bypassCheckbox.checked;
+		this.instructionsLabel.textContent = bypass ? "Prompt" : "Additional instructions";
+		this.instructionsEl.placeholder = bypass
+			? "Enter your research prompt\u2026"
+			: "Additional instructions (optional)\u2026";
+		this.instructionsEl.rows = bypass ? 6 : 3;
 	}
 
 	private renderResults(): void {
@@ -160,8 +181,13 @@ export class ResearchModal extends Modal {
 
 	onClose(): void {
 		if (this.debounceTimer) clearTimeout(this.debounceTimer);
-		const result: ResearchResult | null = this.submitted && this.selected.size > 0
-			? {paths: [...this.selected], instructions: this.instructionsEl.value.trim()}
+		const bypass = this.bypassCheckbox.checked;
+		const text = this.instructionsEl.value.trim();
+		const hasValidInput = bypass
+			? text.length > 0                       // bypass mode: prompt text required
+			: this.selected.size > 0;               // normal mode: notes required
+		const result: ResearchResult | null = this.submitted && hasValidInput
+			? {paths: [...this.selected], instructions: text, bypassPrompt: bypass}
 			: null;
 
 		this.contentEl.empty();

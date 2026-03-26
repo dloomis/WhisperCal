@@ -45,7 +45,7 @@ function coerceFmDate(val: unknown): string | undefined {
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
 	getUserEmail: () => string;
-	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => void;
+	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
 	onSummarize: (notePath: string) => void;
 	onResearch: (notePath: string) => void;
 }

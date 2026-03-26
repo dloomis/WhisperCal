@@ -1,6 +1,7 @@
 import {Modal, App, TFolder, TFile, Notice} from "obsidian";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
+import {renderModalHeader} from "./ModalHeader";
 
 export interface SpeakerTagDecision {
 	speakerId: string;
@@ -23,14 +24,15 @@ export class SpeakerTagModal extends Modal {
 	private resolve: ((value: SpeakerTagDecision[] | null) => void) | null = null;
 	private submitted = false;
 	private mappings: ProposedSpeakerMapping[];
-	private title: string;
+	private meetingTitle: string;
+	private meetingSubtitle: string;
 	private inputs: HTMLInputElement[] = [];
 	private peopleFolderPath: string;
 	private people: PersonEntry[] = [];
 	private microphoneUser: string;
 	private micMappings: ProposedSpeakerMapping[] = [];
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, peopleFolderPath: string, microphoneUser: string) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, microphoneUser: string) {
 		super(app);
 		this.microphoneUser = microphoneUser;
 		// Keep original index order so speakers appear in transcript sequence
@@ -43,7 +45,8 @@ export class SpeakerTagModal extends Modal {
 		} else {
 			this.mappings = sorted;
 		}
-		this.title = title;
+		this.meetingTitle = title;
+		this.meetingSubtitle = subtitle;
 		this.peopleFolderPath = peopleFolderPath;
 		this.people = this.buildPeopleList();
 	}
@@ -78,11 +81,7 @@ export class SpeakerTagModal extends Modal {
 		this.containerEl.querySelector(".modal-bg")
 			?.addEventListener("click", (e) => e.stopImmediatePropagation());
 
-		contentEl.createEl("h3", {text: this.title});
-		contentEl.createEl("p", {
-			cls: "whisper-cal-speaker-tag-subtitle",
-			text: `Speaker tagging \u00B7 ${this.mappings.length} speaker${this.mappings.length !== 1 ? "s" : ""}`,
-		});
+		renderModalHeader(contentEl, this.meetingTitle, this.meetingSubtitle);
 
 		const rows = contentEl.createDiv({cls: "whisper-cal-speaker-tag-rows"});
 

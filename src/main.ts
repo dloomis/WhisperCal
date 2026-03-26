@@ -13,6 +13,7 @@ import {ResearchModal} from "./ui/ResearchModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter} from "./utils/frontmatter";
+import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
 import type {AuthState, TokenCache} from "./services/AuthTypes";
 import type {CalendarAuth} from "./services/CalendarAuth";
@@ -74,8 +75,8 @@ export default class WhisperCalPlugin extends Plugin {
 		this.viewCallbacks = {
 			getCacheStatus: () => this.cachedProvider?.getLastStatus() ?? null,
 			getUserEmail: () => this.upstream.getUserEmail(),
-			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>) => {
-				this.doTagSpeakers(transcriptFile, transcriptFm);
+			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => {
+				this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
 			},
 			onSummarize: (notePath: string) => {
 				this.doSummarize(notePath);
@@ -168,7 +169,10 @@ export default class WhisperCalPlugin extends Plugin {
 				if (!transcriptFile) return false;
 				if (checking) return true;
 				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
-				this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>);
+				// If active file is the meeting note (has calendar_event_id), use its path;
+				// otherwise (transcript is active) use the transcript path as fallback.
+				const notePath = fm?.["calendar_event_id"] ? file.path : transcriptFile.path;
+				this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>, notePath);
 				return true;
 			},
 		});
@@ -409,6 +413,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private doTagSpeakers(
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
+		notePath: string,
 	): void {
 		const transcriptPath = transcriptFile.path;
 		const state = transcriptFm["pipeline_state"] as string | undefined;
@@ -447,11 +452,11 @@ export default class WhisperCalPlugin extends Plugin {
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
 			}),
-			onSuccess: (result) => this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath),
+			onSuccess: (result) => this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath),
 		});
 	}
 
-	private handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string): void {
+	private handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): void {
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
 			new Notice("Transcript was deleted while speaker tagging was running");
@@ -472,8 +477,13 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Queue the modal so parallel completions are presented one at a time
 		this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
-			const title = transcriptFile.basename;
-			const decisions = await new SpeakerTagModal(this.app, mappings, title, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
+			const meetingFile = this.app.vault.getAbstractFileByPath(notePath);
+			const meetingFm = meetingFile instanceof TFile
+				? (this.app.metadataCache.getFileCache(meetingFile)?.frontmatter ?? {})
+				: {};
+			const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
+			const subtitle = buildMeetingSubtitle(meetingFm);
+			const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
 			if (!decisions) return;
 
 			const hasTagged = decisions.some(d => d.confirmedName);
@@ -572,38 +582,45 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Meeting note not found");
 			return;
 		}
-		if (!this.settings.researchPromptPath) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("Research prompt not configured \u2014 set it in WhisperCal settings");
-			return;
-		}
-
-		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-		const title = (fm?.["meeting_subject"] as string) || noteFile.basename;
+		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
+		const title = (fm["meeting_subject"] as string) || noteFile.basename;
+		const subtitle = buildMeetingSubtitle(fm);
 
 		void (async () => {
-			const result = await new ResearchModal(this.app, title).prompt();
-			if (!result || result.paths.length === 0) return;
+			const result = await new ResearchModal(this.app, title, subtitle).prompt();
+			if (!result) return;
+
+			// Normal mode: require notes; bypass mode: require prompt text (enforced by modal)
+			if (!result.bypassPrompt && result.paths.length === 0) return;
+			if (!result.bypassPrompt && !this.settings.researchPromptPath) {
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				new Notice("Research prompt not configured \u2014 set it in WhisperCal settings");
+				return;
+			}
 
 			// Store selected research notes in frontmatter
-			const wikilinks = result.paths.map(p => `[[${p.replace(/\.md$/, "")}]]`).join(", ");
-			await updateFrontmatter(this.app, notePath, "research_notes", wikilinks);
+			if (result.paths.length > 0) {
+				const wikilinks = result.paths.map(p => `[[${p.replace(/\.md$/, "")}]]`).join(", ");
+				await updateFrontmatter(this.app, notePath, "research_notes", wikilinks);
+			}
 
 			this.runLlmJob({
 				jobSet: researchJobs,
 				filePath: notePath,
 				label: "Research",
-				promptPath: this.settings.researchPromptPath,
+				promptPath: result.bypassPrompt ? undefined : this.settings.researchPromptPath,
 				spawnOpts: (vaultPath) => ({
 					targetPath: notePath,
 					targetLabel: "Meeting note",
 					vaultPath,
-					promptPath: this.settings.researchPromptPath,
+					...(result.bypassPrompt
+						? {inlinePrompt: result.instructions}
+						: {promptPath: this.settings.researchPromptPath}),
 					llmCli: this.settings.llmCli,
 					llmExtraFlags: this.settings.llmExtraFlags,
 					llmModel: this.settings.researchModel || undefined,
-					researchNotePaths: result.paths,
-					additionalInstructions: result.instructions || undefined,
+					researchNotePaths: result.paths.length > 0 ? result.paths : undefined,
+					additionalInstructions: result.bypassPrompt ? undefined : (result.instructions || undefined),
 					peopleFolderPath: this.settings.peopleFolderPath || undefined,
 					timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 					debugMode: this.settings.llmDebugMode,
@@ -632,7 +649,7 @@ export default class WhisperCalPlugin extends Plugin {
 		jobSet: Set<string>;
 		filePath: string;
 		label: string;
-		promptPath: string;
+		promptPath?: string;
 		spawnOpts: (vaultPath: string) => Parameters<typeof spawnLlmPrompt>[0];
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void;
 		onRegister?: () => void;
@@ -665,12 +682,14 @@ export default class WhisperCalPlugin extends Plugin {
 					return;
 				}
 
-				const resolvedPrompt = resolvePromptPath(promptPath, vaultPath);
-				try {
-					await access(resolvedPrompt);
-				} catch {
-					new Notice(`${label} prompt file not found: ${resolvedPrompt}`);
-					return;
+				if (promptPath) {
+					const resolvedPrompt = resolvePromptPath(promptPath, vaultPath);
+					try {
+						await access(resolvedPrompt);
+					} catch {
+						new Notice(`${label} prompt file not found: ${resolvedPrompt}`);
+						return;
+					}
 				}
 
 				new Notice(`${label} started`);
