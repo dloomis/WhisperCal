@@ -101,6 +101,51 @@
 	overflow: hidden;
 }
 
+/* All-day event — compact, read-only card */
+.whisper-cal-card-allday {
+	padding: 0;
+	margin-bottom: 6px;
+}
+
+.whisper-cal-allday-gutter {
+	width: 4px;
+	flex-shrink: 0;
+	border-radius: var(--radius-m) 0 0 var(--radius-m);
+	background: var(--background-modifier-border);
+}
+
+.whisper-cal-allday-gutter-colored {
+	background: var(--wc-cat-color);
+}
+
+.whisper-cal-allday-content {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 10px;
+}
+
+.whisper-cal-allday-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.whisper-cal-allday-subject {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.whisper-cal-allday-icons {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex-shrink: 0;
+}
+
 /* Time gutter — left column */
 .whisper-cal-card-gutter {
 	display: flex;

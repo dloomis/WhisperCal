@@ -9,7 +9,7 @@ import {linkKnownRecording} from "../services/LinkRecording";
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
-import {renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import {renderAllDayCard, renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
@@ -371,7 +371,10 @@ export class CalendarView extends ItemView {
 
 		if (allDay.length > 0) {
 			for (const event of allDay) {
-				this.renderAndStoreCard(this.contentContainer, event);
+				const el = renderAllDayCard(this.contentContainer, event, {
+					importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
+				});
+				this.cards.set(event.id, {el, opts: this.buildCardOpts(event)});
 			}
 		}
 

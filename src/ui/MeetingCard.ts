@@ -240,6 +240,56 @@ async function healMissingSessionId(
 	console.debug(`[WhisperCal] Healed macwhisper_session_id on ${noteFile.path} from transcript`);
 }
 
+/** Compact, read-only card for all-day calendar events. */
+export function renderAllDayCard(
+	container: HTMLElement,
+	event: CalendarEvent,
+	opts: {importantOrganizerEmails?: readonly string[]},
+): HTMLElement {
+	const card = container.createDiv({cls: "whisper-cal-card whisper-cal-card-allday"});
+	card.dataset.eventId = event.id;
+
+	// Thin color gutter
+	const gutter = card.createDiv({cls: "whisper-cal-allday-gutter"});
+	if (event.categories.length > 0) {
+		gutter.setCssProps({"--wc-cat-color": event.categories[0]!.color});
+		gutter.addClass("whisper-cal-allday-gutter-colored");
+	}
+
+	const content = card.createDiv({cls: "whisper-cal-allday-content"});
+
+	// Subject + optional icons
+	const row = content.createDiv({cls: "whisper-cal-allday-row"});
+	row.createSpan({cls: "whisper-cal-allday-subject", text: event.subject});
+
+	const importantEmails = opts.importantOrganizerEmails ?? [];
+	const isImportantOrganizer = importantEmails.length > 0
+		&& event.organizerEmail
+		&& importantEmails.includes(event.organizerEmail.toLowerCase());
+
+	if (event.isOrganizer || isImportantOrganizer || event.categories.length > 0) {
+		const icons = row.createSpan({cls: "whisper-cal-allday-icons"});
+		if (event.isOrganizer) {
+			const el = icons.createSpan({cls: "whisper-cal-card-gutter-organizer", attr: {"aria-label": "You are the organizer"}});
+			setIcon(el, "star");
+		}
+		if (isImportantOrganizer) {
+			const el = icons.createSpan({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
+			setIcon(el, "octagon-alert");
+		}
+		if (event.categories.length > 0) {
+			const el = icons.createSpan({
+				cls: "whisper-cal-card-gutter-category",
+				attr: {"aria-label": event.categories[0]!.name},
+			});
+			el.setCssProps({"--wc-cat-color": event.categories[0]!.color});
+			setIcon(el, "square");
+		}
+	}
+
+	return card;
+}
+
 export function renderMeetingCard(
 	container: HTMLElement,
 	opts: MeetingCardOpts,
