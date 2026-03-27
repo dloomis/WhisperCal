@@ -96,7 +96,7 @@
 	align-items: stretch;
 	background: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border);
-	border-left: 4px solid color-mix(in srgb, var(--wc-subtle) 40%, var(--background-secondary));
+	border-left: 6px solid color-mix(in srgb, var(--wc-subtle) 40%, var(--background-secondary));
 	border-radius: var(--radius-m);
 	margin-bottom: 8px;
 	overflow: hidden;
