@@ -852,8 +852,8 @@ export default class WhisperCalPlugin extends Plugin {
 			// Set a comfortable default width so pill buttons don't wrap
 			const rightSplit = this.app.workspace.rightSplit as unknown as
 				{ containerEl: HTMLElement; size: number; resize: () => void } | undefined;
-			if (rightSplit && rightSplit.size < 450) {
-				rightSplit.size = 450;
+			if (rightSplit && rightSplit.size < 480) {
+				rightSplit.size = 480;
 				rightSplit.resize();
 			}
 		}
