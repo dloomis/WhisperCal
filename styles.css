@@ -270,9 +270,9 @@
 	transform: translateY(-50%);
 	width: 0;
 	height: 0;
-	border-top: 7px solid transparent;
-	border-bottom: 7px solid transparent;
-	border-left: 9px solid var(--text-warning);
+	border-top: 10px solid transparent;
+	border-bottom: 10px solid transparent;
+	border-left: 13px solid var(--text-warning);
 	opacity: 0.8;
 }
 
