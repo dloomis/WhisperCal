@@ -87,7 +87,7 @@
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 	margin: 16px 0 8px 0;
-	padding-left: 80px;
+	padding-left: 84px;
 }
 
 .whisper-cal-card {
@@ -99,6 +99,10 @@
 	border-radius: var(--radius-m);
 	margin-bottom: 8px;
 	overflow: hidden;
+}
+
+.whisper-cal-card-categorized {
+	border-left: 4px solid var(--wc-cat-color);
 }
 
 /* Spacer below the ad-hoc card */
@@ -162,7 +166,7 @@
 	align-items: flex-start;
 	justify-content: flex-start;
 	padding: 12px 10px;
-	width: 88px;
+	width: 92px;
 	flex-shrink: 0;
 	--wc-category-color: var(--wc-subtle);
 	--wc-gutter-bg: var(--background-secondary);
@@ -221,18 +225,6 @@
 	width: 16px;
 	height: 16px;
 	stroke-width: 2.5px;
-}
-
-.whisper-cal-card-gutter-category {
-	display: flex;
-	align-items: center;
-	color: var(--wc-cat-color);
-}
-
-.whisper-cal-card-gutter-category .svg-icon {
-	width: 14px;
-	height: 14px;
-	fill: var(--wc-cat-color);
 }
 
 /* Gutter status shading — bar darkens to match */

@@ -107,12 +107,17 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		}
 	}
 
+	// Category → colored left border on the card
+	if (event.categories.length > 0) {
+		card.setCssProps({"--wc-cat-color": event.categories[0]!.color});
+		card.addClass("whisper-cal-card-categorized");
+	}
+
 	const importantEmails = opts.importantOrganizerEmails ?? [];
 	const isImportantOrganizer = importantEmails.length > 0
 		&& event.organizerEmail
 		&& importantEmails.includes(event.organizerEmail.toLowerCase());
-	const hasCategory = event.categories.length > 0;
-	const hasIcons = event.isOrganizer || isImportantOrganizer || hasCategory;
+	const hasIcons = event.isOrganizer || isImportantOrganizer;
 
 	if (hasIcons) {
 		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
@@ -125,15 +130,6 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		if (isImportantOrganizer) {
 			const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
 			setIcon(importantEl, "octagon-alert");
-		}
-
-		if (hasCategory) {
-			const catEl = iconRow.createDiv({
-				cls: "whisper-cal-card-gutter-category",
-				attr: {"aria-label": event.categories[0]!.name},
-			});
-			catEl.setCssProps({"--wc-cat-color": event.categories[0]!.color});
-			setIcon(catEl, "square");
 		}
 	}
 
@@ -267,7 +263,7 @@ export function renderAllDayCard(
 		&& event.organizerEmail
 		&& importantEmails.includes(event.organizerEmail.toLowerCase());
 
-	if (event.isOrganizer || isImportantOrganizer || event.categories.length > 0) {
+	if (event.isOrganizer || isImportantOrganizer) {
 		const icons = row.createSpan({cls: "whisper-cal-allday-icons"});
 		if (event.isOrganizer) {
 			const el = icons.createSpan({cls: "whisper-cal-card-gutter-organizer", attr: {"aria-label": "You are the organizer"}});
@@ -276,14 +272,6 @@ export function renderAllDayCard(
 		if (isImportantOrganizer) {
 			const el = icons.createSpan({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
 			setIcon(el, "octagon-alert");
-		}
-		if (event.categories.length > 0) {
-			const el = icons.createSpan({
-				cls: "whisper-cal-card-gutter-category",
-				attr: {"aria-label": event.categories[0]!.name},
-			});
-			el.setCssProps({"--wc-cat-color": event.categories[0]!.color});
-			setIcon(el, "square");
 		}
 	}
 
