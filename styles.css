@@ -115,6 +115,7 @@
 .whisper-cal-card-allday {
 	padding: 0;
 	margin-bottom: 8px;
+	border-left: 1px solid var(--background-modifier-border);
 }
 
 .whisper-cal-card-allday + .whisper-cal-card-allday {
