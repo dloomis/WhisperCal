@@ -350,6 +350,7 @@ export class CalendarView extends ItemView {
 			categories: [],
 		};
 		this.renderAndStoreCard(this.contentContainer, unscheduledEvent);
+		this.contentContainer.createDiv({cls: "whisper-cal-adhoc-divider"});
 
 		if (events.length === 0) {
 			this.contentContainer.createDiv({

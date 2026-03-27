@@ -101,10 +101,19 @@
 	overflow: hidden;
 }
 
+/* Spacer below the ad-hoc card */
+.whisper-cal-adhoc-divider {
+	margin: 4px 0 8px;
+}
+
 /* All-day event — compact, read-only card */
 .whisper-cal-card-allday {
 	padding: 0;
-	margin-bottom: 6px;
+	margin-bottom: 8px;
+}
+
+.whisper-cal-card-allday + .whisper-cal-card-allday {
+	margin-top: -4px;
 }
 
 .whisper-cal-allday-gutter {
@@ -406,7 +415,7 @@
 	margin-bottom: 8px;
 	background: var(--background-primary);
 	border-radius: var(--radius-m);
-	padding: 8px 0 0;
+	padding: 0;
 }
 
 .whisper-cal-conflict-group::before {
