@@ -53,6 +53,7 @@ export interface WhisperCalSettings {
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	timeFormat: "auto" | "12h" | "24h";
+	tomeEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
+	tomeEnabled: false,
 };
 
 class LlmConsentModal extends Modal {
@@ -413,6 +415,22 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.plugin.settings.unlinkedLookbackDays = num;
 						this.debouncedSave();
 					}
+				}));
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		new Setting(containerEl)
+			.setName("Tome")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable Tome recording")
+			.setDesc("Show a Record button on meeting cards to start/stop call recording via Tome")
+		/* eslint-enable obsidianmd/ui/sentence-case */
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.tomeEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.tomeEnabled = value;
+					await this.plugin.saveSettings();
 				}));
 
 		/* eslint-disable obsidianmd/ui/sentence-case */

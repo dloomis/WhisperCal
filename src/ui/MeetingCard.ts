@@ -1,4 +1,4 @@
-import {App, TFile, setIcon} from "obsidian";
+import {App, Notice, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
@@ -6,8 +6,9 @@ import {formatTime, formatRecordingDuration} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs, researchJobs} from "../state";
+import {summarizeJobs, speakerTagJobs, researchJobs, tomeRecordingState} from "../state";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
+import {startTomeRecording, stopTomeRecording} from "../services/TomeRecording";
 
 export interface MeetingCardOpts {
 	event: CalendarEvent;
@@ -23,6 +24,7 @@ export interface MeetingCardOpts {
 	onSummarize?: (notePath: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
+	tomeEnabled?: boolean;
 	speakerTagModel?: string;
 	summarizerModel?: string;
 	researchModel?: string;
@@ -45,6 +47,7 @@ interface PillStates {
 	note: PillState;
 	research: PillState;
 	transcript: PillState;
+	tomeRecord: PillState;
 	speakers: PillState;
 	summary: PillState;
 	transcriptFile: TFile | null;
@@ -186,6 +189,12 @@ function computePillStates(
 		? "disabled"
 		: noteFm["transcript"] ? "complete" : "incomplete";
 
+	const tomeRecord: PillState = tomeRecordingState.has(notePath)
+		? "running"
+		: noteFm["transcript"] ? "complete"
+		: tomeRecordingState.size > 0 ? "disabled"
+		: "incomplete";
+
 	const pipelineState = noteFm["pipeline_state"] as string | undefined;
 	const transcriptFile = noteFm["transcript"]
 		? resolveWikiLink(app, noteFm, "transcript", notePath)
@@ -204,7 +213,7 @@ function computePillStates(
 		: summarizeJobs.has(notePath) ? "running"
 		: "incomplete";
 
-	return {note, research, transcript, speakers, summary, transcriptFile, transcriptPath, pipelineState};
+	return {note, research, transcript, tomeRecord, speakers, summary, transcriptFile, transcriptPath, pipelineState};
 }
 
 /**
@@ -448,6 +457,39 @@ export function renderMeetingCard(
 			};
 			void handleMic();
 		});
+	}
+
+	// Tome Record pill
+	if (opts.tomeEnabled) {
+		const recordPill = renderPill(actions, "radio", "Record", states.tomeRecord);
+		if (states.tomeRecord === "complete") {
+			recordPill.addEventListener("click", () => {
+				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+				if (tf) void app.workspace.openLinkText(tf.path, "", false);
+			});
+		} else if (states.tomeRecord === "running") {
+			recordPill.disabled = false; // override — running pill is clickable to stop
+			recordPill.addEventListener("click", () => {
+				recordPill.disabled = true;
+				void stopTomeRecording({app, notePath, transcriptFolderPath});
+			});
+		} else if (states.tomeRecord === "incomplete") {
+			recordPill.addEventListener("click", () => {
+				recordPill.disabled = true;
+				const handleRecord = async () => {
+					try {
+						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
+							await noteCreator.createNote(event);
+						}
+						await startTomeRecording({app, notePath, event, transcriptFolderPath});
+					} catch (err) {
+						new Notice(err instanceof Error ? err.message : "Failed to start Tome recording");
+						recordPill.disabled = false;
+					}
+				};
+				void handleRecord();
+			});
+		}
 	}
 
 	// Speakers pill (LLM feature)

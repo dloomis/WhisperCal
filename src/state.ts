@@ -8,3 +8,6 @@ export const speakerTagJobs = new Set<string>();
 
 /** Note paths currently running meeting research. */
 export const researchJobs = new Set<string>();
+
+/** Active Tome recording: notePath → expected transcript filename. Only one recording at a time. */
+export const tomeRecordingState = new Map<string, string>();
