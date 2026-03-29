@@ -8,7 +8,7 @@ import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs, researchJobs, tomeRecordingState} from "../state";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
-import {startTomeRecording, stopTomeRecording} from "../services/TomeRecording";
+import {startTomeRecording, stopTomeRecording, watchTomeRecording} from "../services/TomeRecording";
 
 export interface MeetingCardOpts {
 	event: CalendarEvent;
@@ -449,6 +449,11 @@ export function renderMeetingCard(
 						recording = true;
 						recordPill.disabled = false;
 						recordPill.addClass("whisper-cal-pill-recording");
+						watchTomeRecording({app, notePath, transcriptFolderPath, onStopped: () => {
+							recording = false;
+							recordPill.disabled = true;
+							recordPill.removeClass("whisper-cal-pill-recording");
+						}});
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start Tome recording");
 						recordPill.disabled = false;

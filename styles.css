@@ -798,13 +798,13 @@
 .whisper-cal-pill-recording.whisper-cal-pill-running {
 	animation: none !important;
 	opacity: 1 !important;
-	border-color: #e53935;
+	border-color: var(--background-modifier-border);
 	background: transparent;
 	cursor: pointer;
 }
 
 .whisper-cal-pill-recording .whisper-cal-pill-icon {
-	animation: whisper-cal-rec-flash 1.5s ease-in-out infinite;
+	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
 }
 
 @keyframes whisper-cal-rec-flash {

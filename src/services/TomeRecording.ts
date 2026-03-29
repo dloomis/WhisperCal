@@ -57,6 +57,44 @@ export async function stopTomeRecording(opts: {
 	void waitAndLink(app, notePath, transcriptFolderPath);
 }
 
+/**
+ * Poll Tome to detect when recording stops (e.g. stopped from Tome's UI).
+ * Calls `onStopped` when recording is no longer active, then triggers
+ * the transcript linking flow.
+ */
+export function watchTomeRecording(opts: {
+	app: App;
+	notePath: string;
+	transcriptFolderPath: string;
+	onStopped: () => void;
+}): void {
+	const {app, notePath, transcriptFolderPath, onStopped} = opts;
+	const WATCH_INTERVAL_MS = 2000;
+
+	void (async () => {
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			await sleep(WATCH_INTERVAL_MS);
+			if (!tomeRecordingState.has(notePath)) return; // stopped via WhisperCal
+			try {
+				const health = await tomeHealth();
+				if (!health.isRecording) {
+					tomeRecordingState.delete(notePath);
+					console.debug(`[WhisperCal] Tome recording stopped externally for ${notePath}`);
+					onStopped();
+					void waitAndLink(app, notePath, transcriptFolderPath);
+					return;
+				}
+			} catch {
+				// Tome unreachable — treat as stopped
+				tomeRecordingState.delete(notePath);
+				onStopped();
+				return;
+			}
+		}
+	})();
+}
+
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 100; // ~5 minutes
 
