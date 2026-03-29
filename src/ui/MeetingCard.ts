@@ -412,6 +412,7 @@ export function renderMeetingCard(
 	// Tome Record pill (right after Note, before Research)
 	if (opts.tomeEnabled) {
 		const recordPill = renderPill(actions, "circle", "Record", states.tomeRecord);
+		recordPill.addClass("whisper-cal-pill-record");
 		if (states.tomeRecord === "running") {
 			recordPill.addClass("whisper-cal-pill-recording");
 		}
