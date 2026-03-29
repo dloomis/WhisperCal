@@ -73,13 +73,20 @@ export async function applySpeakerTags(
 
 	if (replacements.length > 0) {
 		await app.vault.process(fileCheck, (content) => {
+			// Split into frontmatter and body to avoid corrupting YAML values
+			const fmEnd = content.indexOf("\n---", 1);
+			if (fmEnd === -1) return content;
+			const bodyStart = content.indexOf("\n", fmEnd + 4);
+			if (bodyStart === -1) return content;
+			const head = content.slice(0, bodyStart);
+			let body = content.slice(bodyStart);
 			for (const {from, to} of replacements) {
 				// Replace **Original** → **Confirmed**
-				content = content.split(`**${from}**`).join(`**${to}**`);
+				body = body.split(`**${from}**`).join(`**${to}**`);
 				// Replace "Original |" → "Confirmed |" (pipe-delimited format)
-				content = content.split(`${from} |`).join(`${to} |`);
+				body = body.split(`${from} |`).join(`${to} |`);
 			}
-			return content;
+			return head + body;
 		});
 	}
 }

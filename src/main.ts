@@ -216,6 +216,7 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_CALENDAR);
 		this.auth.cancelSignIn();
 		void this.cachedProvider?.flush();
 		// Kill any running LLM processes and clean up job tracking

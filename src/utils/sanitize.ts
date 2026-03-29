@@ -12,5 +12,10 @@ export function sanitizeFilename(name: string): string {
  * Escape a string for use inside a YAML double-quoted value.
  */
 export function yamlEscape(s: string): string {
-	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	return s
+		.replace(/\\/g, "\\\\")
+		.replace(/"/g, '\\"')
+		.replace(/\n/g, "\\n")
+		.replace(/\r/g, "\\r")
+		.replace(/\t/g, "\\t");
 }

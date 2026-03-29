@@ -1,4 +1,4 @@
-import {ItemView, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
+import {ItemView, Notice, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
 import {getLinkedSessionIds, getMarkdownFilesRecursive} from "../utils/vault";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
@@ -75,6 +75,7 @@ export class CalendarView extends ItemView {
 	private nowLineTimerId: number | null = null;
 	private cards = new Map<string, {el: HTMLElement; opts: MeetingCardOpts}>();
 	private pendingFmPaths = new Set<string>();
+	private refreshGeneration = 0;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -232,10 +233,15 @@ export class CalendarView extends ItemView {
 			}
 		}
 
+		// Track generation so concurrent refreshes don't interleave
+		const gen = ++this.refreshGeneration;
+
 		this.renderLoading();
 
 		try {
 			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
+			// Abort if a newer refresh has started while we were awaiting
+			if (gen !== this.refreshGeneration) return;
 			if (events.length === 0) {
 				// Check if we're truly disconnected with no cache
 				const status = this.callbacks.getCacheStatus();
@@ -260,6 +266,8 @@ export class CalendarView extends ItemView {
 				);
 			}
 		} catch (e) {
+			// Abort if a newer refresh has started
+			if (gen !== this.refreshGeneration) return;
 			console.error("[WhisperCal] refresh error:", e);
 			if (e instanceof AuthError) {
 				this.renderError(e.message);
@@ -743,96 +751,101 @@ export class CalendarView extends ItemView {
 	}
 
 	private async handleLinkUnlinked(recording: MacWhisperRecording, card: HTMLElement): Promise<void> {
-		// Try to find matching calendar events from cache
-		const recordingDate = recording.recordingStart;
-		const events = await this.provider.fetchEvents(recordingDate, this.settings.timezone);
+		try {
+			// Try to find matching calendar events from cache
+			const recordingDate = recording.recordingStart;
+			const events = await this.provider.fetchEvents(recordingDate, this.settings.timezone);
 
-		// Filter to timed events within the recording match window
-		const windowMs = this.settings.recordingWindowMinutes * 60 * 1000;
-		const candidates = events.filter(e => {
-			if (e.isAllDay) return false;
-			const diff = Math.abs(e.startTime.getTime() - recordingDate.getTime());
-			return diff <= windowMs;
-		});
-
-		// Exclude events whose notes already have a recording linked
-		const unlinkedCandidates = candidates.filter(e => {
-			const noteFile = this.noteCreator.findNote(e);
-			if (!noteFile) return true;
-			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-			return !fm?.["macwhisper_session_id"];
-		});
-
-		const modal = new EventSuggestModal(
-			this.app, unlinkedCandidates, this.settings.timezone,
-		);
-		const choice = await modal.prompt();
-		if (!choice) return; // user cancelled
-
-		if (choice.type === "event") {
-			// Link to existing calendar event
-			await this.noteCreator.createNote(choice.event);
-			const notePath = this.noteCreator.getNotePath(choice.event);
-			await linkKnownRecording({
-				app: this.app,
-				session: recording,
-				notePath,
-				subject: choice.event.subject,
-				timezone: this.settings.timezone,
-				transcriptFolderPath: this.settings.transcriptFolderPath,
-				attendees: choice.event.attendees,
-				isRecurring: choice.event.isRecurring,
-			});
-		} else {
-			// Create new meeting — prompt for a name
-			const defaultName = recording.title || this.settings.unscheduledSubject;
-			const name = await new NameInputModal(this.app, {
-				defaultValue: defaultName,
-			}).prompt();
-			if (!name) return;
-			const subject = name;
-			const event: CalendarEvent = {
-				id: "unscheduled",
-				subject,
-				body: "",
-				isAllDay: false,
-				isOnlineMeeting: false,
-				onlineMeetingUrl: "",
-				startTime: recording.recordingStart,
-				endTime: new Date(recording.recordingStart.getTime() + recording.durationSeconds * 1000),
-				location: "",
-				attendeeCount: 0,
-				attendees: [],
-				organizerName: "",
-				organizerEmail: "",
-				isOrganizer: false,
-				isRecurring: false,
-				responseStatus: "organizer",
-				categories: [],
-			};
-			await this.noteCreator.createNote(event, {preserveTimestamps: true});
-			const notePath = this.noteCreator.getNotePath(event);
-			await linkKnownRecording({
-				app: this.app,
-				session: recording,
-				notePath,
-				subject,
-				timezone: this.settings.timezone,
-				transcriptFolderPath: this.settings.transcriptFolderPath,
+			// Filter to timed events within the recording match window
+			const windowMs = this.settings.recordingWindowMinutes * 60 * 1000;
+			const candidates = events.filter(e => {
+				if (e.isAllDay) return false;
+				const diff = Math.abs(e.startTime.getTime() - recordingDate.getTime());
+				return diff <= windowMs;
 			});
 
-			// Inject into timeline immediately (metadata cache may lag)
-			if (this.cachedEvents) {
-				this.cachedEvents.push({...event, id: `unscheduled-${notePath}`});
+			// Exclude events whose notes already have a recording linked
+			const unlinkedCandidates = candidates.filter(e => {
+				const noteFile = this.noteCreator.findNote(e);
+				if (!noteFile) return true;
+				const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+				return !fm?.["macwhisper_session_id"];
+			});
+
+			const modal = new EventSuggestModal(
+				this.app, unlinkedCandidates, this.settings.timezone,
+			);
+			const choice = await modal.prompt();
+			if (!choice) return; // user cancelled
+
+			if (choice.type === "event") {
+				// Link to existing calendar event
+				await this.noteCreator.createNote(choice.event);
+				const notePath = this.noteCreator.getNotePath(choice.event);
+				await linkKnownRecording({
+					app: this.app,
+					session: recording,
+					notePath,
+					subject: choice.event.subject,
+					timezone: this.settings.timezone,
+					transcriptFolderPath: this.settings.transcriptFolderPath,
+					attendees: choice.event.attendees,
+					isRecurring: choice.event.isRecurring,
+				});
+			} else {
+				// Create new meeting — prompt for a name
+				const defaultName = recording.title || this.settings.unscheduledSubject;
+				const name = await new NameInputModal(this.app, {
+					defaultValue: defaultName,
+				}).prompt();
+				if (!name) return;
+				const subject = name;
+				const event: CalendarEvent = {
+					id: "unscheduled",
+					subject,
+					body: "",
+					isAllDay: false,
+					isOnlineMeeting: false,
+					onlineMeetingUrl: "",
+					startTime: recording.recordingStart,
+					endTime: new Date(recording.recordingStart.getTime() + recording.durationSeconds * 1000),
+					location: "",
+					attendeeCount: 0,
+					attendees: [],
+					organizerName: "",
+					organizerEmail: "",
+					isOrganizer: false,
+					isRecurring: false,
+					responseStatus: "organizer",
+					categories: [],
+				};
+				await this.noteCreator.createNote(event, {preserveTimestamps: true});
+				const notePath = this.noteCreator.getNotePath(event);
+				await linkKnownRecording({
+					app: this.app,
+					session: recording,
+					notePath,
+					subject,
+					timezone: this.settings.timezone,
+					transcriptFolderPath: this.settings.transcriptFolderPath,
+				});
+
+				// Inject into timeline immediately (metadata cache may lag)
+				if (this.cachedEvents) {
+					this.cachedEvents.push({...event, id: `unscheduled-${notePath}`});
+				}
 			}
-		}
 
-		// Re-render timeline so the new/updated card appears
-		if (this.cachedEvents) {
-			this.renderEvents(this.cachedEvents);
+			// Re-render timeline so the new/updated card appears
+			if (this.cachedEvents) {
+				this.renderEvents(this.cachedEvents);
+			}
+			// Rebuild the unlinked section from truth (frontmatter now has session ID)
+			void this.loadAndRenderUnlinkedSection();
+		} catch (e) {
+			console.error("[WhisperCal] Link unlinked recording error:", e);
+			new Notice(`Failed to link recording: ${e instanceof Error ? e.message : String(e)}`);
 		}
-		// Rebuild the unlinked section from truth (frontmatter now has session ID)
-		void this.loadAndRenderUnlinkedSection();
 	}
 
 	/** Keys from frontmatter that affect card rendering. */

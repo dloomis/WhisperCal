@@ -28,7 +28,12 @@ export class MsalAuth extends BaseCalendarAuth {
 	}
 
 	updateConfig(config: Record<string, string>): void {
-		this.config = config as unknown as MsalAuthConfig;
+		this.config = {
+			tenantId: config["tenantId"] ?? "",
+			clientId: config["clientId"] ?? "",
+			cloudInstance: (config["cloudInstance"] ?? "Public") as CloudInstance,
+			deviceLoginUrl: config["deviceLoginUrl"],
+		};
 	}
 
 	getGraphBaseUrl(): string {
@@ -125,9 +130,15 @@ export class MsalAuth extends BaseCalendarAuth {
 				}
 
 				// Success
+				if (!token.refresh_token) {
+					throw new AuthError(
+						"Microsoft did not return a refresh token. Your tenant may require admin consent for offline_access.",
+						"AUTH_FAILED",
+					);
+				}
 				await this.saveToken({
 					accessToken: token.access_token,
-					refreshToken: token.refresh_token ?? "",
+					refreshToken: token.refresh_token,
 					expiresAt: Date.now() + token.expires_in * 1000,
 				});
 				this.setState({status: "signed-in"});

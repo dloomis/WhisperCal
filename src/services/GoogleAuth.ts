@@ -28,7 +28,10 @@ export class GoogleAuth extends BaseCalendarAuth {
 	}
 
 	updateConfig(config: Record<string, string>): void {
-		this.config = config as unknown as GoogleAuthConfig;
+		this.config = {
+			clientId: config["clientId"] ?? "",
+			clientSecret: config["clientSecret"] ?? "",
+		};
 	}
 
 	async startSignIn(): Promise<void> {
@@ -106,10 +109,16 @@ export class GoogleAuth extends BaseCalendarAuth {
 			if (token.error) {
 				throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
 			}
+			if (!token.refresh_token) {
+				throw new AuthError(
+					"Google did not return a refresh token. Revoke app access at myaccount.google.com/permissions, then sign in again.",
+					"AUTH_FAILED",
+				);
+			}
 
 			await this.saveToken({
 				accessToken: token.access_token,
-				refreshToken: token.refresh_token ?? "",
+				refreshToken: token.refresh_token,
 				expiresAt: Date.now() + token.expires_in * 1000,
 			});
 			this.setState({status: "signed-in"});
@@ -178,8 +187,8 @@ export class GoogleAuth extends BaseCalendarAuth {
 					resolveCode(code);
 				} else {
 					const msg = error ?? "No authorization code received.";
-					res.writeHead(400, {"Content-Type": "text/html"});
-					res.end(`<html><body><h2>Sign-in failed</h2><p>${msg}</p></body></html>`);
+					res.writeHead(400, {"Content-Type": "text/plain"});
+					res.end(`Sign-in failed: ${msg}`);
 					resolveCode(null);
 				}
 			});

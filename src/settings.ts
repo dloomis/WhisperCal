@@ -164,6 +164,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
+		// Unsubscribe any previous auth listener to prevent stacking on re-render
+		this.authUnsubscribe?.();
+		this.authUnsubscribe = null;
+
 		const {containerEl} = this;
 		containerEl.empty();
 		containerEl.addClass("whisper-cal-settings");
