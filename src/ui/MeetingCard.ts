@@ -464,20 +464,6 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Research pill (LLM feature, independent of pipeline workflow)
-	if (opts.llmEnabled !== false) {
-		const researchPill = renderPill(actions, "book-open", "Research", states.research);
-		if (states.research === "incomplete" && onResearch) {
-			researchPill.addEventListener("click", () => {
-				onResearch(notePath);
-			});
-		} else if (states.research === "complete") {
-			researchPill.addEventListener("click", () => {
-				void app.workspace.openLinkText(notePath, "", false);
-			});
-		}
-	}
-
 	// Transcript pill (MacWhisper — hidden when Tome is enabled)
 	if (!opts.tomeEnabled) {
 		const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
@@ -543,6 +529,20 @@ export function renderMeetingCard(
 			});
 		} else if (states.summary === "complete") {
 			summaryPill.addEventListener("click", () => {
+				void app.workspace.openLinkText(notePath, "", false);
+			});
+		}
+	}
+
+	// Research pill (LLM feature, independent of pipeline workflow)
+	if (opts.llmEnabled !== false) {
+		const researchPill = renderPill(actions, "book-open", "Research", states.research);
+		if (states.research === "incomplete" && onResearch) {
+			researchPill.addEventListener("click", () => {
+				onResearch(notePath);
+			});
+		} else if (states.research === "complete") {
+			researchPill.addEventListener("click", () => {
 				void app.workspace.openLinkText(notePath, "", false);
 			});
 		}
