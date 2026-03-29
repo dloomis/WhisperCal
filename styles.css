@@ -791,24 +791,25 @@
 .whisper-cal-pill-record .whisper-cal-pill-icon svg {
 	fill: #e53935;
 	color: #e53935;
-	width: 10px;
-	height: 10px;
+	width: 8px;
+	height: 8px;
 }
 
 .whisper-cal-pill-recording.whisper-cal-pill-running {
-	animation: none;
+	animation: none !important;
+	opacity: 1 !important;
 	border-color: #e53935;
 	background: transparent;
 	cursor: pointer;
 }
 
-.whisper-cal-pill-recording .whisper-cal-pill-icon svg {
+.whisper-cal-pill-recording .whisper-cal-pill-icon {
 	animation: whisper-cal-rec-flash 1s ease-in-out infinite;
 }
 
 @keyframes whisper-cal-rec-flash {
 	0%, 100% { opacity: 1; }
-	50% { opacity: 0.1; }
+	50% { opacity: 0; }
 }
 
 /* Status line below action pills */
