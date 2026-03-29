@@ -788,22 +788,14 @@
 	50% { opacity: 0.4; }
 }
 
-.whisper-cal-pill-record .whisper-cal-pill-icon svg {
-	fill: #e53935;
-	color: #e53935;
-	width: 8px;
-	height: 8px;
-}
-
-.whisper-cal-pill-recording.whisper-cal-pill-running {
-	animation: none !important;
-	opacity: 1 !important;
-	border-color: var(--background-modifier-border);
-	background: transparent;
-	cursor: pointer;
-}
-
-.whisper-cal-pill-recording .whisper-cal-pill-icon {
+.whisper-cal-rec-dot {
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: #e53935;
+	margin-left: 5px;
+	vertical-align: middle;
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
 }
 

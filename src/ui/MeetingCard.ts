@@ -78,7 +78,7 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	return btn;
 }
 
-function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): HTMLElement {
+function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): {gutter: HTMLElement; timeDiv: HTMLElement | null} {
 	const notAccepted = !event.isOrganizer && event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
 	const gutterCls = notAccepted
 		? "whisper-cal-card-gutter whisper-cal-card-gutter-tentative"
@@ -87,6 +87,8 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 
 	// Category color is shown via the grid icon only; the vertical bar mirrors gutter state
 
+	let timeDivRef: HTMLElement | null = null;
+
 	if (event.isAllDay) {
 		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {
@@ -94,6 +96,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	} else {
 		const timeStr = formatTime(event.startTime, timezone);
 		const timeDiv = gutter.createDiv({cls: "whisper-cal-card-gutter-time"});
+		timeDivRef = timeDiv;
 		const match = timeStr.match(/^(.+)\s+(AM|PM)$/i);
 		if (match) {
 			timeDiv.createSpan({text: match[1]! + " "});
@@ -136,7 +139,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		}
 	}
 
-	return gutter;
+	return {gutter, timeDiv: timeDivRef};
 }
 
 function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
@@ -302,7 +305,7 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	const gutter = renderGutter(card, event, timezone, opts);
+	const {gutter, timeDiv: gutterTimeDiv} = renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
 	// Subject
@@ -411,10 +414,20 @@ export function renderMeetingCard(
 
 	// Tome Record pill (right after Note, before Research)
 	if (opts.tomeEnabled) {
-		const recordPill = renderPill(actions, "circle", "Record", states.tomeRecord);
-		recordPill.addClass("whisper-cal-pill-record");
+		const recordPill = renderPill(actions, "mic", "Record", states.tomeRecord);
+
+		// Red recording dot in gutter — only shown during active recording
+		let recDot: HTMLElement | null = null;
+		const showRecDot = () => {
+			if (!gutterTimeDiv || recDot) return;
+			recDot = gutterTimeDiv.createSpan({cls: "whisper-cal-rec-dot"});
+		};
+		const hideRecDot = () => {
+			if (recDot) { recDot.remove(); recDot = null; }
+		};
+
 		if (states.tomeRecord === "running") {
-			recordPill.addClass("whisper-cal-pill-recording");
+			showRecDot();
 		}
 		if (states.tomeRecord === "complete") {
 			recordPill.addEventListener("click", () => {
@@ -425,7 +438,7 @@ export function renderMeetingCard(
 			recordPill.disabled = false; // override — running pill is clickable to stop
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
-				recordPill.removeClass("whisper-cal-pill-recording");
+				hideRecDot();
 				void stopTomeRecording({app, notePath, transcriptFolderPath});
 			});
 		} else if (states.tomeRecord === "incomplete") {
@@ -434,7 +447,7 @@ export function renderMeetingCard(
 				if (recording) {
 					// Stop
 					recordPill.disabled = true;
-					recordPill.removeClass("whisper-cal-pill-recording");
+					hideRecDot();
 					void stopTomeRecording({app, notePath, transcriptFolderPath});
 					return;
 				}
@@ -448,11 +461,11 @@ export function renderMeetingCard(
 						await startTomeRecording({app, notePath, event, transcriptFolderPath, timezone});
 						recording = true;
 						recordPill.disabled = false;
-						recordPill.addClass("whisper-cal-pill-recording");
+						showRecDot();
 						watchTomeRecording({app, notePath, transcriptFolderPath, onStopped: () => {
 							recording = false;
 							recordPill.disabled = true;
-							recordPill.removeClass("whisper-cal-pill-recording");
+							hideRecDot();
 						}});
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start Tome recording");
