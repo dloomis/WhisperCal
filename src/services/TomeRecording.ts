@@ -1,4 +1,4 @@
-import {App, Notice, TFile, normalizePath} from "obsidian";
+import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
 import {tomeHealth, tomeStart, tomeStop, tomeStatus} from "./TomeApi";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {tomeRecordingState} from "../state";
@@ -60,7 +60,23 @@ export async function stopTomeRecording(opts: {
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 100; // ~5 minutes
 
+/** Find the newest file in a folder created after a given timestamp. */
+function findNewestFile(app: App, folderPath: string, afterMs: number): TFile | null {
+	const folder = app.vault.getAbstractFileByPath(folderPath);
+	if (!(folder instanceof TFolder)) return null;
+	let newest: TFile | null = null;
+	let newestTime = afterMs;
+	for (const child of folder.children) {
+		if (child instanceof TFile && child.stat.ctime > newestTime) {
+			newest = child;
+			newestTime = child.stat.ctime;
+		}
+	}
+	return newest;
+}
+
 async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string): Promise<void> {
+	const beforeStop = Date.now();
 	const notice = new Notice("Recording stopped \u2014 waiting for transcript\u2026", 0);
 	try {
 		// Poll Tome status until transcription completes
@@ -84,28 +100,29 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		}
 
 		// Look for the transcript file in the vault
-		const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
-		const transcriptBasename = getTranscriptFilename(notePath);
+		const expectedPath = getTranscriptPath(notePath, transcriptFolderPath);
+		let transcriptFile: TFile | null = null;
 
-		// Check if the file exists — Tome writes it to the configured output dir
-		// which should be the vault's Transcripts folder
-		let found = app.vault.getAbstractFileByPath(transcriptPath) instanceof TFile;
-
-		// Give the vault a moment to pick up the new file if needed
-		if (!found) {
-			for (let i = 0; i < 10 && !found; i++) {
-				await sleep(1000);
-				found = app.vault.getAbstractFileByPath(transcriptPath) instanceof TFile;
+		// Wait for the file to appear — check expected path first, then scan folder
+		for (let i = 0; i < 15 && !transcriptFile; i++) {
+			await sleep(1000);
+			const byPath = app.vault.getAbstractFileByPath(expectedPath);
+			if (byPath instanceof TFile) {
+				transcriptFile = byPath;
+			} else {
+				// Fallback: find the newest file in the transcript folder
+				transcriptFile = findNewestFile(app, transcriptFolderPath, beforeStop);
 			}
 		}
 
-		if (!found) {
+		if (!transcriptFile) {
 			notice.setMessage("Transcript file not found \u2014 check Tome output folder");
 			setTimeout(() => notice.hide(), 6000);
 			return;
 		}
 
 		// Link transcript to meeting note
+		const transcriptBasename = transcriptFile.basename;
 		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
 		notice.setMessage("Transcript linked to note");
 		setTimeout(() => notice.hide(), 4000);

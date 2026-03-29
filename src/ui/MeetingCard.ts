@@ -425,10 +425,20 @@ export function renderMeetingCard(
 			recordPill.disabled = false; // override — running pill is clickable to stop
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
+				recordPill.removeClass("whisper-cal-pill-recording");
 				void stopTomeRecording({app, notePath, transcriptFolderPath});
 			});
 		} else if (states.tomeRecord === "incomplete") {
+			let recording = false;
 			recordPill.addEventListener("click", () => {
+				if (recording) {
+					// Stop
+					recordPill.disabled = true;
+					recordPill.removeClass("whisper-cal-pill-recording");
+					void stopTomeRecording({app, notePath, transcriptFolderPath});
+					return;
+				}
+				// Start
 				recordPill.disabled = true;
 				const handleRecord = async () => {
 					try {
@@ -436,6 +446,9 @@ export function renderMeetingCard(
 							await noteCreator.createNote(event);
 						}
 						await startTomeRecording({app, notePath, event, transcriptFolderPath});
+						recording = true;
+						recordPill.disabled = false;
+						recordPill.addClass("whisper-cal-pill-recording");
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start Tome recording");
 						recordPill.disabled = false;
