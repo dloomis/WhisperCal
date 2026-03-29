@@ -1,33 +1,38 @@
 /**
  * Get midnight in a given timezone as a UTC Date.
- * Uses Intl to find the local date parts, then binary-searches for the
- * UTC instant where that timezone shows 00:00 on that calendar day.
+ * Computes the UTC offset at actual midnight (not at the guess time)
+ * to handle DST transitions correctly.
  */
 function midnightInTimezone(date: Date, timezone: string): Date {
 	// Get the calendar date in the target timezone
 	const localDate = formatDate(date, timezone); // "YYYY-MM-DD"
-	// Start with a rough guess: interpret as UTC midnight, then adjust
+	// Start with a rough guess: interpret as UTC midnight
 	const guess = new Date(`${localDate}T00:00:00Z`);
-	// Get the UTC offset at that guess by comparing formatted parts
-	const parts = new Intl.DateTimeFormat("en-US", {
-		timeZone: timezone,
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		hour12: false,
-	}).formatToParts(guess);
-	const get = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
-	const localH = get("hour") === 24 ? 0 : get("hour");
-	const localM = get("minute");
-	// The offset in ms: if the timezone shows 19:00 when UTC is 00:00,
-	// midnight local is 5 hours after UTC midnight (offset = +5h).
-	const shownMs = (localH * 60 + localM) * 60_000;
-	// Midnight local = guess - shownMs (if shown > 12h, we wrapped a day)
-	const offsetMs = shownMs <= 12 * 3600_000 ? -shownMs : (24 * 3600_000 - shownMs);
-	return new Date(guess.getTime() + offsetMs);
+
+	// Compute UTC offset at the guess time by comparing formatted local parts to UTC
+	const computeOffset = (instant: Date): number => {
+		const parts = new Intl.DateTimeFormat("en-US", {
+			timeZone: timezone,
+			year: "numeric", month: "2-digit", day: "2-digit",
+			hour: "2-digit", minute: "2-digit", second: "2-digit",
+			hour12: false,
+		}).formatToParts(instant);
+		const get = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
+		const localMs = Date.UTC(
+			get("year"), get("month") - 1, get("day"),
+			get("hour") === 24 ? 0 : get("hour"), get("minute"), get("second"),
+		);
+		return localMs - instant.getTime();
+	};
+
+	// First pass: compute offset at the guess
+	const offset1 = computeOffset(guess);
+	const midnight1 = new Date(guess.getTime() - offset1);
+	// Second pass: verify the offset at the computed midnight (may differ on DST boundary)
+	const offset2 = computeOffset(midnight1);
+	if (offset1 === offset2) return midnight1;
+	// Re-adjust with the correct offset
+	return new Date(guess.getTime() - offset2);
 }
 
 /**
@@ -40,10 +45,11 @@ export function getDayStartUTC(date: Date, timezone: string): string {
 
 /**
  * Get the end of a day (start of next day) in a given timezone as a UTC ISO string.
+ * Computes next-day midnight directly instead of adding fixed 24h (which is wrong on DST days).
  */
 export function getDayEndUTC(date: Date, timezone: string): string {
-	const midnight = midnightInTimezone(date, timezone);
-	return new Date(midnight.getTime() + 24 * 3600_000).toISOString();
+	const nextDay = new Date(date.getTime() + 24 * 3600_000);
+	return midnightInTimezone(nextDay, timezone).toISOString();
 }
 
 /**

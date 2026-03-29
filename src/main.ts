@@ -96,8 +96,8 @@ export default class WhisperCalPlugin extends Plugin {
 				if (!file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 				if (!fm) return;
-				const pipelineState = fm["pipeline_state"] as string | undefined;
-				if (!pipelineState) return;
+				const pipelineState = fm["pipeline_state"];
+				if (typeof pipelineState !== "string" || !pipelineState) return;
 				// Resolve meeting note from transcript's meeting_note backlink
 				const meetingFile = resolveWikiLink(this.app, fm as Record<string, unknown>, "meeting_note", file.path);
 				if (!meetingFile) return;
@@ -152,7 +152,10 @@ export default class WhisperCalPlugin extends Plugin {
 						.setTitle("Link MacWhisper recording")
 						.setIcon("mic")
 						.onClick(() => {
-							void this.handleLinkRecording(file, fm);
+							// Re-read frontmatter at click time to avoid stale values
+							const freshFm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+							if (!freshFm) return;
+							void this.handleLinkRecording(file, freshFm);
 						});
 				});
 			}),

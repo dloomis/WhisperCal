@@ -234,5 +234,8 @@ function getFrontmatterSpeakers(app: App, transcriptPath: string): FrontmatterSp
 	if (!fm) return [];
 	const speakers: unknown = fm["speakers"];
 	if (!Array.isArray(speakers)) return [];
-	return speakers as FrontmatterSpeaker[];
+	// Filter to objects only — hand-edited frontmatter could contain primitives
+	return speakers.filter((s): s is FrontmatterSpeaker =>
+		s !== null && typeof s === "object" && !Array.isArray(s)
+	);
 }

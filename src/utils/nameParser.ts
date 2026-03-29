@@ -10,6 +10,11 @@ function smartCase(word: string): string {
 	return word;
 }
 
+const NAME_SUFFIXES = new Set([
+	"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v",
+	"md", "phd", "esq", "dds", "dvm",
+]);
+
 /**
  * Parse an Outlook/Exchange display name (often in DoD format) into
  * a clean "First Last" suitable for an Obsidian wiki link.
@@ -43,8 +48,12 @@ export function parseDisplayName(name: string, email: string): string {
 		return `${smartCase(first)} ${smartCase(last)}`;
 	}
 
-	// Simple "First [Middle] Last" format
+	// Simple "First [Middle] Last [Suffix]" format
 	const words = cleaned.split(/\s+/);
+	// Strip trailing suffixes like "Jr", "III", "PhD"
+	while (words.length > 2 && NAME_SUFFIXES.has(words[words.length - 1]!.toLowerCase())) {
+		words.pop();
+	}
 	if (words.length <= 2) {
 		return words.map(smartCase).join(" ");
 	}

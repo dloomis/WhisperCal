@@ -5,7 +5,8 @@ const ILLEGAL_FILENAME_CHARS = /[/\\:*?"<>|#[\]]/g;
  * Strips characters that are illegal in filenames across platforms.
  */
 export function sanitizeFilename(name: string): string {
-	return name.replace(ILLEGAL_FILENAME_CHARS, "").trim();
+	const sanitized = name.replace(ILLEGAL_FILENAME_CHARS, "").trim();
+	return sanitized || "untitled";
 }
 
 /**

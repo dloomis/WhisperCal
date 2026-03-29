@@ -148,6 +148,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	private authStatusEl: HTMLElement | null = null;
 	private authUnsubscribe: (() => void) | null = null;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
+	private searchTimer: number | null = null;
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
 		super(app, plugin);
@@ -620,6 +621,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+		if (this.searchTimer !== null) {
+			window.clearTimeout(this.searchTimer);
+			this.searchTimer = null;
+		}
 		// Flush any pending debounced save so settings aren't lost
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
@@ -744,13 +749,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Client secret")
 			.setDesc("OAuth client secret from your Google Cloud Console desktop app credentials")
-			.addText(text => text
-				.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
-				.setValue(this.plugin.settings.googleClientSecret)
-				.onChange((value) => {
-					this.plugin.settings.googleClientSecret = value;
-					this.debouncedSave();
-				}));
+			.addText(text => {
+				text.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
+					.setValue(this.plugin.settings.googleClientSecret)
+					.onChange((value) => {
+						this.plugin.settings.googleClientSecret = value;
+						this.debouncedSave();
+					});
+				text.inputEl.type = "password";
+			});
 		/* eslint-enable obsidianmd/ui/sentence-case */
 	}
 
@@ -798,7 +805,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		chipField.addEventListener("click", () => input.focus());
 
 		// People search via provider-agnostic PeopleSearchProvider
-		let searchTimer: number | null = null;
 		let selectedIndex = -1;
 		let suggestions: PeopleSearchResult[] = [];
 
@@ -866,10 +872,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		};
 
 		input.addEventListener("input", () => {
-			if (searchTimer !== null) window.clearTimeout(searchTimer);
+			if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
 			errorEl.setText("");
 			const query = input.value.trim();
-			searchTimer = window.setTimeout(() => void searchPeople(query), 300);
+			this.searchTimer = window.setTimeout(() => void searchPeople(query), 300);
 		});
 
 		input.addEventListener("keydown", (e) => {

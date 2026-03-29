@@ -44,13 +44,14 @@ export class GoogleAuth extends BaseCalendarAuth {
 			return;
 		}
 
-		// Generate PKCE challenge
+		// Generate PKCE challenge and CSRF state
 		const codeVerifier = randomBytes(32).toString("base64url");
 		const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+		const oauthState = randomBytes(16).toString("base64url");
 
 		try {
 			// Start loopback server on random port
-			const {port, code: codePromise} = await this.startLoopbackServer();
+			const {port, code: codePromise} = await this.startLoopbackServer(oauthState);
 			const redirectUri = `http://127.0.0.1:${port}`;
 
 			// Build auth URL and open in browser
@@ -63,6 +64,7 @@ export class GoogleAuth extends BaseCalendarAuth {
 				code_challenge_method: "S256",
 				access_type: "offline",
 				prompt: "consent",
+				state: oauthState,
 			});
 			const authUrl = `${GOOGLE_AUTH_URL}?${params.toString()}`;
 
@@ -174,7 +176,7 @@ export class GoogleAuth extends BaseCalendarAuth {
 		};
 	}
 
-	private startLoopbackServer(): Promise<{port: number; code: Promise<string | null>}> {
+	private startLoopbackServer(expectedState: string): Promise<{port: number; code: Promise<string | null>}> {
 		return new Promise((resolveStart, rejectStart) => {
 			let resolveCode: (code: string | null) => void;
 			const codePromise = new Promise<string | null>((r) => { resolveCode = r; });
@@ -183,6 +185,13 @@ export class GoogleAuth extends BaseCalendarAuth {
 				const url = new URL(req.url ?? "", `http://127.0.0.1`);
 				const code = url.searchParams.get("code");
 				const error = url.searchParams.get("error");
+				const state = url.searchParams.get("state");
+
+				if (state !== expectedState) {
+					res.writeHead(400, {"Content-Type": "text/plain"});
+					res.end("Sign-in failed: invalid state parameter");
+					return;
+				}
 
 				if (code) {
 					res.writeHead(200, {"Content-Type": "text/html"});
