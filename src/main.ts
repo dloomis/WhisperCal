@@ -475,24 +475,25 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice(warning);
 		}
 
-		// Queue the modal so parallel completions are presented one at a time
+		// Queue the modal so parallel completions are presented one at a time.
+		// Wrap in try/catch so one failure doesn't break the chain for subsequent modals.
 		this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
-			const meetingFile = this.app.vault.getAbstractFileByPath(notePath);
-			const meetingFm = meetingFile instanceof TFile
-				? (this.app.metadataCache.getFileCache(meetingFile)?.frontmatter ?? {})
-				: {};
-			const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
-			const subtitle = buildMeetingSubtitle(meetingFm);
-			const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
-			if (!decisions) return;
-
-			const hasTagged = decisions.some(d => d.confirmedName);
-			if (!hasTagged) {
-				new Notice("No speakers tagged — no changes made");
-				return;
-			}
-
 			try {
+				const meetingFile = this.app.vault.getAbstractFileByPath(notePath);
+				const meetingFm = meetingFile instanceof TFile
+					? (this.app.metadataCache.getFileCache(meetingFile)?.frontmatter ?? {})
+					: {};
+				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
+				const subtitle = buildMeetingSubtitle(meetingFm);
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
+				if (!decisions) return;
+
+				const hasTagged = decisions.some(d => d.confirmedName);
+				if (!hasTagged) {
+					new Notice("No speakers tagged — no changes made");
+					return;
+				}
+
 				await applySpeakerTags(this.app, transcriptPath, decisions);
 				new Notice("Speaker tags applied");
 
@@ -507,11 +508,13 @@ export default class WhisperCalPlugin extends Plugin {
 						}
 					}
 				}
+
+				this.refreshCalendarCards(transcriptPath);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
+				console.error("[WhisperCal] Speaker tag modal error:", e);
 				new Notice(`Failed to apply speaker tags: ${msg}`);
 			}
-			this.refreshCalendarCards(transcriptPath);
 		});
 	}
 
@@ -657,6 +660,11 @@ export default class WhisperCalPlugin extends Plugin {
 	}): void {
 		const {jobSet, filePath, label, promptPath} = opts;
 
+		if (!this.settings.llmEnabled) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("LLM features are disabled — enable them in WhisperCal settings");
+			return;
+		}
 		if (jobSet.has(filePath)) {
 			new Notice(`${label} already in progress`);
 			return;

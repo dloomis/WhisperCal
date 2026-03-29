@@ -19,6 +19,7 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 	protected callbacks: AuthCallbacks;
 	protected tokenCache: TokenCache | null = null;
 	protected state: AuthState = {status: "signed-out"};
+	private refreshPromise: Promise<string> | null = null;
 
 	constructor(callbacks: AuthCallbacks) {
 		this.callbacks = callbacks;
@@ -75,6 +76,18 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 	protected abstract doRefreshToken(refreshToken: string): Promise<TokenCache>;
 
 	private async refreshAccessToken(): Promise<string> {
+		// Deduplicate concurrent refresh calls — if a refresh is already in-flight,
+		// return the same promise to avoid rotating the refresh token multiple times.
+		if (this.refreshPromise) return this.refreshPromise;
+		this.refreshPromise = this.doRefresh();
+		try {
+			return await this.refreshPromise;
+		} finally {
+			this.refreshPromise = null;
+		}
+	}
+
+	private async doRefresh(): Promise<string> {
 		if (!this.tokenCache?.refreshToken) {
 			await this.signOut();
 			throw new AuthError("No refresh token. Please sign in again.", "NOT_AUTHENTICATED");

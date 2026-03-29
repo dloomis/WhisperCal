@@ -147,10 +147,20 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
 	private authStatusEl: HTMLElement | null = null;
 	private authUnsubscribe: (() => void) | null = null;
+	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	/** Debounced save — batches rapid text input changes into a single save after 500ms of inactivity. */
+	private debouncedSave(): void {
+		if (this.saveTimer) clearTimeout(this.saveTimer);
+		this.saveTimer = setTimeout(() => {
+			this.saveTimer = null;
+			void this.plugin.saveSettings();
+		}, 500);
 	}
 
 	display(): void {
@@ -173,9 +183,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => {
 				text.setPlaceholder("People")
 					.setValue(this.plugin.settings.peopleFolderPath)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.peopleFolderPath = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					});
 				new FolderSuggest(this.app, text.inputEl);
 			});
@@ -186,9 +196,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => {
 				text.setPlaceholder("Meetings")
 					.setValue(this.plugin.settings.noteFolderPath)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.noteFolderPath = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					});
 				new FolderSuggest(this.app, text.inputEl);
 			});
@@ -199,9 +209,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => {
 				text.setPlaceholder("Transcripts")
 					.setValue(this.plugin.settings.transcriptFolderPath)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.transcriptFolderPath = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					});
 				new FolderSuggest(this.app, text.inputEl);
 			});
@@ -212,9 +222,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("{{date}} - {{subject}}")
 				.setValue(this.plugin.settings.noteFilenameTemplate)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.noteFilenameTemplate = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -224,9 +234,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setPlaceholder("Unscheduled Meeting")
 				.setValue(this.plugin.settings.unscheduledSubject)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.unscheduledSubject = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -235,9 +245,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => {
 				text.setPlaceholder("Templates/WhisperCal Meeting.md")
 					.setValue(this.plugin.settings.noteTemplatePath)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.noteTemplatePath = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					});
 				new FileSuggest(this.app, text.inputEl);
 			});
@@ -282,14 +292,14 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setPlaceholder("America/New_York")
 				.setValue(this.plugin.settings.timezone)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					try {
 						Intl.DateTimeFormat(undefined, {timeZone: value});
 					} catch {
 						return; // Ignore invalid timezone — keep previous value
 					}
 					this.plugin.settings.timezone = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -325,11 +335,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("5")
 				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.refreshIntervalMinutes = num;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -339,11 +349,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("5")
 				.setValue(String(this.plugin.settings.cacheFutureDays))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 0) {
 						this.plugin.settings.cacheFutureDays = num;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -353,11 +363,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("30")
 				.setValue(String(this.plugin.settings.cacheRetentionDays))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.cacheRetentionDays = num;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -378,11 +388,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("10")
 				.setValue(String(this.plugin.settings.recordingWindowMinutes))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.recordingWindowMinutes = num;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -392,11 +402,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("30")
 				.setValue(String(this.plugin.settings.unlinkedLookbackDays))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num >= 1) {
 						this.plugin.settings.unlinkedLookbackDays = num;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -449,9 +459,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("claude")
 				.setValue(this.plugin.settings.llmCli)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.llmCli = value.trim() || "claude";
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -463,9 +473,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("--dangerously-skip-permissions")
 				.setValue(this.plugin.settings.llmExtraFlags)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.llmExtraFlags = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		// Per-prompt settings: each prompt has a file path + model selector
@@ -484,9 +494,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.addText(text => {
 					text.setPlaceholder(placeholder)
 						.setValue(this.plugin.settings[pathKey])
-						.onChange(async (value) => {
+						.onChange((value) => {
 							this.plugin.settings[pathKey] = value;
-							await this.plugin.saveSettings();
+							this.debouncedSave();
 						});
 					new FileSuggest(this.app, text.inputEl);
 				});
@@ -538,9 +548,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("Full name")
 				.setValue(this.plugin.settings.microphoneUser)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.microphoneUser = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		// Populate all model dropdowns once the API responds
@@ -569,11 +579,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setDesc("Kill the LLM process if it runs longer than this (0 = no timeout)")
 			.addText(text => text
 				.setValue(String(this.plugin.settings.llmTimeoutMinutes))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const n = parseInt(value, 10);
 					if (!isNaN(n) && n >= 0) {
 						this.plugin.settings.llmTimeoutMinutes = n;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -584,11 +594,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setDesc("Maximum number of LLM processes that can run simultaneously")
 			.addText(text => text
 				.setValue(String(this.plugin.settings.llmMaxConcurrent))
-				.onChange(async (value) => {
+				.onChange((value) => {
 					const n = parseInt(value, 10);
 					if (!isNaN(n) && n >= 1) {
 						this.plugin.settings.llmMaxConcurrent = n;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					}
 				}));
 
@@ -606,6 +616,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+		// Flush any pending debounced save so settings aren't lost
+		if (this.saveTimer) {
+			clearTimeout(this.saveTimer);
+			this.saveTimer = null;
+			void this.plugin.saveSettings();
+		}
 	}
 
 	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
@@ -646,9 +662,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
 				.setValue(this.plugin.settings.tenantId)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.tenantId = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -659,9 +675,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
 				.setValue(this.plugin.settings.clientId)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.clientId = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		let deviceLoginUrlInput: import("obsidian").TextComponent | null = null;
@@ -699,7 +715,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.deviceLoginUrl)
 					.onChange(async (value) => {
 						this.plugin.settings.deviceLoginUrl = value.trim();
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					});
 			});
 	}
@@ -716,9 +732,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("xxxxxxxxxxxx.apps.googleusercontent.com")
 				.setValue(this.plugin.settings.googleClientId)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.googleClientId = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 
 		new Setting(containerEl)
@@ -727,9 +743,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.addText(text => text
 				.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
 				.setValue(this.plugin.settings.googleClientSecret)
-				.onChange(async (value) => {
+				.onChange((value) => {
 					this.plugin.settings.googleClientSecret = value;
-					await this.plugin.saveSettings();
+					this.debouncedSave();
 				}));
 		/* eslint-enable obsidianmd/ui/sentence-case */
 	}

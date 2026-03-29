@@ -89,9 +89,14 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 
 	const flagParts: string[] = [];
 	if (opts.llmModel) flagParts.push(`--model ${shellQuote(opts.llmModel)}`);
-	if (opts.llmExtraFlags.trim()) flagParts.push(opts.llmExtraFlags.trim());
+	if (opts.llmExtraFlags.trim()) {
+		// Split extra flags on whitespace and quote each individually to prevent injection
+		for (const flag of opts.llmExtraFlags.trim().split(/\s+/)) {
+			flagParts.push(shellQuote(flag));
+		}
+	}
 	const flags = flagParts.join(" ");
-	const cmd = `${opts.llmCli}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
+	const cmd = `${shellQuote(opts.llmCli)}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
 	return {cmd, vaultPath: opts.vaultPath};
 }
 
@@ -135,12 +140,13 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 		let timedOut = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
 		if (timeoutMs > 0) {
 			timer = setTimeout(() => {
 				timedOut = true;
 				child.kill("SIGTERM");
 				// Force-kill after 5 seconds if SIGTERM doesn't work
-				setTimeout(() => {
+				killTimer = setTimeout(() => {
 					if (!child.killed) child.kill("SIGKILL");
 				}, 5000);
 			}, timeoutMs);
@@ -148,6 +154,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 		child.on("error", (err) => {
 			if (timer) clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
 			activeProcesses.delete(child);
 			console.error("[WhisperCal] LLM spawn error:", err);
 			resolve({exitCode: 1, stdout: "", stderr: err.message});
@@ -155,6 +162,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 		child.on("close", (code) => {
 			if (timer) clearTimeout(timer);
+			if (killTimer) clearTimeout(killTimer);
 			activeProcesses.delete(child);
 			if (timedOut) {
 				const mins = Math.round(timeoutMs / 60000);
