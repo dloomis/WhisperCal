@@ -231,6 +231,20 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onExternalSettingsChange(): Promise<void> {
 		await this.loadSettings();
+		// Propagate updated settings to live components (same as saveSettings does)
+		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
+		this.cachedProvider?.updateConfig(
+			this.settings.cacheFutureDays,
+			this.settings.cacheRetentionDays,
+			this.settings.timezone,
+		);
+		setTimeFormat(this.settings.timeFormat);
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+			const view = leaf.view;
+			if (view instanceof CalendarView) {
+				view.updateSettings(this.settings, this.provider);
+			}
+		}
 	}
 
 	/** Get the vault's absolute filesystem path (undocumented but stable on desktop). */

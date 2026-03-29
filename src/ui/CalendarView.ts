@@ -13,6 +13,7 @@ import {renderAllDayCard, renderMeetingCard, type MeetingCardOpts} from "./Meeti
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
+import {PeopleMatchService} from "../services/PeopleMatchService";
 
 /** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
  *  YAML parses unquoted "16:39" as sexagesimal number 999. */
@@ -76,6 +77,7 @@ export class CalendarView extends ItemView {
 	private cards = new Map<string, {el: HTMLElement; opts: MeetingCardOpts}>();
 	private pendingFmPaths = new Set<string>();
 	private refreshGeneration = 0;
+	private peopleMatchService: PeopleMatchService | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -121,7 +123,7 @@ export class CalendarView extends ItemView {
 		// Navigation row: [<] date [>]
 		const nav = header.createDiv({cls: "whisper-cal-nav"});
 
-		const prevBtn = nav.createDiv({cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Previous day"}});
+		const prevBtn = nav.createEl("button", {cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Previous day"}});
 		setIcon(prevBtn, "chevron-left");
 		this.registerDomEvent(prevBtn, "click", () => this.navigateDay(-1));
 
@@ -130,7 +132,7 @@ export class CalendarView extends ItemView {
 			text: formatDisplayDate(this.selectedDate, this.settings.timezone),
 		});
 
-		const nextBtn = nav.createDiv({cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Next day"}});
+		const nextBtn = nav.createEl("button", {cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Next day"}});
 		setIcon(nextBtn, "chevron-right");
 		this.registerDomEvent(nextBtn, "click", () => this.navigateDay(1));
 
@@ -286,6 +288,7 @@ export class CalendarView extends ItemView {
 		this.settings = settings;
 		this.provider = provider;
 		this.noteCreator = new NoteCreator(this.app, settings);
+		this.peopleMatchService = null; // invalidate — will be recreated on next render
 		this.startAutoRefresh();
 		this.lastRefreshTime = 0;
 		void this.refresh();
@@ -458,6 +461,14 @@ export class CalendarView extends ItemView {
 		this.snapshotFrontmatter();
 	}
 
+	private getOrCreatePeopleMatchService(): PeopleMatchService | undefined {
+		if (!this.settings.peopleFolderPath) return undefined;
+		if (!this.peopleMatchService) {
+			this.peopleMatchService = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+		}
+		return this.peopleMatchService;
+	}
+
 	private buildCardOpts(event: CalendarEvent): MeetingCardOpts {
 		return {
 			event,
@@ -468,7 +479,7 @@ export class CalendarView extends ItemView {
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
 			llmEnabled: this.settings.llmEnabled,
-			peopleFolderPath: this.settings.peopleFolderPath,
+			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
 			onSummarize: this.callbacks.onSummarize,

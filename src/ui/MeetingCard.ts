@@ -7,7 +7,7 @@ import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs, researchJobs} from "../state";
-import {PeopleMatchService} from "../services/PeopleMatchService";
+import type {PeopleMatchService} from "../services/PeopleMatchService";
 
 export interface MeetingCardOpts {
 	event: CalendarEvent;
@@ -22,7 +22,7 @@ export interface MeetingCardOpts {
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
 	onSummarize?: (notePath: string) => void;
 	onResearch?: (notePath: string) => void;
-	peopleFolderPath?: string;
+	peopleMatchService?: PeopleMatchService;
 	speakerTagModel?: string;
 	summarizerModel?: string;
 	researchModel?: string;
@@ -141,13 +141,10 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 
 	if (event.onlineMeetingUrl) {
 		const joinUrl = event.onlineMeetingUrl;
-		const locLink = meta.createSpan({
+		const locLink = meta.createEl("a", {
 			cls: "whisper-cal-card-meta-item whisper-cal-card-meta-link",
-			attr: {"aria-label": "Join online meeting"},
-		});
-		locLink.addEventListener("click", (e) => {
-			e.preventDefault();
-			window.open(joinUrl, "_blank", "noopener");
+			href: joinUrl,
+			attr: {"aria-label": "Join online meeting", target: "_blank", rel: "noopener"},
 		});
 		const locIcon = locLink.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(locIcon, "map-pin");
@@ -312,9 +309,8 @@ export function renderMeetingCard(
 		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(orgIcon, "user");
 
-		const peoplePath = opts.peopleFolderPath;
-		const peopleMatch = peoplePath
-			? new PeopleMatchService(app, peoplePath).matchOne(event.organizerName, event.organizerEmail)
+		const peopleMatch = opts.peopleMatchService
+			? opts.peopleMatchService.matchOne(event.organizerName, event.organizerEmail)
 			: null;
 
 		if (peopleMatch) {

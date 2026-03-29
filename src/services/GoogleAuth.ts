@@ -18,9 +18,12 @@ interface GoogleAuthConfig {
 	clientSecret: string;
 }
 
+const LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 export class GoogleAuth extends BaseCalendarAuth {
 	private config: GoogleAuthConfig;
 	private server: Server | null = null;
+	private loopbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(config: GoogleAuthConfig, callbacks: AuthCallbacks) {
 		super(callbacks);
@@ -205,12 +208,21 @@ export class GoogleAuth extends BaseCalendarAuth {
 					return;
 				}
 				this.server = server;
+				// Time out after 5 minutes if the user doesn't complete the flow
+				this.loopbackTimer = setTimeout(() => {
+					resolveCode(null);
+					this.stopLoopbackServer();
+				}, LOOPBACK_TIMEOUT_MS);
 				resolveStart({port: addr.port, code: codePromise});
 			});
 		});
 	}
 
 	private stopLoopbackServer(): void {
+		if (this.loopbackTimer) {
+			clearTimeout(this.loopbackTimer);
+			this.loopbackTimer = null;
+		}
 		if (this.server) {
 			this.server.close();
 			this.server = null;

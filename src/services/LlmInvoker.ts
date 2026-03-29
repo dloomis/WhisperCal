@@ -202,7 +202,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	].join("\n");
 
 	try {
-		execSync(`osascript -e ${shellQuote(osascript)}`);
+		execSync(`osascript -e ${shellQuote(osascript)}`, {timeout: 10000});
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return Promise.resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});

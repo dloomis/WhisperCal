@@ -120,6 +120,25 @@ function hexToUuid(hex: string): string {
 	return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
+/** Cached directory listing to avoid repeated readdirSync calls in loops. */
+let mediaFileCache: string[] | null = null;
+let mediaCacheTime = 0;
+const MEDIA_CACHE_TTL_MS = 5000;
+
+function getMediaFiles(): string[] {
+	const now = Date.now();
+	if (mediaFileCache && now - mediaCacheTime < MEDIA_CACHE_TTL_MS) {
+		return mediaFileCache;
+	}
+	try {
+		mediaFileCache = readdirSync(MACWHISPER_MEDIA_PATH);
+		mediaCacheTime = now;
+		return mediaFileCache;
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Get the filesystem birthtime of a media file for a session.
  * Prefers track-0 (actual recording start for MacWhisper-recorded sessions),
@@ -129,7 +148,7 @@ function getMediaBirthtime(sessionId: string): Date | null {
 	const uuid = hexToUuid(sessionId);
 	const sessionPrefix = `${uuid}_`;
 	try {
-		const files = readdirSync(MACWHISPER_MEDIA_PATH);
+		const files = getMediaFiles();
 		const sessionFiles = files.filter(f => f.startsWith(sessionPrefix) && f.endsWith(".m4a"));
 		// Prefer track-0, fall back to any media file
 		const match = sessionFiles.find(f => f.includes("_track-0_")) ?? sessionFiles[0];
