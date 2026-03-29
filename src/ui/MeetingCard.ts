@@ -409,57 +409,7 @@ export function renderMeetingCard(
 		void handleClick();
 	});
 
-	// Research pill (LLM feature, independent of pipeline workflow)
-	if (opts.llmEnabled !== false) {
-		const researchPill = renderPill(actions, "book-open", "Research", states.research);
-		if (states.research === "incomplete" && onResearch) {
-			researchPill.addEventListener("click", () => {
-				onResearch(notePath);
-			});
-		} else if (states.research === "complete") {
-			researchPill.addEventListener("click", () => {
-				void app.workspace.openLinkText(notePath, "", false);
-			});
-		}
-	}
-
-	// Transcript pill
-	const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
-	if (states.transcript !== "disabled") {
-		transcriptPill.addEventListener("click", () => {
-			if (states.transcript === "complete") {
-				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-				if (tf) void app.workspace.openLinkText(tf.path, "", false);
-				return;
-			}
-			transcriptPill.disabled = true;
-			const handleMic = async () => {
-				let linked = false;
-				try {
-					if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
-						await noteCreator.createNote(event);
-					}
-					const isUnscheduled = event.id.startsWith("unscheduled");
-					linked = await linkRecording({
-						app,
-						meetingStart: event.startTime,
-						notePath,
-						subject: event.subject,
-						timezone,
-						transcriptFolderPath,
-						attendees: event.attendees,
-						isRecurring: event.isRecurring,
-						windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
-					});
-				} finally {
-					if (!linked) transcriptPill.disabled = false;
-				}
-			};
-			void handleMic();
-		});
-	}
-
-	// Tome Record pill
+	// Tome Record pill (right after Note, before Research)
 	if (opts.tomeEnabled) {
 		const recordPill = renderPill(actions, "radio", "Record", states.tomeRecord);
 		if (states.tomeRecord === "complete") {
@@ -488,6 +438,58 @@ export function renderMeetingCard(
 					}
 				};
 				void handleRecord();
+			});
+		}
+	}
+
+	// Research pill (LLM feature, independent of pipeline workflow)
+	if (opts.llmEnabled !== false) {
+		const researchPill = renderPill(actions, "book-open", "Research", states.research);
+		if (states.research === "incomplete" && onResearch) {
+			researchPill.addEventListener("click", () => {
+				onResearch(notePath);
+			});
+		} else if (states.research === "complete") {
+			researchPill.addEventListener("click", () => {
+				void app.workspace.openLinkText(notePath, "", false);
+			});
+		}
+	}
+
+	// Transcript pill (MacWhisper — hidden when Tome is enabled)
+	if (!opts.tomeEnabled) {
+		const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
+		if (states.transcript !== "disabled") {
+			transcriptPill.addEventListener("click", () => {
+				if (states.transcript === "complete") {
+					const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+					if (tf) void app.workspace.openLinkText(tf.path, "", false);
+					return;
+				}
+				transcriptPill.disabled = true;
+				const handleMic = async () => {
+					let linked = false;
+					try {
+						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
+							await noteCreator.createNote(event);
+						}
+						const isUnscheduled = event.id.startsWith("unscheduled");
+						linked = await linkRecording({
+							app,
+							meetingStart: event.startTime,
+							notePath,
+							subject: event.subject,
+							timezone,
+							transcriptFolderPath,
+							attendees: event.attendees,
+							isRecurring: event.isRecurring,
+							windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
+						});
+					} finally {
+						if (!linked) transcriptPill.disabled = false;
+					}
+				};
+				void handleMic();
 			});
 		}
 	}
