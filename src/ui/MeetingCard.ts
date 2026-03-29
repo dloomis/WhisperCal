@@ -445,7 +445,7 @@ export function renderMeetingCard(
 						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 							await noteCreator.createNote(event);
 						}
-						await startTomeRecording({app, notePath, event, transcriptFolderPath});
+						await startTomeRecording({app, notePath, event, transcriptFolderPath, timezone});
 						recording = true;
 						recordPill.disabled = false;
 						recordPill.addClass("whisper-cal-pill-recording");

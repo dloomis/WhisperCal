@@ -1,10 +1,11 @@
 import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
 import {tomeHealth, tomeStart, tomeStop, tomeStatus} from "./TomeApi";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {tomeRecordingState} from "../state";
+import {tomeRecordingState, type TomeRecordingInfo} from "../state";
 import {sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
 import {resolveWikiLink} from "../utils/vault";
+import {parseDisplayName} from "../utils/nameParser";
 
 function getTranscriptFilename(notePath: string): string {
 	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
@@ -20,8 +21,9 @@ export async function startTomeRecording(opts: {
 	notePath: string;
 	event: CalendarEvent;
 	transcriptFolderPath: string;
+	timezone: string;
 }): Promise<void> {
-	const {notePath, event} = opts;
+	const {notePath, event, transcriptFolderPath, timezone} = opts;
 
 	const health = await tomeHealth();
 	if (!health.modelsReady) {
@@ -38,7 +40,14 @@ export async function startTomeRecording(opts: {
 		attendees: event.attendees.map(a => a.name || a.email),
 	});
 
-	tomeRecordingState.set(notePath, suggestedFilename);
+	tomeRecordingState.set(notePath, {
+		suggestedFilename,
+		subject: event.subject,
+		attendees: event.attendees.map(a => parseDisplayName(a.name, a.email)),
+		isRecurring: event.isRecurring,
+		timezone,
+		transcriptFolderPath,
+	});
 	console.debug(`[WhisperCal] Tome recording started for ${notePath}`);
 }
 
@@ -49,12 +58,13 @@ export async function stopTomeRecording(opts: {
 }): Promise<void> {
 	const {app, notePath, transcriptFolderPath} = opts;
 
+	const info = tomeRecordingState.get(notePath) ?? null;
 	await tomeStop();
 	tomeRecordingState.delete(notePath);
 	console.debug(`[WhisperCal] Tome recording stopped for ${notePath}`);
 
 	// Fire-and-forget: wait for transcription then link
-	void waitAndLink(app, notePath, transcriptFolderPath);
+	void waitAndLink(app, notePath, transcriptFolderPath, info);
 }
 
 /**
@@ -72,17 +82,17 @@ export function watchTomeRecording(opts: {
 	const WATCH_INTERVAL_MS = 2000;
 
 	void (async () => {
-		// eslint-disable-next-line no-constant-condition
-		while (true) {
+		for (;;) {
 			await sleep(WATCH_INTERVAL_MS);
 			if (!tomeRecordingState.has(notePath)) return; // stopped via WhisperCal
 			try {
 				const health = await tomeHealth();
 				if (!health.isRecording) {
+					const info = tomeRecordingState.get(notePath) ?? null;
 					tomeRecordingState.delete(notePath);
 					console.debug(`[WhisperCal] Tome recording stopped externally for ${notePath}`);
 					onStopped();
-					void waitAndLink(app, notePath, transcriptFolderPath);
+					void waitAndLink(app, notePath, transcriptFolderPath, info);
 					return;
 				}
 			} catch {
@@ -113,7 +123,39 @@ function findNewestFile(app: App, folderPath: string, afterMs: number): TFile | 
 	return newest;
 }
 
-async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string): Promise<void> {
+/**
+ * Add WhisperCal pipeline frontmatter to a Tome transcript file.
+ * Preserves any existing frontmatter that Tome has written.
+ */
+async function enrichTranscriptFrontmatter(
+	app: App,
+	transcriptFile: TFile,
+	notePath: string,
+	info: TomeRecordingInfo | null,
+): Promise<void> {
+	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+
+	await app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
+		// Add tags — preserve existing, ensure "transcript" is present
+		const existing = Array.isArray(fm["tags"]) ? fm["tags"] as string[] : [];
+		if (!existing.includes("transcript")) {
+			fm["tags"] = [...existing, "transcript"];
+		}
+
+		fm["meeting_note"] = `[[${noteBasename}]]`;
+		fm["pipeline_state"] = "titled";
+
+		if (info) {
+			fm["meeting_subject"] = info.subject;
+			fm["is_recurring"] = info.isRecurring;
+			if (info.attendees.length > 0) {
+				fm["meeting_invitees"] = info.attendees;
+			}
+		}
+	});
+}
+
+async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: TomeRecordingInfo | null): Promise<void> {
 	const beforeStop = Date.now();
 	const notice = new Notice("Recording stopped \u2014 waiting for transcript\u2026", 0);
 	try {
@@ -159,9 +201,15 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			return;
 		}
 
-		// Link transcript to meeting note
+		// Enrich transcript with WhisperCal pipeline frontmatter
+		notice.setMessage("Enriching transcript\u2026");
+		await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
+
+		// Link transcript to meeting note + set pipeline state
 		const transcriptBasename = transcriptFile.basename;
 		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
+		await updateFrontmatter(app, notePath, "pipeline_state", "titled");
+
 		notice.setMessage("Transcript linked to note");
 		setTimeout(() => notice.hide(), 4000);
 	} catch (err) {
