@@ -12,6 +12,7 @@ import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
+import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 
@@ -49,6 +50,10 @@ export interface CalendarViewCallbacks {
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
 	onSummarize: (notePath: string) => void;
 	onResearch: (notePath: string) => void;
+	getAuthState: () => AuthState;
+	onSignIn: () => Promise<void>;
+	onOpenSettings: () => void;
+	subscribeAuthState: (listener: (state: AuthState) => void) => () => void;
 }
 
 export class CalendarView extends ItemView {
@@ -78,6 +83,8 @@ export class CalendarView extends ItemView {
 	private pendingFmPaths = new Set<string>();
 	private refreshGeneration = 0;
 	private peopleMatchService: PeopleMatchService | null = null;
+	private unsubscribeAuth: (() => void) | null = null;
+	private authStatusEl: HTMLElement | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -141,17 +148,37 @@ export class CalendarView extends ItemView {
 		this.registerDomEvent(this.todayBtn, "click", () => this.navigateToToday());
 		this.updateTodayButtonVisibility();
 
-		// Refresh action button in view header
-		this.addAction("refresh-cw", "Refresh calendar", () => {
-			void this.refresh();
-		});
+		// Status row: [dot] "Cached 5 min ago" [refresh] [settings]
+		const statusRow = stickyHeader.createDiv({cls: "whisper-cal-status-row"});
+		this.statusEl = statusRow.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
 
-		// Cache status indicator
-		this.statusEl = stickyHeader.createDiv({cls: "whisper-cal-status whisper-cal-hidden"});
+		// Refresh + settings buttons persist alongside the status text
+		const statusActions = statusRow.createDiv({cls: "whisper-cal-status-actions"});
+		const refreshBtn = statusActions.createEl("button", {cls: "whisper-cal-status-action clickable-icon", attr: {"aria-label": "Refresh calendar"}});
+		setIcon(refreshBtn, "refresh-cw");
+		this.registerDomEvent(refreshBtn, "click", () => { void this.refresh(); });
+
+		const settingsBtn = statusActions.createEl("button", {cls: "whisper-cal-status-action clickable-icon", attr: {"aria-label": "Open settings"}});
+		setIcon(settingsBtn, "settings");
+		this.registerDomEvent(settingsBtn, "click", () => { this.callbacks.onOpenSettings(); });
+
+		// Auth banner — shown when not signed in (persists above events)
+		this.authStatusEl = stickyHeader.createDiv({cls: "whisper-cal-auth-inline whisper-cal-hidden"});
+		this.renderAuthInline(this.callbacks.getAuthState());
 
 		// Content area
 		this.contentContainer = root.createDiv({cls: "whisper-cal-content"});
 		this.unlinkedEl = root.createDiv({cls: "whisper-cal-unlinked-section"});
+
+		// Subscribe to auth state changes BEFORE initial refresh so we catch
+		// state transitions (e.g. expired token → signed-out) that happen during it.
+		this.unsubscribeAuth = this.callbacks.subscribeAuthState((state) => {
+			if (state.status === "signed-in") {
+				this.lastRefreshTime = 0;
+				void this.refresh();
+			}
+			this.renderAuthInline(state);
+		});
 
 		// Initial load
 		await this.refresh();
@@ -199,6 +226,9 @@ export class CalendarView extends ItemView {
 	async onClose(): Promise<void> {
 		this.stopAutoRefresh();
 		this.stopNowLineTimer();
+		this.unsubscribeAuth?.();
+		this.unsubscribeAuth = null;
+		this.authStatusEl = null;
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
 		this.cards.clear();
@@ -248,7 +278,7 @@ export class CalendarView extends ItemView {
 				// Check if we're truly disconnected with no cache
 				const status = this.callbacks.getCacheStatus();
 				if (status && !status.connected && status.fetchedAt === null) {
-					this.renderError("Not signed in. Open settings to sign in to your calendar account.");
+					this.renderError("Not signed in.");
 					this.updateStatusIndicator();
 					this.updateTodayButtonVisibility();
 					void this.loadAndRenderUnlinkedSection();
@@ -321,6 +351,60 @@ export class CalendarView extends ItemView {
 			cls: "whisper-cal-error",
 			text: message,
 		});
+	}
+
+	/** Render the persistent auth banner: sign-in button, device code, or hidden when signed in. */
+	private renderAuthInline(state: AuthState): void {
+		if (!this.authStatusEl) return;
+		this.authStatusEl.empty();
+
+		switch (state.status) {
+		case "signed-out":
+		case "error": {
+			this.authStatusEl.removeClass("whisper-cal-hidden");
+			const btn = this.authStatusEl.createEl("button", {
+				cls: "whisper-cal-btn",
+				text: "Sign in",
+			});
+			btn.addEventListener("click", () => {
+				void this.callbacks.onSignIn();
+			});
+			break;
+		}
+		case "signing-in": {
+			this.authStatusEl.removeClass("whisper-cal-hidden");
+			if (state.userCode && state.verificationUri) {
+				// Microsoft Device Code Flow — show code + link
+				this.authStatusEl.createDiv({
+					cls: "whisper-cal-auth-label",
+					text: "Enter this code in your browser:",
+				});
+				const codeEl = this.authStatusEl.createDiv({cls: "whisper-cal-device-code"});
+				codeEl.setText(state.userCode);
+				const linkEl = this.authStatusEl.createEl("a", {
+					cls: "whisper-cal-auth-link",
+					text: state.verificationUri,
+					href: state.verificationUri,
+				});
+				linkEl.setAttr("target", "_blank");
+				linkEl.setAttr("rel", "noopener");
+			} else {
+				// Google loopback flow
+				this.authStatusEl.createDiv({
+					cls: "whisper-cal-auth-label",
+					text: state.message ?? "Signing in\u2026",
+				});
+			}
+			this.authStatusEl.createDiv({
+				cls: "whisper-cal-auth-hint",
+				text: "Waiting for authorization\u2026",
+			});
+			break;
+		}
+		case "signed-in":
+			this.authStatusEl.addClass("whisper-cal-hidden");
+			break;
+		}
 	}
 
 	private renderEvents(events: CalendarEvent[]): void {

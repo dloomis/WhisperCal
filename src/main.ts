@@ -84,6 +84,14 @@ export default class WhisperCalPlugin extends Plugin {
 			onResearch: (notePath: string) => {
 				this.doResearch(notePath);
 			},
+			getAuthState: () => this.auth.getState(),
+			onSignIn: () => this.auth.startSignIn(),
+			onOpenSettings: () => {
+				const setting = (this.app as unknown as Record<string, unknown>).setting as { open(): void; openTabById(id: string): void };
+				setting.open();
+				setting.openTabById(this.manifest.id);
+			},
+			subscribeAuthState: (listener) => this.onAuthStateChange(listener),
 		};
 
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
