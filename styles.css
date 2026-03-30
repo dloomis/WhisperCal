@@ -790,10 +790,10 @@
 
 .whisper-cal-rec-dot {
 	position: absolute;
-	top: -2px;
-	right: -2px;
-	width: 7px;
-	height: 7px;
+	top: 3px;
+	right: 3px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	background: #e53935;
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
