@@ -447,7 +447,9 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speakers already tagged for this transcript");
 			return;
 		}
-		if (!transcriptFm["macwhisper_session_id"]) {
+		const isTomeTranscript = Array.isArray(transcriptFm["tags"])
+			&& (transcriptFm["tags"] as string[]).includes("source/tome");
+		if (!isTomeTranscript && !transcriptFm["macwhisper_session_id"]) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Transcript is missing a MacWhisper session ID — try re-linking the recording");
 			return;
