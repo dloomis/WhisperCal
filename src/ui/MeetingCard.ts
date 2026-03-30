@@ -416,11 +416,11 @@ export function renderMeetingCard(
 	if (opts.tomeEnabled) {
 		const recordPill = renderPill(actions, "mic", "Record", states.tomeRecord);
 
-		// Red recording dot in gutter — only shown during active recording
+		// Red recording dot on pill — only shown during active recording
 		let recDot: HTMLElement | null = null;
 		const showRecDot = () => {
-			if (!gutterTimeDiv || recDot) return;
-			recDot = gutterTimeDiv.createSpan({cls: "whisper-cal-rec-dot"});
+			if (recDot) return;
+			recDot = recordPill.createSpan({cls: "whisper-cal-rec-dot"});
 		};
 		const hideRecDot = () => {
 			if (recDot) { recDot.remove(); recDot = null; }
