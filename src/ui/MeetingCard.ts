@@ -6,9 +6,9 @@ import {formatTime, formatRecordingDuration} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs, researchJobs, tomeRecordingState} from "../state";
+import {summarizeJobs, speakerTagJobs, researchJobs, recordingState} from "../state";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
-import {startTomeRecording, stopTomeRecording, watchTomeRecording} from "../services/TomeRecording";
+import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 
 export interface MeetingCardOpts {
 	event: CalendarEvent;
@@ -24,7 +24,7 @@ export interface MeetingCardOpts {
 	onSummarize?: (notePath: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
-	tomeEnabled?: boolean;
+	recordingApiBaseUrl?: string;
 	speakerTagModel?: string;
 	summarizerModel?: string;
 	researchModel?: string;
@@ -47,7 +47,7 @@ interface PillStates {
 	note: PillState;
 	research: PillState;
 	transcript: PillState;
-	tomeRecord: PillState;
+	record: PillState;
 	speakers: PillState;
 	summary: PillState;
 	transcriptFile: TFile | null;
@@ -192,10 +192,10 @@ function computePillStates(
 		? "disabled"
 		: noteFm["transcript"] ? "complete" : "incomplete";
 
-	const tomeRecord: PillState = tomeRecordingState.has(notePath)
+	const record: PillState = recordingState.has(notePath)
 		? "running"
 		: noteFm["transcript"] ? "complete"
-		: tomeRecordingState.size > 0 ? "disabled"
+		: recordingState.size > 0 ? "disabled"
 		: "incomplete";
 
 	const pipelineState = noteFm["pipeline_state"] as string | undefined;
@@ -216,7 +216,7 @@ function computePillStates(
 		: summarizeJobs.has(notePath) ? "running"
 		: "incomplete";
 
-	return {note, research, transcript, tomeRecord, speakers, summary, transcriptFile, transcriptPath, pipelineState};
+	return {note, research, transcript, record, speakers, summary, transcriptFile, transcriptPath, pipelineState};
 }
 
 /**
@@ -412,43 +412,46 @@ export function renderMeetingCard(
 		void handleClick();
 	});
 
-	// Tome Record pill (right after Note, before Research)
-	if (opts.tomeEnabled) {
-		const recordPill = renderPill(actions, "mic", "Record", states.tomeRecord);
+	// Record pill (REST API recording — right after Note, before Research)
+	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
+	if (recordingApiBaseUrl) {
+		const recordPill = renderPill(actions, "mic", "Record", states.record);
 
-		// Red recording dot on pill — only shown during active recording
-		let recDot: HTMLElement | null = null;
-		const showRecDot = () => {
-			if (recDot) return;
-			recDot = recordPill.createSpan({cls: "whisper-cal-rec-dot"});
+		// Recording status line — shown below action pills during active recording
+		let recStatusEl: HTMLElement | null = null;
+		const showRecStatus = () => {
+			if (recStatusEl) return;
+			recStatusEl = content.createDiv({cls: "whisper-cal-card-status whisper-cal-card-status-recording"});
+			recStatusEl.createSpan({cls: "whisper-cal-card-status-icon whisper-cal-rec-dot-inline"});
+			recStatusEl.createSpan({text: "Recording\u2026"});
 		};
-		const hideRecDot = () => {
-			if (recDot) { recDot.remove(); recDot = null; }
+		const hideRecStatus = () => {
+			if (recStatusEl) { recStatusEl.remove(); recStatusEl = null; }
 		};
 
-		if (states.tomeRecord === "running") {
-			showRecDot();
+		if (states.record === "running") {
+			showRecStatus();
 		}
-		if (states.tomeRecord === "complete") {
+		if (states.record === "complete") {
 			recordPill.addEventListener("click", () => {
 				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
 				if (tf) void app.workspace.openLinkText(tf.path, "", false);
 			});
-		} else if (states.tomeRecord === "running") {
+		} else if (states.record === "running") {
 			recordPill.disabled = false; // override — running pill is clickable to stop
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
-				hideRecDot();
-				void stopTomeRecording({app, notePath, transcriptFolderPath});
+				hideRecStatus();
+				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
 			});
-		} else if (states.tomeRecord === "incomplete") {
+		} else if (states.record === "incomplete") {
 			let recording = false;
 			recordPill.addEventListener("click", () => {
 				if (recording) {
 					// Stop
 					recordPill.disabled = true;
-					hideRecDot();
-					void stopTomeRecording({app, notePath, transcriptFolderPath});
+					hideRecStatus();
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
 					return;
 				}
 				// Start
@@ -458,17 +461,17 @@ export function renderMeetingCard(
 						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 							await noteCreator.createNote(event);
 						}
-						await startTomeRecording({app, notePath, event, transcriptFolderPath, timezone});
+						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
 						recording = true;
 						recordPill.disabled = false;
-						showRecDot();
-						watchTomeRecording({app, notePath, transcriptFolderPath, onStopped: () => {
+						showRecStatus();
+						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
 							recording = false;
 							recordPill.disabled = true;
-							hideRecDot();
+							hideRecStatus();
 						}});
 					} catch (err) {
-						new Notice(err instanceof Error ? err.message : "Failed to start Tome recording");
+						new Notice(err instanceof Error ? err.message : "Failed to start recording");
 						recordPill.disabled = false;
 					}
 				};
@@ -477,8 +480,8 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Transcript pill (MacWhisper — hidden when Tome is enabled)
-	if (!opts.tomeEnabled) {
+	// Transcript pill (MacWhisper — hidden when recording API is enabled)
+	if (!recordingApiBaseUrl) {
 		const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
 		if (states.transcript !== "disabled") {
 			transcriptPill.addEventListener("click", () => {

@@ -53,7 +53,7 @@ export interface WhisperCalSettings {
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	timeFormat: "auto" | "12h" | "24h";
-	tomeEnabled: boolean;
+	recordingApiBaseUrl: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -93,7 +93,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
-	tomeEnabled: false,
+	recordingApiBaseUrl: "",
 };
 
 class LlmConsentModal extends Modal {
@@ -417,20 +417,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
-			.setName("Tome")
+			.setName("Recording API")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Enable Tome recording")
-			.setDesc("Show a Record button on meeting cards to start/stop call recording via Tome")
-		/* eslint-enable obsidianmd/ui/sentence-case */
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.tomeEnabled)
-				.onChange(async (value) => {
-					this.plugin.settings.tomeEnabled = value;
-					await this.plugin.saveSettings();
+			.setName("Base URL")
+			.setDesc("REST API base URL for recording (e.g. http://127.0.0.1:8080/api/v1). Leave empty to disable. Expects /health, /start, /stop, /status endpoints.")
+			.addText(text => text
+				.setPlaceholder("http://127.0.0.1:8080/api/v1")
+				.setValue(this.plugin.settings.recordingApiBaseUrl)
+				.onChange((value) => {
+					this.plugin.settings.recordingApiBaseUrl = value.replace(/\/+$/, "");
+					this.debouncedSave();
 				}));
 
 		/* eslint-disable obsidianmd/ui/sentence-case */

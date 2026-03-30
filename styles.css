@@ -822,20 +822,34 @@
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
+/* Recording pill in running state is clickable (stop) — override wait cursor */
+.whisper-cal-pill-running:not(:disabled) {
+	cursor: pointer;
+}
+
 @keyframes whisper-cal-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.4; }
 }
 
-.whisper-cal-rec-dot {
-	position: absolute;
-	top: 6px;
-	right: 6px;
+/* Inline recording dot used as status-icon in the status line */
+.whisper-cal-rec-dot-inline {
+	width: 14px;
+	height: 14px;
+}
+
+.whisper-cal-rec-dot-inline::after {
+	content: "";
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
 	background: #e53935;
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
+}
+
+.whisper-cal-card-status-recording {
+	color: #e53935;
+	animation: none;
 }
 
 @keyframes whisper-cal-rec-flash {

@@ -1,7 +1,7 @@
 import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
-import {tomeHealth, tomeStart, tomeStop, tomeStatus} from "./TomeApi";
+import {recordingHealth, recordingStart, recordingStop, recordingStatus} from "./RecordingApi";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {tomeRecordingState, type TomeRecordingInfo} from "../state";
+import {recordingState, type RecordingInfo} from "../state";
 import {sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
 import {resolveWikiLink} from "../utils/vault";
@@ -16,31 +16,32 @@ function getTranscriptPath(notePath: string, transcriptFolderPath: string): stri
 	return normalizePath(`${transcriptFolderPath}/${getTranscriptFilename(notePath)}.md`);
 }
 
-export async function startTomeRecording(opts: {
+export async function startApiRecording(opts: {
 	app: App;
 	notePath: string;
 	event: CalendarEvent;
 	transcriptFolderPath: string;
 	timezone: string;
+	baseUrl: string;
 }): Promise<void> {
-	const {notePath, event, transcriptFolderPath, timezone} = opts;
+	const {notePath, event, transcriptFolderPath, timezone, baseUrl} = opts;
 
-	const health = await tomeHealth();
+	const health = await recordingHealth(baseUrl);
 	if (!health.modelsReady) {
-		throw new Error("Tome is still loading models\u2026");
+		throw new Error("Recording service is still loading models\u2026");
 	}
 	if (health.isRecording) {
-		throw new Error("Tome is already recording");
+		throw new Error("Recording service is already recording");
 	}
 
 	const suggestedFilename = getTranscriptFilename(notePath);
 
-	await tomeStart(suggestedFilename, {
+	await recordingStart(baseUrl, suggestedFilename, {
 		subject: event.subject,
 		attendees: event.attendees.map(a => a.name || a.email),
 	});
 
-	tomeRecordingState.set(notePath, {
+	recordingState.set(notePath, {
 		suggestedFilename,
 		subject: event.subject,
 		attendees: event.attendees.map(a => parseDisplayName(a.name, a.email)),
@@ -48,56 +49,58 @@ export async function startTomeRecording(opts: {
 		timezone,
 		transcriptFolderPath,
 	});
-	console.debug(`[WhisperCal] Tome recording started for ${notePath}`);
+	console.debug(`[WhisperCal] API recording started for ${notePath}`);
 }
 
-export async function stopTomeRecording(opts: {
+export async function stopApiRecording(opts: {
 	app: App;
 	notePath: string;
 	transcriptFolderPath: string;
+	baseUrl: string;
 }): Promise<void> {
-	const {app, notePath, transcriptFolderPath} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl} = opts;
 
-	const info = tomeRecordingState.get(notePath) ?? null;
-	await tomeStop();
-	tomeRecordingState.delete(notePath);
-	console.debug(`[WhisperCal] Tome recording stopped for ${notePath}`);
+	const info = recordingState.get(notePath) ?? null;
+	await recordingStop(baseUrl);
+	recordingState.delete(notePath);
+	console.debug(`[WhisperCal] API recording stopped for ${notePath}`);
 
 	// Fire-and-forget: wait for transcription then link
-	void waitAndLink(app, notePath, transcriptFolderPath, info);
+	void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl);
 }
 
 /**
- * Poll Tome to detect when recording stops (e.g. stopped from Tome's UI).
+ * Poll the recording API to detect when recording stops (e.g. stopped from the app's UI).
  * Calls `onStopped` when recording is no longer active, then triggers
  * the transcript linking flow.
  */
-export function watchTomeRecording(opts: {
+export function watchApiRecording(opts: {
 	app: App;
 	notePath: string;
 	transcriptFolderPath: string;
+	baseUrl: string;
 	onStopped: () => void;
 }): void {
-	const {app, notePath, transcriptFolderPath, onStopped} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl, onStopped} = opts;
 	const WATCH_INTERVAL_MS = 2000;
 
 	void (async () => {
 		for (;;) {
 			await sleep(WATCH_INTERVAL_MS);
-			if (!tomeRecordingState.has(notePath)) return; // stopped via WhisperCal
+			if (!recordingState.has(notePath)) return; // stopped via WhisperCal
 			try {
-				const health = await tomeHealth();
+				const health = await recordingHealth(baseUrl);
 				if (!health.isRecording) {
-					const info = tomeRecordingState.get(notePath) ?? null;
-					tomeRecordingState.delete(notePath);
-					console.debug(`[WhisperCal] Tome recording stopped externally for ${notePath}`);
+					const info = recordingState.get(notePath) ?? null;
+					recordingState.delete(notePath);
+					console.debug(`[WhisperCal] API recording stopped externally for ${notePath}`);
 					onStopped();
-					void waitAndLink(app, notePath, transcriptFolderPath, info);
+					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl);
 					return;
 				}
 			} catch {
-				// Tome unreachable — treat as stopped
-				tomeRecordingState.delete(notePath);
+				// API unreachable — treat as stopped
+				recordingState.delete(notePath);
 				onStopped();
 				return;
 			}
@@ -124,14 +127,14 @@ function findNewestFile(app: App, folderPath: string, afterMs: number): TFile | 
 }
 
 /**
- * Add WhisperCal pipeline frontmatter to a Tome transcript file.
- * Preserves any existing frontmatter that Tome has written.
+ * Add WhisperCal pipeline frontmatter to a transcript file.
+ * Preserves any existing frontmatter the recording service has written.
  */
 async function enrichTranscriptFrontmatter(
 	app: App,
 	transcriptFile: TFile,
 	notePath: string,
-	info: TomeRecordingInfo | null,
+	info: RecordingInfo | null,
 ): Promise<void> {
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 
@@ -155,25 +158,25 @@ async function enrichTranscriptFrontmatter(
 	});
 }
 
-async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: TomeRecordingInfo | null): Promise<void> {
+async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: RecordingInfo | null, baseUrl: string): Promise<void> {
 	const beforeStop = Date.now();
 	const notice = new Notice("Recording stopped \u2014 waiting for transcript\u2026", 0);
 	try {
-		// Poll Tome status until transcription completes
+		// Poll recording API status until transcription completes
 		for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
 			await sleep(POLL_INTERVAL_MS);
 			try {
-				const {state} = await tomeStatus();
+				const {state} = await recordingStatus(baseUrl);
 				if (state === "complete") break;
 				if (state === "transcribing") {
 					notice.setMessage("Transcribing\u2026");
 				}
 			} catch {
-				// Tome may have shut down — fall through to file check
+				// Service may have shut down — fall through to file check
 				break;
 			}
 			if (i === MAX_POLL_ATTEMPTS - 1) {
-				notice.setMessage("Transcript not ready yet \u2014 check Tome");
+				notice.setMessage("Transcript not ready yet \u2014 check recording service");
 				setTimeout(() => notice.hide(), 6000);
 				return;
 			}
@@ -196,7 +199,7 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		}
 
 		if (!transcriptFile) {
-			notice.setMessage("Transcript file not found \u2014 check Tome output folder");
+			notice.setMessage("Transcript file not found \u2014 check recording service output folder");
 			setTimeout(() => notice.hide(), 6000);
 			return;
 		}
@@ -213,13 +216,13 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		notice.setMessage("Transcript linked to note");
 		setTimeout(() => notice.hide(), 4000);
 	} catch (err) {
-		console.error("[WhisperCal] Tome transcript linking failed:", err);
+		console.error("[WhisperCal] Transcript linking failed:", err);
 		notice.setMessage("Failed to link transcript");
 		setTimeout(() => notice.hide(), 6000);
 	}
 }
 
-/** Check if a meeting note already has a Tome or MacWhisper transcript linked. */
+/** Check if a meeting note already has a transcript linked. */
 export function hasLinkedTranscript(app: App, notePath: string): boolean {
 	const file = app.vault.getAbstractFileByPath(notePath);
 	if (!(file instanceof TFile)) return false;

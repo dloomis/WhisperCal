@@ -9,7 +9,7 @@ export const speakerTagJobs = new Set<string>();
 /** Note paths currently running meeting research. */
 export const researchJobs = new Set<string>();
 
-export interface TomeRecordingInfo {
+export interface RecordingInfo {
 	suggestedFilename: string;
 	subject: string;
 	attendees: string[];
@@ -18,5 +18,5 @@ export interface TomeRecordingInfo {
 	transcriptFolderPath: string;
 }
 
-/** Active Tome recording: notePath → recording info. Only one recording at a time. */
-export const tomeRecordingState = new Map<string, TomeRecordingInfo>();
+/** Active API recording: notePath → recording info. Only one recording at a time. */
+export const recordingState = new Map<string, RecordingInfo>();

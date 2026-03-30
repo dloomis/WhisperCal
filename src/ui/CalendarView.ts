@@ -563,7 +563,7 @@ export class CalendarView extends ItemView {
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
 			llmEnabled: this.settings.llmEnabled,
-			tomeEnabled: this.settings.tomeEnabled,
+			recordingApiBaseUrl: this.settings.recordingApiBaseUrl,
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
