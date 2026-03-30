@@ -53,6 +53,7 @@ export interface WhisperCalSettings {
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	timeFormat: "auto" | "12h" | "24h";
+	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
 }
 
@@ -93,6 +94,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
+	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 };
 
@@ -378,18 +380,40 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
-			.setName("MacWhisper")
+			.setName("Recording")
 			.setHeading();
-		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		/* eslint-disable obsidianmd/ui/sentence-case */
+		const macwhisperSettings = containerEl.createDiv();
+		const apiSettings = containerEl.createDiv();
+		const updateRecordingVisibility = () => {
+			const isMacWhisper = this.plugin.settings.recordingSource === "macwhisper";
+			macwhisperSettings.toggle(isMacWhisper);
+			apiSettings.toggle(!isMacWhisper);
+		};
 
 		new Setting(containerEl)
+			.setName("Source")
+			.setDesc("Choose how meeting recordings are captured")
+			.addDropdown(dropdown => dropdown
+				.addOption("macwhisper", "MacWhisper")
+				.addOption("api", "Recording API")
+				.setValue(this.plugin.settings.recordingSource)
+				.onChange((value: string) => {
+					this.plugin.settings.recordingSource = value as "macwhisper" | "api";
+					this.debouncedSave();
+					updateRecordingVisibility();
+				}));
+		/* eslint-enable obsidianmd/ui/sentence-case */
+
+		// MacWhisper sub-settings
+		new Setting(macwhisperSettings)
 			.setName("Database path")
 			.setDesc(MACWHISPER_DB_PATH)
 			.setDisabled(true);
 
-		new Setting(containerEl)
+		new Setting(macwhisperSettings)
 			.setName("Recording match window (minutes)")
 			.setDesc("How close a recording start must be to the scheduled meeting time to be suggested for linking")
 			.addText(text => text
@@ -403,7 +427,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		new Setting(containerEl)
+		new Setting(macwhisperSettings)
 			.setName("Unlinked lookback (days)")
 			.setDesc("How far back to check for unlinked recordings")
 			.addText(text => text
@@ -417,13 +441,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}
 				}));
 
-		new Setting(containerEl)
-			.setName("Recording API")
-			.setHeading();
-
-		new Setting(containerEl)
+		// Recording API sub-settings
+		new Setting(apiSettings)
 			.setName("Base URL")
-			.setDesc("REST API base URL for recording (e.g. http://127.0.0.1:8080/api/v1). Leave empty to disable. Expects /health, /start, /stop, /status endpoints.")
+			.setDesc("REST API base URL (e.g. http://127.0.0.1:8080/api/v1). Expects /health, /start, /stop, /status endpoints.")
 			.addText(text => text
 				.setPlaceholder("http://127.0.0.1:8080/api/v1")
 				.setValue(this.plugin.settings.recordingApiBaseUrl)
@@ -431,6 +452,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.plugin.settings.recordingApiBaseUrl = value.replace(/\/+$/, "");
 					this.debouncedSave();
 				}));
+
+		updateRecordingVisibility();
 
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
