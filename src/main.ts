@@ -447,13 +447,6 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Speakers already tagged for this transcript");
 			return;
 		}
-		const isTomeTranscript = Array.isArray(transcriptFm["tags"])
-			&& (transcriptFm["tags"] as string[]).includes("source/tome");
-		if (!isTomeTranscript && !transcriptFm["macwhisper_session_id"]) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("Transcript is missing a MacWhisper session ID — try re-linking the recording");
-			return;
-		}
 		if (!this.settings.speakerTaggingPromptPath) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
