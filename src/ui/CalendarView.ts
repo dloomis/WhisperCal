@@ -205,7 +205,23 @@ export class CalendarView extends ItemView {
 					this.cardRefreshTimer = null;
 					const paths = new Set(this.pendingFmPaths);
 					this.pendingFmPaths.clear();
-					this.updateCardsForPaths(paths);
+
+					// If a new note appeared that no existing card owns,
+					// re-render the full timeline so it's inserted at the
+					// correct time position (e.g. ad hoc meeting just created).
+					let hasNewNote = false;
+					for (const p of paths) {
+						if (p.startsWith(this.settings.noteFolderPath + "/") && !this.findCardByPath(p)) {
+							hasNewNote = true;
+							break;
+						}
+					}
+
+					if (hasNewNote && this.cachedEvents) {
+						this.renderEvents(this.cachedEvents);
+					} else {
+						this.updateCardsForPaths(paths);
+					}
 					void this.loadAndRenderUnlinkedSection();
 				}, 500);
 			}),
@@ -633,9 +649,6 @@ export class CalendarView extends ItemView {
 			// Skip notes from a different provider (or legacy notes without the field)
 			const noteProvider = fm["calendar_provider"] as string | undefined;
 			if (noteProvider !== this.settings.calendarProvider) continue;
-
-			// Only show local notes that are already linked to a recording
-			if (!this.callbacks.getUnlinkedProvider().isNoteLinked(fm as Record<string, unknown>)) continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM" or "16:39")
 			// YAML may parse unquoted times as sexagesimal numbers (16:39 → 999)
