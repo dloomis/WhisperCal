@@ -75,8 +75,10 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.inlinePrompt) {
 		parts.push(opts.inlinePrompt);
 	} else if (opts.promptPath) {
-		const resolvedPromptPath = resolvePromptPath(opts.promptPath, opts.vaultPath);
-		parts.push(`Follow the instructions in '${resolvedPromptPath}'.`);
+		// Use the original path (vault-relative or user-configured) rather than
+		// resolving to absolute — avoids leaking filesystem paths to the LLM.
+		// The CLI runs with cwd=vaultPath so vault-relative paths resolve correctly.
+		parts.push(`Follow the instructions in '${opts.promptPath}'.`);
 	}
 	parts.push(`${opts.targetLabel || "Transcript"}: ${opts.targetPath}.`);
 	if (opts.microphoneUser) parts.push(`Microphone user: ${opts.microphoneUser}.`);

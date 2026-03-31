@@ -291,12 +291,7 @@ export function renderMeetingCard(
 	container: HTMLElement,
 	opts: MeetingCardOpts,
 ): HTMLElement {
-	const {
-		event, timezone, noteCreator, app,
-		transcriptFolderPath = "Transcripts",
-		recordingWindowMinutes = 10,
-		onNoteCreated, onTagSpeakers, onSummarize, onResearch,
-	} = opts;
+	const {event, timezone, noteCreator, app, onNoteCreated} = opts;
 	const card = container.createDiv({cls: "whisper-cal-card"});
 	card.dataset.eventId = event.id;
 	card.dataset.notePath = noteCreator.getNotePath(event);
@@ -305,7 +300,7 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	const {gutter, timeDiv: gutterTimeDiv} = renderGutter(card, event, timezone, opts);
+	renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
 	// Subject
@@ -339,11 +334,9 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Actions row
-	const actions = content.createDiv({cls: "whisper-cal-card-actions"});
-
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
 	if (event.id === "unscheduled") {
+		const actions = content.createDiv({cls: "whisper-cal-card-actions"});
 		const notePill = renderPill(actions, "file-plus-2", "Note", "incomplete");
 		notePill.addEventListener("click", () => {
 			notePill.disabled = true;
@@ -364,7 +357,31 @@ export function renderMeetingCard(
 		return card;
 	}
 
-	// Compute workflow pill states
+	// Dynamic zone — rebuilt in-place on card updates without touching static content
+	const dynamicZone = content.createDiv({cls: "whisper-cal-card-dynamic"});
+	renderCardDynamic(dynamicZone, card, opts);
+
+	return card;
+}
+
+/**
+ * Populate the dynamic zone of a meeting card (pills, status lines, gutter highlight).
+ * Called both on initial render and on in-place updates.
+ */
+function renderCardDynamic(
+	zone: HTMLElement,
+	cardEl: HTMLElement,
+	opts: MeetingCardOpts,
+): void {
+	zone.empty();
+
+	const {
+		event, timezone, noteCreator, app,
+		transcriptFolderPath = "Transcripts",
+		recordingWindowMinutes = 10,
+		onNoteCreated, onTagSpeakers, onSummarize, onResearch,
+	} = opts;
+
 	const states = computePillStates(app, noteCreator, event);
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
@@ -372,16 +389,27 @@ export function renderMeetingCard(
 		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
 		: {};
 
+	// Update data-transcriptPath on the card element
 	if (states.transcriptPath) {
-		card.dataset.transcriptPath = states.transcriptPath;
+		cardEl.dataset.transcriptPath = states.transcriptPath;
+	} else {
+		delete cardEl.dataset.transcriptPath;
 	}
 
-	// Highlight gutter based on workflow progress
-	if (states.summary === "complete") {
-		gutter.addClass("whisper-cal-card-gutter-done");
-	} else if (states.note === "complete") {
-		gutter.addClass("whisper-cal-card-gutter-warning");
+	// Update gutter highlight classes
+	const gutter = cardEl.querySelector(".whisper-cal-card-gutter");
+	if (gutter instanceof HTMLElement) {
+		gutter.removeClass("whisper-cal-card-gutter-done");
+		gutter.removeClass("whisper-cal-card-gutter-warning");
+		if (states.summary === "complete") {
+			gutter.addClass("whisper-cal-card-gutter-done");
+		} else if (states.note === "complete") {
+			gutter.addClass("whisper-cal-card-gutter-warning");
+		}
 	}
+
+	// Actions row
+	const actions = zone.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Note pill
 	const notePill = renderPill(actions, "file-plus-2", "Note", states.note);
@@ -421,7 +449,7 @@ export function renderMeetingCard(
 		let recStatusEl: HTMLElement | null = null;
 		const showRecStatus = () => {
 			if (recStatusEl) return;
-			recStatusEl = content.createDiv({cls: "whisper-cal-card-status whisper-cal-card-status-recording"});
+			recStatusEl = zone.createDiv({cls: "whisper-cal-card-status whisper-cal-card-status-recording"});
 			recStatusEl.createSpan({cls: "whisper-cal-card-status-icon whisper-cal-rec-dot-inline"});
 			recStatusEl.createSpan({text: "Recording\u2026"});
 		};
@@ -567,25 +595,30 @@ export function renderMeetingCard(
 	// Status lines below actions
 	if (opts.llmEnabled !== false && states.research === "running") {
 		const modelSuffix = opts.researchModel ? ` (${formatModelName(opts.researchModel)})` : "";
-		const status = content.createDiv({cls: "whisper-cal-card-status"});
+		const status = zone.createDiv({cls: "whisper-cal-card-status"});
 		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
 		setIcon(ico, "book-open");
 		status.createSpan({text: `Researching${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.speakers === "running") {
 		const modelSuffix = opts.speakerTagModel ? ` (${formatModelName(opts.speakerTagModel)})` : "";
-		const status = content.createDiv({cls: "whisper-cal-card-status"});
+		const status = zone.createDiv({cls: "whisper-cal-card-status"});
 		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
 		setIcon(ico, "users-round");
 		status.createSpan({text: `Tagging speakers${modelSuffix}\u2026`});
 	}
 	if (opts.llmEnabled !== false && states.summary === "running") {
 		const modelSuffix = opts.summarizerModel ? ` (${formatModelName(opts.summarizerModel)})` : "";
-		const status = content.createDiv({cls: "whisper-cal-card-status"});
+		const status = zone.createDiv({cls: "whisper-cal-card-status"});
 		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
 		setIcon(ico, "sparkles");
 		status.createSpan({text: `Summarizing${modelSuffix}\u2026`});
 	}
+}
 
-	return card;
+/** Update only the dynamic parts of an existing meeting card in-place. */
+export function updateMeetingCard(cardEl: HTMLElement, opts: MeetingCardOpts): void {
+	const dynamicZone = cardEl.querySelector(".whisper-cal-card-dynamic");
+	if (!(dynamicZone instanceof HTMLElement)) return;
+	renderCardDynamic(dynamicZone, cardEl, opts);
 }

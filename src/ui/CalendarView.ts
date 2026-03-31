@@ -8,7 +8,7 @@ import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/Unl
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
-import {renderAllDayCard, renderMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
@@ -581,23 +581,11 @@ export class CalendarView extends ItemView {
 		this.cards.set(event.id, {el, opts});
 	}
 
-	/** Rebuild a single card in-place without touching any other DOM. */
+	/** Update only the dynamic parts of a single card (pills, status, gutter highlight). */
 	private rerenderCardById(eventId: string): void {
 		const card = this.cards.get(eventId);
 		if (!card) return;
-		const {el: oldEl, opts} = card;
-
-		// Build replacement off-DOM
-		const tmp = document.createElement("div");
-		const newEl = renderMeetingCard(tmp, opts);
-
-		// Preserve highlight class
-		if (oldEl.hasClass("whisper-cal-card-note-open")) {
-			newEl.addClass("whisper-cal-card-note-open");
-		}
-
-		oldEl.replaceWith(newEl);
-		this.cards.set(eventId, {el: newEl, opts});
+		updateMeetingCard(card.el, card.opts);
 	}
 
 	/** Re-render only the cards affected by a set of changed file paths. */
