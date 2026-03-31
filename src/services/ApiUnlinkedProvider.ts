@@ -35,6 +35,9 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			const fm = cache?.frontmatter;
 			if (!fm) continue;
 
+			// Skip MacWhisper-owned transcripts — they belong to that provider
+			if (fm["macwhisper_session_id"]) continue;
+
 			// Linked if meeting_note resolves to an existing file
 			const meetingFile = resolveWikiLink(
 				this.app, fm as Record<string, unknown>,
