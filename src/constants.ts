@@ -8,6 +8,8 @@ export const COMMAND_TAG_SPEAKERS = "tag-speakers";
 export const COMMAND_SUMMARIZE = "summarize-transcript";
 export const COMMAND_RESEARCH = "research-meeting";
 
+export const RECORDING_API_PORT_FILE = join(homedir(), "Library", "Application Support", "Tome", "api-port");
+
 const MW_BASE = join(homedir(), "Library", "Application Support", "MacWhisper");
 export const MACWHISPER_DB_PATH = join(MW_BASE, "Database", "main.sqlite");
 export const MACWHISPER_MEDIA_PATH = join(MW_BASE, "Database", "ExternalMedia");

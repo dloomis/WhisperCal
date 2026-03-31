@@ -14,6 +14,7 @@ import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
+import {resolveRecordingApiBaseUrl} from "../services/RecordingApi";
 
 /** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
  *  YAML parses unquoted "16:39" as sexagesimal number 999. */
@@ -579,7 +580,9 @@ export class CalendarView extends ItemView {
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
 			llmEnabled: this.settings.llmEnabled,
-			recordingApiBaseUrl: this.settings.recordingSource === "api" ? this.settings.recordingApiBaseUrl : undefined,
+			recordingApiBaseUrl: this.settings.recordingSource === "api"
+				? resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl) || undefined
+				: undefined,
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
