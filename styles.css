@@ -826,10 +826,10 @@
 /* Red recording dot badge on upper-right corner of record pill */
 .whisper-cal-pill-rec-dot {
 	position: absolute;
-	top: -4px;
-	right: -4px;
-	width: 8px;
-	height: 8px;
+	top: 5px;
+	right: 5px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	background: #e53935;
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
@@ -997,6 +997,27 @@
 	justify-content: flex-end;
 	gap: 8px;
 	margin-top: 12px;
+}
+
+/* ReRecordConfirmModal */
+.whisper-cal-rerecord-warning {
+	color: var(--text-muted);
+	margin-bottom: 16px;
+}
+
+.whisper-cal-rerecord-alert {
+	background: var(--background-modifier-error);
+	border: 1px solid var(--text-error);
+	border-radius: var(--radius-s);
+	padding: 8px 12px;
+	margin-bottom: 16px;
+	color: var(--text-error);
+}
+
+.whisper-cal-rerecord-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
 }
 
 /* Speaker Tag Modal */

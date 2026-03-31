@@ -7,6 +7,8 @@ import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs, researchJobs, recordingState} from "../state";
+import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
+import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 
@@ -450,7 +452,6 @@ function renderCardDynamic(
 		const showRecStatus = () => {
 			if (recStatusEl) return;
 			recStatusEl = zone.createDiv({cls: "whisper-cal-card-status whisper-cal-card-status-recording"});
-			recStatusEl.createSpan({cls: "whisper-cal-card-status-icon whisper-cal-rec-dot-inline"});
 			recStatusEl.createSpan({text: "Recording\u2026"});
 		};
 		const hideRecStatus = () => {
@@ -474,8 +475,33 @@ function renderCardDynamic(
 		}
 		if (states.record === "complete") {
 			recordPill.addEventListener("click", () => {
-				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
-				if (tf) void app.workspace.openLinkText(tf.path, "", false);
+				void (async () => {
+					const choice = await new ReRecordConfirmModal(app, {
+						pipelineState: states.pipelineState,
+					}).prompt();
+					if (choice === "view") {
+						const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+						if (tf) void app.workspace.openLinkText(tf.path, "", false);
+					} else if (choice === "re-record") {
+						// Reset transcript-related frontmatter
+						await removeFrontmatterKeys(app, notePath, [
+							"transcript", "pipeline_state", "macwhisper_session_id",
+						]);
+						// Ensure note exists then start recording
+						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
+							await noteCreator.createNote(event);
+						}
+						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
+						showRecStatus();
+						addRecDot();
+						recordPill.disabled = false;
+						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
+							recordPill.disabled = true;
+							hideRecStatus();
+							removeRecDot();
+						}});
+					}
+				})();
 			});
 		} else if (states.record === "running") {
 			recordPill.disabled = false; // override — running pill is clickable to stop

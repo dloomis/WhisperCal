@@ -51,3 +51,20 @@ export async function batchUpdateFrontmatter(
 		});
 	});
 }
+
+export async function removeFrontmatterKeys(
+	app: App,
+	filePath: string,
+	keys: string[],
+): Promise<void> {
+	await enqueue(filePath, async () => {
+		const file = app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) return;
+
+		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+			for (const key of keys) {
+				delete frontmatter[key];
+			}
+		});
+	});
+}
