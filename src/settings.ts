@@ -393,7 +393,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			apiSettings.toggle(!isMacWhisper);
 		};
 
-		new Setting(containerEl)
+		const sourceSetting = new Setting(containerEl)
 			.setName("Source")
 			.setDesc("Choose how meeting recordings are captured")
 			.addDropdown(dropdown => dropdown
@@ -405,6 +405,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.debouncedSave();
 					updateRecordingVisibility();
 				}));
+		// Move Source dropdown above the sub-setting containers
+		containerEl.insertBefore(sourceSetting.settingEl, macwhisperSettings);
 		/* eslint-enable obsidianmd/ui/sentence-case */
 
 		// MacWhisper sub-settings
