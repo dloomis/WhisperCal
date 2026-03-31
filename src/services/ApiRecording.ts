@@ -66,8 +66,14 @@ export async function stopApiRecording(opts: {
 	const {app, notePath, transcriptFolderPath, baseUrl} = opts;
 
 	const info = recordingState.get(notePath) ?? null;
-	await recordingStop(baseUrl);
+	// Delete state BEFORE the async API call so the watch loop's guard
+	// (recordingState.has) exits immediately and doesn't race us to waitAndLink.
 	recordingState.delete(notePath);
+	try {
+		await recordingStop(baseUrl);
+	} catch {
+		// API may be unreachable — proceed to link any existing transcript
+	}
 	console.debug(`[WhisperCal] API recording stopped for ${notePath}`);
 
 	// Fire-and-forget: wait for transcription then link
