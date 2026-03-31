@@ -1,11 +1,10 @@
 import {ItemView, Notice, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
-import {getLinkedSessionIds, getMarkdownFilesRecursive} from "../utils/vault";
+import {getMarkdownFilesRecursive} from "../utils/vault";
 import {VIEW_TYPE_CALENDAR} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
-import {findRecentSessions, type MacWhisperRecording} from "../services/MacWhisperDb";
-import {linkKnownRecording} from "../services/LinkRecording";
+import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/UnlinkedRecordingProvider";
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
@@ -54,6 +53,7 @@ export interface CalendarViewCallbacks {
 	onSignIn: () => Promise<void>;
 	onOpenSettings: () => void;
 	subscribeAuthState: (listener: (state: AuthState) => void) => () => void;
+	getUnlinkedProvider: () => UnlinkedRecordingProvider;
 }
 
 export class CalendarView extends ItemView {
@@ -646,8 +646,8 @@ export class CalendarView extends ItemView {
 			const noteProvider = fm["calendar_provider"] as string | undefined;
 			if (noteProvider !== this.settings.calendarProvider) continue;
 
-			// Only show local notes that are already linked to a MacWhisper recording
-			if (!fm["macwhisper_session_id"]) continue;
+			// Only show local notes that are already linked to a recording
+			if (!this.callbacks.getUnlinkedProvider().isNoteLinked(fm as Record<string, unknown>)) continue;
 
 			// Parse meeting_start from frontmatter (e.g. "9:30 AM" or "16:39")
 			// YAML may parse unquoted times as sexagesimal numbers (16:39 → 999)
@@ -781,21 +781,19 @@ export class CalendarView extends ItemView {
 		if (this.settings.unlinkedLookbackDays <= 0) return;
 
 		const gen = ++this.unlinkedGeneration;
+		const provider = this.callbacks.getUnlinkedProvider();
 
-		const sessions = await findRecentSessions(
+		const unlinked = await provider.findUnlinked(
 			this.settings.unlinkedLookbackDays,
 		);
 
 		// Bail if a newer call superseded us
 		if (gen !== this.unlinkedGeneration) return;
 
-		const linked = this.getLinkedSessionIds();
-		const unlinked = sessions.filter(s => !linked.has(s.sessionId));
-
 		if (unlinked.length === 0) {
 			this.unlinkedEl.createDiv({
 				cls: "whisper-cal-unlinked-empty",
-				text: `No unlinked MacWhisper recordings for the last ${this.settings.unlinkedLookbackDays} days`,
+				text: `No unlinked ${provider.displayName} recordings for the last ${this.settings.unlinkedLookbackDays} days`,
 			});
 			return;
 		}
@@ -819,11 +817,7 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	private getLinkedSessionIds(): Set<string> {
-		return getLinkedSessionIds(this.app);
-	}
-
-	private renderUnlinkedCard(container: HTMLElement, recording: MacWhisperRecording): void {
+	private renderUnlinkedCard(container: HTMLElement, recording: UnlinkedRecording): void {
 		const card = container.createDiv({cls: "whisper-cal-unlinked-card"});
 
 		const title = recording.title || "Untitled recording";
@@ -846,7 +840,7 @@ export class CalendarView extends ItemView {
 		});
 	}
 
-	private async handleLinkUnlinked(recording: MacWhisperRecording, card: HTMLElement): Promise<void> {
+	private async handleLinkUnlinked(recording: UnlinkedRecording, card: HTMLElement): Promise<void> {
 		try {
 			// Try to find matching calendar events from cache
 			const recordingDate = recording.recordingStart;
@@ -860,12 +854,14 @@ export class CalendarView extends ItemView {
 				return diff <= windowMs;
 			});
 
+			const unlinkedProvider = this.callbacks.getUnlinkedProvider();
+
 			// Exclude events whose notes already have a recording linked
 			const unlinkedCandidates = candidates.filter(e => {
 				const noteFile = this.noteCreator.findNote(e);
 				if (!noteFile) return true;
 				const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-				return !fm?.["macwhisper_session_id"];
+				return !unlinkedProvider.isNoteLinked(fm as Record<string, unknown> ?? {});
 			});
 
 			const modal = new EventSuggestModal(
@@ -878,9 +874,9 @@ export class CalendarView extends ItemView {
 				// Link to existing calendar event
 				await this.noteCreator.createNote(choice.event);
 				const notePath = this.noteCreator.getNotePath(choice.event);
-				await linkKnownRecording({
+				await unlinkedProvider.linkToNote({
 					app: this.app,
-					session: recording,
+					recording,
 					notePath,
 					subject: choice.event.subject,
 					timezone: this.settings.timezone,
@@ -917,9 +913,9 @@ export class CalendarView extends ItemView {
 				};
 				await this.noteCreator.createNote(event, {preserveTimestamps: true});
 				const notePath = this.noteCreator.getNotePath(event);
-				await linkKnownRecording({
+				await unlinkedProvider.linkToNote({
 					app: this.app,
-					session: recording,
+					recording,
 					notePath,
 					subject,
 					timezone: this.settings.timezone,
@@ -936,7 +932,7 @@ export class CalendarView extends ItemView {
 			if (this.cachedEvents) {
 				this.renderEvents(this.cachedEvents);
 			}
-			// Rebuild the unlinked section from truth (frontmatter now has session ID)
+			// Rebuild the unlinked section from truth (linkage now established)
 			void this.loadAndRenderUnlinkedSection();
 		} catch (e) {
 			console.error("[WhisperCal] Link unlinked recording error:", e);

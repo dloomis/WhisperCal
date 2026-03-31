@@ -21,6 +21,8 @@ import type {CalendarProvider, CalendarProviderType} from "./types";
 import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
 import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFactory";
 import {CachedCalendarProvider} from "./services/CalendarCache";
+import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
+import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 
 interface PluginData extends WhisperCalSettings {
 	// Legacy single token cache (migrated on load)
@@ -42,6 +44,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private microsoftTokenCache: TokenCache | null = null;
 	private googleTokenCache: TokenCache | null = null;
 	private activeProviderType: CalendarProviderType = "microsoft";
+	private unlinkedProvider!: UnlinkedRecordingProvider;
 
 	async onload() {
 		await this.loadSettings();
@@ -72,6 +75,8 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.cachedProvider.loadCache();
 		this.provider = this.cachedProvider;
 
+		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
+
 		this.viewCallbacks = {
 			getCacheStatus: () => this.cachedProvider?.getLastStatus() ?? null,
 			getUserEmail: () => this.upstream.getUserEmail(),
@@ -92,6 +97,7 @@ export default class WhisperCalPlugin extends Plugin {
 				setting.openTabById(this.manifest.id);
 			},
 			subscribeAuthState: (listener) => this.onAuthStateChange(listener),
+			getUnlinkedProvider: () => this.unlinkedProvider,
 		};
 
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
@@ -250,6 +256,7 @@ export default class WhisperCalPlugin extends Plugin {
 			this.settings.timezone,
 		);
 		setTimeFormat(this.settings.timeFormat);
+		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
 			if (view instanceof CalendarView) {
@@ -362,6 +369,8 @@ export default class WhisperCalPlugin extends Plugin {
 			this.settings.timezone,
 		);
 		setTimeFormat(this.settings.timeFormat);
+		// Recreate unlinked provider (recordingSource or transcriptFolderPath may have changed)
+		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
 		// Update existing views with new settings
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
@@ -445,6 +454,8 @@ export default class WhisperCalPlugin extends Plugin {
 		const state = transcriptFm["pipeline_state"] as string | undefined;
 		if (state && state !== "titled") {
 			new Notice("Speakers already tagged for this transcript");
+			// Heal: ensure the meeting note also reflects at least "tagged"
+			void updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
 			return;
 		}
 		if (!this.settings.speakerTaggingPromptPath) {
