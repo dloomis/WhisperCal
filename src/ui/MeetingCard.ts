@@ -474,7 +474,16 @@ function renderCardDynamic(
 			addRecDot();
 		}
 		if (states.record === "complete") {
+			let reRecording = false;
 			recordPill.addEventListener("click", () => {
+				if (reRecording) {
+					// Stop the re-recording
+					recordPill.disabled = true;
+					hideRecStatus();
+					removeRecDot();
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
+					return;
+				}
 				void (async () => {
 					const choice = await new ReRecordConfirmModal(app, {
 						pipelineState: states.pipelineState,
@@ -492,10 +501,12 @@ function renderCardDynamic(
 							await noteCreator.createNote(event);
 						}
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
+						reRecording = true;
 						showRecStatus();
 						addRecDot();
 						recordPill.disabled = false;
 						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
+							reRecording = false;
 							recordPill.disabled = true;
 							hideRecStatus();
 							removeRecDot();

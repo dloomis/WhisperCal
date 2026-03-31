@@ -1006,12 +1006,12 @@
 }
 
 .whisper-cal-rerecord-alert {
-	background: var(--background-modifier-error);
+	background: color-mix(in srgb, var(--text-error) 12%, transparent);
 	border: 1px solid var(--text-error);
 	border-radius: var(--radius-s);
 	padding: 8px 12px;
 	margin-bottom: 16px;
-	color: var(--text-error);
+	color: var(--text-normal);
 }
 
 .whisper-cal-rerecord-buttons {
