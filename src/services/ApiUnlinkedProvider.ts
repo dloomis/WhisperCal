@@ -6,6 +6,17 @@ import {resolveWikiLink} from "../utils/vault";
 import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
 
+/** Parse duration from number (seconds) or string ("MM:SS" / "HH:MM:SS"). */
+function parseDuration(raw: unknown): number {
+	if (typeof raw === "number") return raw;
+	if (typeof raw !== "string") return 0;
+	const parts = raw.split(":").map(Number);
+	if (parts.some(isNaN)) return 0;
+	if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
+	if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
+	return 0;
+}
+
 interface ApiTranscriptData {
 	file: TFile;
 }
@@ -60,7 +71,13 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 
 		const noteBasename = opts.notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 
-		// 1. Enrich transcript frontmatter
+		// Read meeting note frontmatter for wiki-link invitees + calendar context
+		const noteFile = opts.app.vault.getAbstractFileByPath(opts.notePath);
+		const noteFm = (noteFile instanceof TFile)
+			? this.app.metadataCache.getFileCache(noteFile)?.frontmatter
+			: undefined;
+
+		// 1. Enrich transcript frontmatter with full meeting context
 		await this.app.fileManager.processFrontMatter(
 			freshFile,
 			(fm: Record<string, unknown>) => {
@@ -73,11 +90,23 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 				fm["pipeline_state"] = "titled";
 				fm["meeting_subject"] = opts.subject;
 				fm["is_recurring"] = opts.isRecurring ?? false;
-				if (opts.attendees && opts.attendees.length > 0) {
+				// Prefer wiki-link invitees from meeting note, fall back to plain names
+				const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
+					? noteFm["meeting_invitees"] as string[]
+					: null;
+				if (wikiInvitees && wikiInvitees.length > 0) {
+					fm["meeting_invitees"] = wikiInvitees;
+				} else if (opts.attendees && opts.attendees.length > 0) {
 					fm["meeting_invitees"] = opts.attendees.map(
 						a => parseDisplayName(a.name, a.email),
 					);
 				}
+				// Calendar event context — makes transcript self-contained for LLM use
+				if (opts.meetingDate) fm["meeting_date"] = opts.meetingDate;
+				if (opts.meetingStart) fm["meeting_start"] = opts.meetingStart;
+				if (opts.meetingEnd) fm["meeting_end"] = opts.meetingEnd;
+				if (opts.organizer) fm["meeting_organizer"] = opts.organizer;
+				if (opts.location) fm["meeting_location"] = opts.location;
 			},
 		);
 
@@ -113,14 +142,16 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			recordingStart = new Date(file.stat.ctime);
 		}
 
-		const durationSeconds = typeof fm["duration"] === "number"
-			? fm["duration"] : 0;
+		const durationSeconds = parseDuration(fm["duration"]);
 
 		let speakerCount = 0;
 		if (typeof fm["speaker_count"] === "number") {
 			speakerCount = fm["speaker_count"];
 		} else if (Array.isArray(fm["speakers"])) {
 			speakerCount = fm["speakers"].length;
+		} else if (Array.isArray(fm["attendees"])) {
+			// Third-party apps may use "attendees" instead of "speakers"
+			speakerCount = fm["attendees"].length;
 		}
 
 		return {

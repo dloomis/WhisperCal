@@ -16,6 +16,12 @@ export interface RecordingInfo {
 	isRecurring: boolean;
 	timezone: string;
 	transcriptFolderPath: string;
+	/** Calendar event context for transcript enrichment. */
+	meetingDate?: string;
+	meetingStart?: string;
+	meetingEnd?: string;
+	organizer?: string;
+	location?: string;
 }
 
 /** Active API recording: notePath → recording info. Only one recording at a time. */

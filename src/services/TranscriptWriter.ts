@@ -48,6 +48,31 @@ function groupBySpeaker(lines: TranscriptData["lines"]): SpeakerBlock[] {
 	return blocks;
 }
 
+/** Coerce a YAML frontmatter time value that may have been parsed as sexagesimal. */
+function coerceFmTime(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (typeof val === "number") {
+		const h = Math.floor(val / 60);
+		const m = val % 60;
+		return `${h}:${String(m).padStart(2, "0")}`;
+	}
+	if (typeof val === "string") return val;
+	return undefined;
+}
+
+/** Coerce a YAML frontmatter date value that may have been parsed as a Date object. */
+function coerceFmDate(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (val instanceof Date) {
+		const y = val.getFullYear();
+		const mo = String(val.getMonth() + 1).padStart(2, "0");
+		const d = String(val.getDate()).padStart(2, "0");
+		return `${y}-${mo}-${d}`;
+	}
+	if (typeof val === "string") return val;
+	return undefined;
+}
+
 function buildFrontmatter(opts: {
 	notePath: string;
 	sessionId: string;
@@ -58,6 +83,14 @@ function buildFrontmatter(opts: {
 	calendarEvent: string;
 	calendarAttendees: string[];
 	isRecurring: boolean;
+	/** Wiki-link formatted invitees from meeting note (overrides calendarAttendees). */
+	wikiInvitees?: string[];
+	/** Calendar context from meeting note — written to transcript for LLM use. */
+	meetingDate?: string;
+	meetingStart?: string;
+	meetingEnd?: string;
+	organizer?: string;
+	location?: string;
 }): string {
 	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
@@ -87,12 +120,20 @@ function buildFrontmatter(opts: {
 
 	lines.push(`meeting_subject: "${yamlEscape(calendarEvent)}"`);
 	lines.push(`is_recurring: ${isRecurring}`);
-	if (calendarAttendees.length > 0) {
+	// Prefer wiki-link invitees from meeting note (consistent with confirmed_speakers)
+	const invitees = opts.wikiInvitees ?? calendarAttendees;
+	if (invitees.length > 0) {
 		lines.push("meeting_invitees:");
-		for (const name of calendarAttendees) {
+		for (const name of invitees) {
 			lines.push(`  - "${yamlEscape(name)}"`);
 		}
 	}
+	// Calendar context from meeting note — makes transcript self-contained for LLM use
+	if (opts.meetingDate) lines.push(`meeting_date: "${yamlEscape(opts.meetingDate)}"`);
+	if (opts.meetingStart) lines.push(`meeting_start: "${yamlEscape(opts.meetingStart)}"`);
+	if (opts.meetingEnd) lines.push(`meeting_end: "${yamlEscape(opts.meetingEnd)}"`);
+	if (opts.organizer) lines.push(`meeting_organizer: "${yamlEscape(opts.organizer)}"`);
+	if (opts.location) lines.push(`meeting_location: "${yamlEscape(opts.location)}"`);
 	// If all speakers are non-stub (real names, not generic "Speaker N"),
 	// the session was independently tagged — skip to "tagged" state.
 	const allSpeakersNamed = speakers.length > 0 && speakers.every(sp => !sp.isStub);
@@ -187,6 +228,15 @@ export async function createTranscriptFile(opts: {
 
 	await ensureFolder(app, transcriptFolderPath);
 
+	// Read meeting note frontmatter for wiki-link invitees + calendar context
+	const noteFile = app.vault.getAbstractFileByPath(notePath);
+	const noteFm = (noteFile instanceof TFile)
+		? app.metadataCache.getFileCache(noteFile)?.frontmatter
+		: undefined;
+	const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
+		? noteFm["meeting_invitees"] as string[]
+		: undefined;
+
 	const frontmatter = buildFrontmatter({
 		notePath,
 		sessionId,
@@ -197,6 +247,12 @@ export async function createTranscriptFile(opts: {
 		calendarEvent,
 		calendarAttendees,
 		isRecurring,
+		wikiInvitees,
+		meetingDate: coerceFmDate(noteFm?.["meeting_date"]),
+		meetingStart: coerceFmTime(noteFm?.["meeting_start"]),
+		meetingEnd: coerceFmTime(noteFm?.["meeting_end"]),
+		organizer: noteFm?.["meeting_organizer"] as string | undefined,
+		location: noteFm?.["meeting_location"] as string | undefined,
 	});
 
 	const body = buildTranscriptBody(data);

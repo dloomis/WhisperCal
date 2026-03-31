@@ -2,7 +2,7 @@ import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus} from "./RecordingApi";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {recordingState, type RecordingInfo} from "../state";
-import {sleep} from "../utils/time";
+import {formatDate, formatTime, sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
 import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
@@ -48,6 +48,11 @@ export async function startApiRecording(opts: {
 		isRecurring: event.isRecurring,
 		timezone,
 		transcriptFolderPath,
+		meetingDate: formatDate(event.startTime, timezone),
+		meetingStart: formatTime(event.startTime, timezone),
+		meetingEnd: formatTime(event.endTime, timezone),
+		organizer: event.organizerName,
+		location: event.location,
 	});
 	console.debug(`[WhisperCal] API recording started for ${notePath}`);
 }
@@ -138,6 +143,15 @@ async function enrichTranscriptFrontmatter(
 ): Promise<void> {
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 
+	// Read meeting note for wiki-link invitees (PeopleMatchService already ran there)
+	const noteFile = app.vault.getAbstractFileByPath(notePath);
+	const noteFm = (noteFile instanceof TFile)
+		? app.metadataCache.getFileCache(noteFile)?.frontmatter
+		: undefined;
+	const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
+		? noteFm["meeting_invitees"] as string[]
+		: null;
+
 	await app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
 		// Add tags — preserve existing, ensure "transcript" is present
 		const existing = Array.isArray(fm["tags"]) ? fm["tags"] as string[] : [];
@@ -151,9 +165,18 @@ async function enrichTranscriptFrontmatter(
 		if (info) {
 			fm["meeting_subject"] = info.subject;
 			fm["is_recurring"] = info.isRecurring;
-			if (info.attendees.length > 0) {
+			// Prefer wiki-link invitees from meeting note, fall back to plain names
+			if (wikiInvitees && wikiInvitees.length > 0) {
+				fm["meeting_invitees"] = wikiInvitees;
+			} else if (info.attendees.length > 0) {
 				fm["meeting_invitees"] = info.attendees;
 			}
+			// Calendar event context — makes transcript self-contained for LLM use
+			if (info.meetingDate) fm["meeting_date"] = info.meetingDate;
+			if (info.meetingStart) fm["meeting_start"] = info.meetingStart;
+			if (info.meetingEnd) fm["meeting_end"] = info.meetingEnd;
+			if (info.organizer) fm["meeting_organizer"] = info.organizer;
+			if (info.location) fm["meeting_location"] = info.location;
 		}
 	});
 }

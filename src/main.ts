@@ -842,10 +842,8 @@ export default class WhisperCalPlugin extends Plugin {
 			meetingStart = parseDateTime(dateStr, timeStr);
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
-			const noteCreatedStr = fm["note_created"] as string | undefined;
-			if (noteCreatedStr) {
-				meetingStart = new Date(noteCreatedStr);
-			}
+			// Fall back to file creation time (covers unscheduled/ad-hoc notes)
+			meetingStart = new Date(file.stat.ctime);
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
 			new Notice("Missing meeting date/time in frontmatter");

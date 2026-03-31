@@ -178,7 +178,7 @@ export class NoteCreator {
 		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
 		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated);
 		const content = applyTemplate(template, variables);
-		return this.injectReservedFrontmatter(content, event, variables, noteCreated);
+		return this.injectReservedFrontmatter(content, event, variables);
 	}
 
 	/**
@@ -189,7 +189,6 @@ export class NoteCreator {
 		content: string,
 		event: CalendarEvent,
 		variables: Record<string, string>,
-		noteCreated: Date,
 	): string {
 		const inviteeLines = event.attendees.length > 0
 			? "\n" + variables["invitees"]
@@ -205,10 +204,7 @@ export class NoteCreator {
 			`tags: [meeting]`,
 			`calendar_event_id: "${yamlEscape(event.id)}"`,
 			`calendar_provider: ${this.settings.calendarProvider}`,
-			`note_created: "${noteCreated.toISOString()}"`,
 			`is_recurring: ${event.isRecurring}`,
-			`macwhisper_session_id: ""`,
-			`transcript: ""`,
 		].join("\n");
 
 		// Insert before the closing --- of frontmatter

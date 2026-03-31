@@ -883,6 +883,11 @@ export class CalendarView extends ItemView {
 					transcriptFolderPath: this.settings.transcriptFolderPath,
 					attendees: choice.event.attendees,
 					isRecurring: choice.event.isRecurring,
+					meetingDate: formatDate(choice.event.startTime, this.settings.timezone),
+					meetingStart: formatTime(choice.event.startTime, this.settings.timezone),
+					meetingEnd: formatTime(choice.event.endTime, this.settings.timezone),
+					organizer: choice.event.organizerName,
+					location: choice.event.location,
 				});
 			} else {
 				// Create new meeting — prompt for a name

@@ -25,6 +25,12 @@ export interface LinkUnlinkedOpts {
 	transcriptFolderPath: string;
 	attendees?: EventAttendee[];
 	isRecurring?: boolean;
+	/** Calendar event context for transcript enrichment. */
+	meetingDate?: string;
+	meetingStart?: string;
+	meetingEnd?: string;
+	organizer?: string;
+	location?: string;
 }
 
 /**
