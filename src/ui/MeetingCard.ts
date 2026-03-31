@@ -457,8 +457,20 @@ function renderCardDynamic(
 			if (recStatusEl) { recStatusEl.remove(); recStatusEl = null; }
 		};
 
+		const addRecDot = () => {
+			if (!recordPill.querySelector(".whisper-cal-pill-rec-dot")) {
+				recordPill.createSpan({cls: "whisper-cal-pill-rec-dot"});
+			}
+			recordPill.addClass("whisper-cal-pill-recording");
+		};
+		const removeRecDot = () => {
+			recordPill.querySelector(".whisper-cal-pill-rec-dot")?.remove();
+			recordPill.removeClass("whisper-cal-pill-recording");
+		};
+
 		if (states.record === "running") {
 			showRecStatus();
+			addRecDot();
 		}
 		if (states.record === "complete") {
 			recordPill.addEventListener("click", () => {
@@ -470,6 +482,7 @@ function renderCardDynamic(
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
 				hideRecStatus();
+				removeRecDot();
 				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
 			});
 		} else if (states.record === "incomplete") {
@@ -479,6 +492,7 @@ function renderCardDynamic(
 					// Stop
 					recordPill.disabled = true;
 					hideRecStatus();
+					removeRecDot();
 					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
 					return;
 				}
@@ -493,10 +507,12 @@ function renderCardDynamic(
 						recording = true;
 						recordPill.disabled = false;
 						showRecStatus();
+						addRecDot();
 						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
 							recording = false;
 							recordPill.disabled = true;
 							hideRecStatus();
+							removeRecDot();
 						}});
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start recording");

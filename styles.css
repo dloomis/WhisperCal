@@ -823,6 +823,24 @@
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
+/* Red recording dot badge on upper-right corner of record pill */
+.whisper-cal-pill-rec-dot {
+	position: absolute;
+	top: -4px;
+	right: -4px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #e53935;
+	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
+	pointer-events: none;
+}
+
+/* Recording pill: pulse in sync with the red dot */
+.whisper-cal-pill-recording {
+	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
+}
+
 /* Recording pill in running state is clickable (stop) — override wait cursor */
 .whisper-cal-pill-running:not(:disabled) {
 	cursor: pointer;
