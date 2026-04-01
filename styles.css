@@ -832,7 +832,6 @@
 	height: 6px;
 	border-radius: 50%;
 	background: #e53935;
-	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
 	pointer-events: none;
 }
 

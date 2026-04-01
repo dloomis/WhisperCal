@@ -6,7 +6,7 @@ import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
 import {summarizeJobs, speakerTagJobs, researchJobs} from "./state";
-import {parseSpeakerTagOutput} from "./services/SpeakerTagParser";
+import {parseSpeakerTagOutput, enrichLineCountsFromBody} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {ResearchModal} from "./ui/ResearchModal";
@@ -484,11 +484,11 @@ export default class WhisperCalPlugin extends Plugin {
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
 			}),
-			onSuccess: (result) => this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath),
+			onSuccess: (result) => void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath),
 		});
 	}
 
-	private handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): void {
+	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): Promise<void> {
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
 			new Notice("Transcript was deleted while speaker tagging was running");
@@ -505,6 +505,12 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 		if (warning) {
 			new Notice(warning);
+		}
+
+		// Enrich line counts from body text when frontmatter lacks them (e.g. Tome transcripts)
+		if (mappings.some(m => m.lineCount === 0)) {
+			const content = await this.app.vault.cachedRead(transcriptFile);
+			enrichLineCountsFromBody(mappings, content);
 		}
 
 		// Queue the modal so parallel completions are presented one at a time.
@@ -527,18 +533,15 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 
 				await applySpeakerTags(this.app, transcriptPath, decisions);
+
+				// Directly update meeting note pipeline_state rather than
+				// waiting for the async metadataCache mirror event.
+				await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
 				new Notice("Speaker tags applied");
 
-				// Auto-summarize if enabled — skip the pipeline_state check
-				// because the metadata cache mirror hasn't fired yet.
+				// Auto-summarize if enabled
 				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
-					const tFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
-					if (tFm) {
-						const meetingFile = resolveWikiLink(this.app, tFm as Record<string, unknown>, "meeting_note", transcriptPath);
-						if (meetingFile) {
-							this.doSummarize(meetingFile.path, true);
-						}
-					}
+					this.doSummarize(notePath, true);
 				}
 
 				this.refreshCalendarCards(transcriptPath);

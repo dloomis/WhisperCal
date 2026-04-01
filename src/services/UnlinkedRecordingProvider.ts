@@ -12,6 +12,8 @@ export interface UnlinkedRecording {
 	recordingStart: Date;
 	durationSeconds: number;
 	speakerCount: number;
+	/** Vault path to the transcript file, when one already exists (e.g. API transcripts). */
+	transcriptPath?: string;
 	/** Opaque provider-specific payload. Providers cast this back in linkToNote(). */
 	providerData: unknown;
 }

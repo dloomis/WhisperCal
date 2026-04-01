@@ -797,7 +797,7 @@ export class CalendarView extends ItemView {
 		if (unlinked.length === 0) {
 			this.unlinkedEl.createDiv({
 				cls: "whisper-cal-unlinked-empty",
-				text: `No unlinked ${provider.displayName} recordings for the last ${this.settings.unlinkedLookbackDays} days`,
+				text: `No unlinked transcripts for the last ${this.settings.unlinkedLookbackDays} days`,
 			});
 			return;
 		}
@@ -805,7 +805,7 @@ export class CalendarView extends ItemView {
 		// Collapsible header
 		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
 		const arrow = header.createSpan({cls: "whisper-cal-unlinked-arrow", text: this.unlinkedCollapsed ? "\u25B8" : "\u25BE"});
-		header.createSpan({text: `Unlinked recordings (${unlinked.length})`});
+		header.createSpan({text: `Unlinked transcripts (${unlinked.length})`});
 
 		const body = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-body"});
 		body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
@@ -834,6 +834,14 @@ export class CalendarView extends ItemView {
 		if (durStr) parts.push(durStr);
 		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
 		meta.createSpan({text: parts.join(" \u00B7 ")});
+
+		if (recording.transcriptPath) {
+			const viewBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
+			viewBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
+			});
+		}
 
 		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {

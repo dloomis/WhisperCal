@@ -227,6 +227,26 @@ function buildFallbackMappings(speakers: FrontmatterSpeaker[]): ProposedSpeakerM
 	}));
 }
 
+/**
+ * Enrich mappings that have lineCount=0 by counting **SpeakerName** blocks
+ * in the transcript body text. Useful when frontmatter lacks a speakers array
+ * (e.g. Tome transcripts).
+ */
+export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], content: string): void {
+	const counts = new Map<string, number>();
+	const re = /^\*\*(.+?)\*\*/gm;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(content)) !== null) {
+		const name = match[1]!;
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	for (const mapping of mappings) {
+		if (mapping.lineCount === 0) {
+			mapping.lineCount = counts.get(mapping.originalName) ?? 0;
+		}
+	}
+}
+
 function getFrontmatterSpeakers(app: App, transcriptPath: string): FrontmatterSpeaker[] {
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (!(file instanceof TFile)) return [];

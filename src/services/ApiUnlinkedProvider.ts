@@ -160,6 +160,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			recordingStart,
 			durationSeconds,
 			speakerCount,
+			transcriptPath: file.path,
 			providerData: {file} as ApiTranscriptData,
 		};
 	}
