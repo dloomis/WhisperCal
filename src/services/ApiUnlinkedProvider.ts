@@ -1,5 +1,5 @@
 import type {App} from "obsidian";
-import {TFile, TFolder} from "obsidian";
+import {TFile, TFolder, normalizePath} from "obsidian";
 import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} from "./UnlinkedRecordingProvider";
 import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink} from "../utils/vault";
@@ -110,10 +110,19 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			},
 		);
 
-		// 2. Link transcript on the meeting note side
-		const transcriptBasename = freshFile.basename;
+		// 2. Rename transcript to match linked naming convention: "{noteBasename} - Transcript.md"
+		const expectedName = `${noteBasename} - Transcript.md`;
+		const expectedPath = normalizePath(`${opts.transcriptFolderPath}/${expectedName}`);
+		let transcriptFile: TFile = freshFile;
+		if (freshFile.path !== expectedPath) {
+			await this.app.fileManager.renameFile(freshFile, expectedPath);
+			const renamed = this.app.vault.getAbstractFileByPath(expectedPath);
+			if (renamed instanceof TFile) transcriptFile = renamed;
+		}
+
+		// 3. Link transcript on the meeting note side
 		await batchUpdateFrontmatter(opts.app, opts.notePath, {
-			transcript: `[[${transcriptBasename}]]`,
+			transcript: `[[${transcriptFile.basename}]]`,
 			pipeline_state: "titled",
 		});
 
