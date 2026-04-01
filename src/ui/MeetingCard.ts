@@ -6,7 +6,7 @@ import {formatTime, formatRecordingDuration} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs, researchJobs, recordingState} from "../state";
+import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, type CardStatusVariant} from "../state";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
@@ -27,20 +27,7 @@ export interface MeetingCardOpts {
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
-	speakerTagModel?: string;
-	summarizerModel?: string;
-	researchModel?: string;
-}
-
-/** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
-function formatModelName(modelId: string): string {
-	if (!modelId) return "";
-	const match = modelId.match(/^claude-(\w+)-(\d+)-(\d+)/);
-	if (match) {
-		const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1);
-		return `${family} ${match[2]}.${match[3]}`;
-	}
-	return modelId;
+	onStatusUpdate?: () => void;
 }
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
@@ -366,6 +353,29 @@ export function renderMeetingCard(
 	return card;
 }
 
+/** Build an onStatus callback that writes to the shared cardStatus map and triggers a card re-render. */
+function onStatusForCard(
+	notePath: string,
+	opts: MeetingCardOpts,
+): (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void {
+	return (msg, icon, autoClearMs, variant) => {
+		if (msg) {
+			cardStatus.set(notePath, {message: msg, icon, variant});
+		} else {
+			cardStatus.delete(notePath);
+		}
+		opts.onStatusUpdate?.();
+		if (msg && autoClearMs && autoClearMs > 0) {
+			setTimeout(() => {
+				if (cardStatus.get(notePath)?.message === msg) {
+					cardStatus.delete(notePath);
+					opts.onStatusUpdate?.();
+				}
+			}, autoClearMs);
+		}
+	};
+}
+
 /**
  * Populate the dynamic zone of a meeting card (pills, status lines, gutter highlight).
  * Called both on initial render and on in-place updates.
@@ -447,17 +457,6 @@ function renderCardDynamic(
 	if (recordingApiBaseUrl) {
 		const recordPill = renderPill(actions, "mic", "Record", states.record);
 
-		// Recording status line — shown below action pills during active recording
-		let recStatusEl: HTMLElement | null = null;
-		const showRecStatus = () => {
-			if (recStatusEl) return;
-			recStatusEl = zone.createDiv({cls: "whisper-cal-card-status whisper-cal-card-status-recording"});
-			recStatusEl.createSpan({text: "Recording\u2026"});
-		};
-		const hideRecStatus = () => {
-			if (recStatusEl) { recStatusEl.remove(); recStatusEl = null; }
-		};
-
 		const addRecDot = () => {
 			if (!recordPill.querySelector(".whisper-cal-pill-rec-dot")) {
 				recordPill.createSpan({cls: "whisper-cal-pill-rec-dot"});
@@ -469,8 +468,19 @@ function renderCardDynamic(
 			recordPill.removeClass("whisper-cal-pill-recording");
 		};
 
+		const setRecording = () => {
+			cardStatus.set(notePath, {message: "Recording\u2026", variant: "recording"});
+			opts.onStatusUpdate?.();
+		};
+		const clearRecording = () => {
+			cardStatus.delete(notePath);
+			opts.onStatusUpdate?.();
+		};
+
 		if (states.record === "running") {
-			showRecStatus();
+			if (!cardStatus.has(notePath)) {
+				cardStatus.set(notePath, {message: "Recording\u2026", variant: "recording"});
+			}
 			addRecDot();
 		}
 		if (states.record === "complete") {
@@ -479,9 +489,9 @@ function renderCardDynamic(
 				if (reRecording) {
 					// Stop the re-recording
 					recordPill.disabled = true;
-					hideRecStatus();
+					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				void (async () => {
@@ -502,15 +512,14 @@ function renderCardDynamic(
 						}
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
 						reRecording = true;
-						showRecStatus();
+						setRecording();
 						addRecDot();
 						recordPill.disabled = false;
 						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
 							reRecording = false;
 							recordPill.disabled = true;
-							hideRecStatus();
 							removeRecDot();
-						}});
+						}, onStatus: onStatusForCard(notePath, opts)});
 					}
 				})();
 			});
@@ -518,9 +527,9 @@ function renderCardDynamic(
 			recordPill.disabled = false; // override — running pill is clickable to stop
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
-				hideRecStatus();
+				clearRecording();
 				removeRecDot();
-				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
+				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
 			});
 		} else if (states.record === "incomplete") {
 			let recording = false;
@@ -528,9 +537,9 @@ function renderCardDynamic(
 				if (recording) {
 					// Stop
 					recordPill.disabled = true;
-					hideRecStatus();
+					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl});
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				// Start
@@ -543,14 +552,13 @@ function renderCardDynamic(
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
 						recording = true;
 						recordPill.disabled = false;
-						showRecStatus();
+						setRecording();
 						addRecDot();
 						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
 							recording = false;
 							recordPill.disabled = true;
-							hideRecStatus();
 							removeRecDot();
-						}});
+						}, onStatus: onStatusForCard(notePath, opts)});
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start recording");
 						recordPill.disabled = false;
@@ -589,6 +597,7 @@ function renderCardDynamic(
 							attendees: event.attendees,
 							isRecurring: event.isRecurring,
 							windowMinutes: isUnscheduled ? 720 : recordingWindowMinutes,
+							onStatus: onStatusForCard(notePath, opts),
 						});
 					} finally {
 						if (!linked) transcriptPill.disabled = false;
@@ -645,27 +654,16 @@ function renderCardDynamic(
 		}
 	}
 
-	// Status lines below actions
-	if (opts.llmEnabled !== false && states.research === "running") {
-		const modelSuffix = opts.researchModel ? ` (${formatModelName(opts.researchModel)})` : "";
-		const status = zone.createDiv({cls: "whisper-cal-card-status"});
-		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
-		setIcon(ico, "book-open");
-		status.createSpan({text: `Researching${modelSuffix}\u2026`});
-	}
-	if (opts.llmEnabled !== false && states.speakers === "running") {
-		const modelSuffix = opts.speakerTagModel ? ` (${formatModelName(opts.speakerTagModel)})` : "";
-		const status = zone.createDiv({cls: "whisper-cal-card-status"});
-		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
-		setIcon(ico, "users-round");
-		status.createSpan({text: `Tagging speakers${modelSuffix}\u2026`});
-	}
-	if (opts.llmEnabled !== false && states.summary === "running") {
-		const modelSuffix = opts.summarizerModel ? ` (${formatModelName(opts.summarizerModel)})` : "";
-		const status = zone.createDiv({cls: "whisper-cal-card-status"});
-		const ico = status.createSpan({cls: "whisper-cal-card-status-icon"});
-		setIcon(ico, "sparkles");
-		status.createSpan({text: `Summarizing${modelSuffix}\u2026`});
+	// Unified card status — renders from cardStatus map
+	const cs = cardStatus.get(notePath);
+	if (cs) {
+		const variant = cs.variant ?? "progress";
+		const statusEl = zone.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
+		if (cs.icon) {
+			const ico = statusEl.createSpan({cls: "whisper-cal-card-status-icon"});
+			setIcon(ico, cs.icon);
+		}
+		statusEl.createSpan({text: cs.message});
 	}
 }
 

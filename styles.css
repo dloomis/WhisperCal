@@ -870,6 +870,16 @@
 	animation: none;
 }
 
+.whisper-cal-card-status-done {
+	animation: none;
+	color: var(--text-success, var(--interactive-accent));
+}
+
+.whisper-cal-card-status-warning {
+	animation: none;
+	color: var(--text-muted);
+}
+
 @keyframes whisper-cal-rec-flash {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.3; }

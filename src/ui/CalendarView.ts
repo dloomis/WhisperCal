@@ -588,9 +588,7 @@ export class CalendarView extends ItemView {
 			onTagSpeakers: this.callbacks.onTagSpeakers,
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,
-			speakerTagModel: this.settings.speakerTagModel,
-			summarizerModel: this.settings.summarizerModel,
-			researchModel: this.settings.researchModel,
+			onStatusUpdate: () => this.rerenderCardById(event.id),
 		};
 	}
 

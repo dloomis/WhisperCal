@@ -1,4 +1,4 @@
-import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
+import {App, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus} from "./RecordingApi";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {recordingState, type RecordingInfo} from "../state";
@@ -6,6 +6,7 @@ import {formatDate, formatTime, sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
 import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
+import type {OnStatus} from "./LinkRecording";
 
 function getTranscriptFilename(notePath: string): string {
 	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
@@ -62,8 +63,9 @@ export async function stopApiRecording(opts: {
 	notePath: string;
 	transcriptFolderPath: string;
 	baseUrl: string;
+	onStatus?: OnStatus;
 }): Promise<void> {
-	const {app, notePath, transcriptFolderPath, baseUrl} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl, onStatus} = opts;
 
 	const info = recordingState.get(notePath) ?? null;
 	// Delete state BEFORE the async API call so the watch loop's guard
@@ -77,7 +79,7 @@ export async function stopApiRecording(opts: {
 	console.debug(`[WhisperCal] API recording stopped for ${notePath}`);
 
 	// Fire-and-forget: wait for transcription then link
-	void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl);
+	void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl, onStatus);
 }
 
 /**
@@ -91,8 +93,9 @@ export function watchApiRecording(opts: {
 	transcriptFolderPath: string;
 	baseUrl: string;
 	onStopped: () => void;
+	onStatus?: OnStatus;
 }): void {
-	const {app, notePath, transcriptFolderPath, baseUrl, onStopped} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl, onStopped, onStatus} = opts;
 	const WATCH_INTERVAL_MS = 2000;
 
 	void (async () => {
@@ -106,7 +109,7 @@ export function watchApiRecording(opts: {
 					recordingState.delete(notePath);
 					console.debug(`[WhisperCal] API recording stopped externally for ${notePath}`);
 					onStopped();
-					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl);
+					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl, onStatus);
 					return;
 				}
 			} catch {
@@ -187,9 +190,9 @@ async function enrichTranscriptFrontmatter(
 	});
 }
 
-async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: RecordingInfo | null, baseUrl: string): Promise<void> {
+async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: RecordingInfo | null, baseUrl: string, onStatus?: OnStatus): Promise<void> {
 	const beforeStop = Date.now();
-	const notice = new Notice("Recording stopped \u2014 waiting for transcript\u2026", 0);
+	onStatus?.("Waiting for transcript\u2026");
 	try {
 		// Poll recording API status until transcription completes
 		for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
@@ -198,15 +201,14 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 				const {state} = await recordingStatus(baseUrl);
 				if (state === "complete") break;
 				if (state === "transcribing") {
-					notice.setMessage("Transcribing\u2026");
+					onStatus?.("Transcribing\u2026");
 				}
 			} catch {
 				// Service may have shut down — fall through to file check
 				break;
 			}
 			if (i === MAX_POLL_ATTEMPTS - 1) {
-				notice.setMessage("Transcript not ready yet \u2014 check recording service");
-				setTimeout(() => notice.hide(), 6000);
+				onStatus?.("Transcript not ready \u2014 check recording service", "alert-circle", 6000, "warning");
 				return;
 			}
 		}
@@ -228,13 +230,12 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		}
 
 		if (!transcriptFile) {
-			notice.setMessage("Transcript file not found \u2014 check recording service output folder");
-			setTimeout(() => notice.hide(), 6000);
+			onStatus?.("Transcript file not found \u2014 check output folder", "alert-circle", 6000, "warning");
 			return;
 		}
 
 		// Enrich transcript with WhisperCal pipeline frontmatter
-		notice.setMessage("Enriching transcript\u2026");
+		onStatus?.("Enriching transcript\u2026");
 		await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
 
 		// Link transcript to meeting note + set pipeline state
@@ -242,12 +243,10 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
 		await updateFrontmatter(app, notePath, "pipeline_state", "titled");
 
-		notice.setMessage("Transcript linked to note");
-		setTimeout(() => notice.hide(), 4000);
+		onStatus?.("Transcript linked", "check", 4000, "done");
 	} catch (err) {
 		console.error("[WhisperCal] Transcript linking failed:", err);
-		notice.setMessage("Failed to link transcript");
-		setTimeout(() => notice.hide(), 6000);
+		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning");
 	}
 }
 

@@ -7,6 +7,9 @@ import {getLinkedSessionIds} from "../utils/vault";
 import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
 import {parseDisplayName} from "../utils/nameParser";
+import type {CardStatusVariant} from "../state";
+
+export type OnStatus = (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void;
 
 /**
  * Internal helper — performs the actual recording→note link: sets MacWhisper
@@ -22,8 +25,9 @@ async function performLink(opts: {
 	transcriptFolderPath: string;
 	attendees: EventAttendee[];
 	isRecurring: boolean;
+	onStatus?: OnStatus;
 }): Promise<boolean> {
-	const {app, sessionId, recordingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring} = opts;
+	const {app, sessionId, recordingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, onStatus} = opts;
 
 	// Write session ID to note frontmatter
 	try {
@@ -36,26 +40,25 @@ async function performLink(opts: {
 	// Phase 2: Create transcript file in background (fire-and-forget)
 	// Polls for transcript lines in case MacWhisper is still transcribing.
 	void (async () => {
-		const notice = new Notice("Recording linked \u2014 creating transcript\u2026", 0);
+		onStatus?.("Linking recording\u2026");
 		try {
 			// Wait for MacWhisper transcription to finish
 			const TRANSCRIPTION_POLL_INTERVAL_MS = 3000;
 			const TRANSCRIPTION_MAX_ATTEMPTS = 60; // ~3 minutes
 			let ready = await hasTranscriptLines(sessionId);
 			if (!ready) {
-				notice.setMessage("Waiting for MacWhisper transcription\u2026");
+				onStatus?.("Waiting for transcription\u2026");
 				for (let i = 0; i < TRANSCRIPTION_MAX_ATTEMPTS && !ready; i++) {
 					await sleep(TRANSCRIPTION_POLL_INTERVAL_MS);
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {
-					notice.setMessage("Transcription still in progress \u2014 try linking again later");
-					setTimeout(() => notice.hide(), 6000);
+					onStatus?.("Transcription in progress \u2014 try again later", "alert-circle", 6000, "warning");
 					return;
 				}
 			}
 
-			notice.setMessage("Creating transcript\u2026");
+			onStatus?.("Creating transcript\u2026");
 			const transcriptPath = await createTranscriptFile({
 				app,
 				notePath,
@@ -68,15 +71,14 @@ async function performLink(opts: {
 				isRecurring,
 			});
 			if (transcriptPath) {
-				notice.setMessage("Recording & transcript linked to note");
+				onStatus?.("Recording linked", "check", 4000, "done");
 			} else {
-				notice.setMessage("Recording linked to note");
+				onStatus?.("Linked (no transcript)", "check", 4000, "done");
 			}
 		} catch (err) {
 			console.error("[WhisperCal] Transcript creation failed:", err);
-			notice.setMessage("Transcript creation failed");
+			onStatus?.("Transcript creation failed", "alert-circle", 6000, "warning");
 		}
-		setTimeout(() => notice.hide(), 4000);
 	})();
 
 	return true;
@@ -98,8 +100,9 @@ export async function linkRecording(opts: {
 	attendees: EventAttendee[];
 	isRecurring: boolean;
 	windowMinutes?: number;
+	onStatus?: OnStatus;
 }): Promise<boolean> {
-	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, windowMinutes} = opts;
+	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, windowMinutes, onStatus} = opts;
 
 	const allRecordings = await findRecordingsNear(meetingStart, windowMinutes);
 
@@ -127,6 +130,7 @@ export async function linkRecording(opts: {
 		transcriptFolderPath,
 		attendees,
 		isRecurring,
+		onStatus,
 	});
 }
 
@@ -143,6 +147,7 @@ export async function linkKnownRecording(opts: {
 	transcriptFolderPath: string;
 	attendees?: EventAttendee[];
 	isRecurring?: boolean;
+	onStatus?: OnStatus;
 }): Promise<boolean> {
 	return performLink({
 		...opts,

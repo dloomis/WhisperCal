@@ -5,7 +5,7 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMA
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
-import {summarizeJobs, speakerTagJobs, researchJobs} from "./state";
+import {summarizeJobs, speakerTagJobs, researchJobs, cardStatus, type CardStatusVariant} from "./state";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
@@ -23,6 +23,17 @@ import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFac
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
+
+/** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
+function formatModelName(modelId: string): string {
+	if (!modelId) return "";
+	const match = modelId.match(/^claude-(\w+)-(\d+)-(\d+)/);
+	if (match) {
+		const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1);
+		return `${family} ${match[2]}.${match[3]}`;
+	}
+	return modelId;
+}
 
 interface PluginData extends WhisperCalSettings {
 	// Legacy single token cache (migrated on load)
@@ -467,8 +478,11 @@ export default class WhisperCalPlugin extends Plugin {
 		this.runLlmJob({
 			jobSet: speakerTagJobs,
 			filePath: transcriptPath,
-			label: "Speaker tagging",
+			label: "Tagging speakers",
 			promptPath: this.settings.speakerTaggingPromptPath,
+			cardIcon: "users-round",
+			cardModel: this.settings.speakerTagModel || undefined,
+			cardNotePath: notePath,
 			spawnOpts: (vaultPath) => ({
 				targetPath: transcriptPath,
 				targetLabel: "Transcript",
@@ -537,7 +551,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// Directly update meeting note pipeline_state rather than
 				// waiting for the async metadataCache mirror event.
 				await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
-				new Notice("Speaker tags applied");
+				this.setCardStatus(notePath, "Speakers tagged", "check", 4000, "done");
 
 				// Auto-summarize if enabled
 				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
@@ -584,8 +598,10 @@ export default class WhisperCalPlugin extends Plugin {
 		this.runLlmJob({
 			jobSet: summarizeJobs,
 			filePath: notePath,
-			label: "Summarization",
+			label: "Summarizing",
 			promptPath: this.settings.summarizerPromptPath,
+			cardIcon: "sparkles",
+			cardModel: this.settings.summarizerModel || undefined,
 			onRegister: () => this.updateSummarizeBanners(notePath),
 			onCleanup: () => this.updateSummarizeBanners(notePath),
 			spawnOpts: (vaultPath) => ({
@@ -604,7 +620,7 @@ export default class WhisperCalPlugin extends Plugin {
 					if (!this.app.vault.getAbstractFileByPath(notePath)) {
 						new Notice("Meeting note was deleted while summarization was running");
 					} else {
-						new Notice("Summarization complete");
+						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done");
 					}
 				} else {
 					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -645,8 +661,10 @@ export default class WhisperCalPlugin extends Plugin {
 			this.runLlmJob({
 				jobSet: researchJobs,
 				filePath: notePath,
-				label: "Research",
+				label: "Researching",
 				promptPath: result.bypassPrompt ? undefined : this.settings.researchPromptPath,
+				cardIcon: "book-open",
+				cardModel: this.settings.researchModel || undefined,
 				spawnOpts: (vaultPath) => ({
 					targetPath: notePath,
 					targetLabel: "Meeting note",
@@ -668,7 +686,7 @@ export default class WhisperCalPlugin extends Plugin {
 						if (!this.app.vault.getAbstractFileByPath(notePath)) {
 							new Notice("Meeting note was deleted while research was running");
 						} else {
-							new Notice("Research complete");
+							this.setCardStatus(notePath, "Research complete", "check", 4000, "done");
 						}
 					} else {
 						const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -692,6 +710,12 @@ export default class WhisperCalPlugin extends Plugin {
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void;
 		onRegister?: () => void;
 		onCleanup?: () => void;
+		/** Icon for card status (e.g. "sparkles", "users-round", "book-open") */
+		cardIcon?: string;
+		/** Model ID for card status suffix (e.g. "claude-opus-4-6") */
+		cardModel?: string;
+		/** Note path for card status (defaults to filePath) */
+		cardNotePath?: string;
 	}): void {
 		const {jobSet, filePath, label, promptPath} = opts;
 
@@ -713,7 +737,15 @@ export default class WhisperCalPlugin extends Plugin {
 		// Register job synchronously before any async work
 		jobSet.add(filePath);
 		this.activeLlmCount++;
-		this.refreshCalendarCards(filePath);
+
+		// Set in-progress card status
+		const statusNotePath = opts.cardNotePath ?? filePath;
+		if (opts.cardIcon) {
+			const modelSuffix = opts.cardModel ? ` (${formatModelName(opts.cardModel)})` : "";
+			this.setCardStatus(statusNotePath, `${label}${modelSuffix}\u2026`, opts.cardIcon, 0, "progress");
+		} else {
+			this.refreshCalendarCards(filePath);
+		}
 		opts.onRegister?.();
 
 		void (async () => {
@@ -735,8 +767,6 @@ export default class WhisperCalPlugin extends Plugin {
 					}
 				}
 
-				new Notice(`${label} started`);
-
 				const result = await spawnLlmPrompt(opts.spawnOpts(vaultPath));
 
 				if (this.settings.llmDebugMode) {
@@ -757,6 +787,19 @@ export default class WhisperCalPlugin extends Plugin {
 				opts.onCleanup?.();
 			}
 		})();
+	}
+
+	private setCardStatus(notePath: string, message: string, icon?: string, durationMs = 4000, variant?: CardStatusVariant): void {
+		cardStatus.set(notePath, {message, icon, variant});
+		this.refreshCalendarCards(notePath);
+		if (durationMs > 0) {
+			setTimeout(() => {
+				if (cardStatus.get(notePath)?.message === message) {
+					cardStatus.delete(notePath);
+					this.refreshCalendarCards(notePath);
+				}
+			}, durationMs);
+		}
 	}
 
 	private refreshCalendarCards(filePath?: string): void {
@@ -875,6 +918,14 @@ export default class WhisperCalPlugin extends Plugin {
 			attendees,
 			isRecurring,
 			windowMinutes: isUnscheduled ? 720 : undefined,
+			onStatus: (msg, icon, autoClearMs, variant) => {
+				if (msg) {
+					this.setCardStatus(file.path, msg, icon, autoClearMs ?? 0, variant);
+				} else {
+					cardStatus.delete(file.path);
+					this.refreshCalendarCards(file.path);
+				}
+			},
 		});
 	}
 

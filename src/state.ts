@@ -26,3 +26,8 @@ export interface RecordingInfo {
 
 /** Active API recording: notePath → recording info. Only one recording at a time. */
 export const recordingState = new Map<string, RecordingInfo>();
+
+export type CardStatusVariant = "progress" | "recording" | "done" | "warning";
+
+/** Transient status messages displayed on meeting cards, keyed by notePath. */
+export const cardStatus = new Map<string, { message: string; icon?: string; variant?: CardStatusVariant }>();
