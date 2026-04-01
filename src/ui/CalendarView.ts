@@ -835,14 +835,6 @@ export class CalendarView extends ItemView {
 		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
 		meta.createSpan({text: parts.join(" \u00B7 ")});
 
-		if (recording.transcriptPath) {
-			const viewBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
-			viewBtn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
-			});
-		}
-
 		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {
 			linkBtn.disabled = true;
@@ -850,6 +842,14 @@ export class CalendarView extends ItemView {
 				linkBtn.disabled = false;
 			});
 		});
+
+		if (recording.transcriptPath) {
+			const viewBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
+			viewBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
+			});
+		}
 	}
 
 	private async handleLinkUnlinked(recording: UnlinkedRecording, card: HTMLElement): Promise<void> {
