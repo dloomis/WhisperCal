@@ -321,7 +321,7 @@
 	display: flex;
 	align-items: flex-start;
 	flex-wrap: wrap;
-	gap: 6px;
+	gap: 4px;
 	margin-top: 10px;
 }
 
@@ -988,7 +988,7 @@
 
 .whisper-cal-unlinked-btns {
 	display: flex;
-	gap: 6px;
+	gap: 4px;
 }
 
 /* NameInputModal */
