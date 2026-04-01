@@ -835,7 +835,9 @@ export class CalendarView extends ItemView {
 		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
 		meta.createSpan({text: parts.join(" \u00B7 ")});
 
-		const linkBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
+		const btns = meta.createSpan({cls: "whisper-cal-unlinked-btns"});
+
+		const linkBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {
 			linkBtn.disabled = true;
 			void this.handleLinkUnlinked(recording, card).finally(() => {
@@ -844,7 +846,7 @@ export class CalendarView extends ItemView {
 		});
 
 		if (recording.transcriptPath) {
-			const viewBtn = meta.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
+			const viewBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
 			viewBtn.addEventListener("click", (e) => {
 				e.stopPropagation();
 				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);

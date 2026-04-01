@@ -986,6 +986,11 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.whisper-cal-unlinked-btns {
+	display: flex;
+	gap: 6px;
+}
+
 /* NameInputModal */
 .whisper-cal-name-input {
 	width: 100%;
