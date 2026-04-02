@@ -204,6 +204,7 @@
 	align-items: center;
 	gap: 3px;
 	margin-top: 4px;
+	width: 100%;
 }
 
 .whisper-cal-card-gutter-organizer {
@@ -290,6 +291,7 @@
 	flex: 1;
 	min-width: 0;
 	padding: 12px;
+	background: var(--background-primary);
 }
 
 .whisper-cal-card-subject-row {
@@ -325,27 +327,24 @@
 	margin-top: 10px;
 }
 
-/* Collapse toggle in gutter */
+/* Collapse toggle in gutter icon row */
 .whisper-cal-card-toggle {
-	margin-top: auto;
+	margin-left: auto;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
-	color: var(--text-faint);
-	opacity: 0.4;
-	transition: color 150ms ease, opacity 150ms ease;
-	padding: 4px 0;
+	color: var(--text-muted);
+	transition: color 150ms ease;
 }
 
 .whisper-cal-card-toggle:hover {
-	color: var(--text-muted);
-	opacity: 1;
+	color: var(--text-normal);
 }
 
 .whisper-cal-card-toggle .svg-icon {
-	width: 12px;
-	height: 12px;
+	width: 14px;
+	height: 14px;
 	transition: transform 200ms ease-out;
 	transform: rotate(90deg);
 }

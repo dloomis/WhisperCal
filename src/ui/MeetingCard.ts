@@ -67,7 +67,7 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	return btn;
 }
 
-function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): {gutter: HTMLElement; timeDiv: HTMLElement | null} {
+function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): {gutter: HTMLElement; timeDiv: HTMLElement | null; iconRow: HTMLElement} {
 	const notAccepted = !event.isOrganizer && event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
 	const gutterCls = notAccepted
 		? "whisper-cal-card-gutter whisper-cal-card-gutter-tentative"
@@ -112,23 +112,20 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	const isImportantOrganizer = importantEmails.length > 0
 		&& event.organizerEmail
 		&& importantEmails.includes(event.organizerEmail.toLowerCase());
-	const hasIcons = event.isOrganizer || isImportantOrganizer;
+	// Icon row — always created; holds optional status icons + collapse toggle
+	const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
 
-	if (hasIcons) {
-		const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
-
-		if (event.isOrganizer) {
-			const starEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-organizer", attr: {"aria-label": "You are the organizer"}});
-			setIcon(starEl, "star");
-		}
-
-		if (isImportantOrganizer) {
-			const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
-			setIcon(importantEl, "octagon-alert");
-		}
+	if (event.isOrganizer) {
+		const starEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-organizer", attr: {"aria-label": "You are the organizer"}});
+		setIcon(starEl, "star");
 	}
 
-	return {gutter, timeDiv: timeDivRef};
+	if (isImportantOrganizer) {
+		const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
+		setIcon(importantEl, "octagon-alert");
+	}
+
+	return {gutter, timeDiv: timeDivRef, iconRow};
 }
 
 function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
@@ -289,7 +286,7 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	const {gutter} = renderGutter(card, event, timezone, opts);
+	const {gutter, iconRow} = renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
 	// Subject
@@ -346,10 +343,11 @@ export function renderMeetingCard(
 		return card;
 	}
 
-	// Collapse toggle in gutter — expands/collapses the action pill bar
-	const toggle = gutter.createDiv({
+	// Collapse toggle — appended to the gutter icon row, pushed right (default: collapsed)
+	card.addClass("whisper-cal-card-collapsed");
+	const toggle = iconRow.createDiv({
 		cls: "whisper-cal-card-toggle",
-		attr: {"aria-label": "Collapse actions"},
+		attr: {"aria-label": "Expand actions"},
 	});
 	setIcon(toggle, "chevron-right");
 	toggle.addEventListener("click", (e) => {
