@@ -1,7 +1,8 @@
 import {requestUrl} from "obsidian";
+import {createServer, type Server} from "http";
+import {createHash, randomBytes} from "crypto";
 import type {
 	TokenCache,
-	DeviceCodeResponse,
 	TokenResponse,
 	CloudInstance,
 } from "./AuthTypes";
@@ -9,18 +10,18 @@ import {CLOUD_ENDPOINTS} from "./AuthTypes";
 import {AuthError} from "./CalendarAuth";
 import {BaseCalendarAuth, type AuthCallbacks} from "./BaseCalendarAuth";
 
-const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
-
 interface MsalAuthConfig {
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
-	deviceLoginUrl?: string;
 }
+
+const LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class MsalAuth extends BaseCalendarAuth {
 	private config: MsalAuthConfig;
-	private abortController: AbortController | null = null;
+	private server: Server | null = null;
+	private loopbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(config: MsalAuthConfig, callbacks: AuthCallbacks) {
 		super(callbacks);
@@ -32,7 +33,6 @@ export class MsalAuth extends BaseCalendarAuth {
 			tenantId: config["tenantId"] ?? "",
 			clientId: config["clientId"] ?? "",
 			cloudInstance: (config["cloudInstance"] ?? "Public") as CloudInstance,
-			deviceLoginUrl: config["deviceLoginUrl"],
 		};
 	}
 
@@ -53,114 +53,101 @@ export class MsalAuth extends BaseCalendarAuth {
 			return;
 		}
 
-		this.abortController = new AbortController();
+		// Generate PKCE challenge and CSRF state
+		const codeVerifier = randomBytes(32).toString("base64url");
+		const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+		const oauthState = randomBytes(16).toString("base64url");
 		const endpoints = CLOUD_ENDPOINTS[cloudInstance];
 
 		try {
-			// Step 1: Request device code
+			// Start loopback server on random port
+			const {port, code: codePromise} = await this.startLoopbackServer(oauthState);
+			const redirectUri = `http://localhost:${port}`;
+
+			// Build auth URL and open in browser
 			const scopes = this.getScopes();
-			const deviceCodeUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/devicecode`;
-			const dcResponse = await requestUrl({
-				url: deviceCodeUrl,
-				method: "POST",
-				headers: {"Content-Type": "application/x-www-form-urlencoded"},
-				body: new URLSearchParams({client_id: clientId, scope: scopes}).toString(),
+			const params = new URLSearchParams({
+				client_id: clientId,
+				response_type: "code",
+				redirect_uri: redirectUri,
+				scope: scopes,
+				code_challenge: codeChallenge,
+				code_challenge_method: "S256",
+				state: oauthState,
+				prompt: "select_account",
 			});
-			const deviceCode = dcResponse.json as DeviceCodeResponse;
+			const authUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/authorize?${params.toString()}`;
 
-			const loginUrl = this.config.deviceLoginUrl?.trim() || endpoints.deviceLoginUrl;
-			this.setState({
-				status: "signing-in",
-				userCode: deviceCode.user_code,
-				verificationUri: loginUrl,
-			});
+			this.setState({status: "signing-in", message: "Complete sign-in in your browser\u2026"});
 
-			// Step 2: Poll for token
-			const intervalMs = (deviceCode.interval || 5) * 1000;
-			const expiresAt = Date.now() + deviceCode.expires_in * 1000;
-			const tokenUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/token`;
-
-			while (Date.now() < expiresAt) {
-				if (this.abortController?.signal.aborted) {
-					this.setState({status: "signed-out"});
-					return;
-				}
-
-				await this.sleep(intervalMs);
-
-				if (this.abortController?.signal.aborted) {
-					this.setState({status: "signed-out"});
-					return;
-				}
-
-				// Use throw:false so we can inspect status codes directly
-				// instead of parsing opaque error objects from requestUrl
-				const tokenResponse = await requestUrl({
-					url: tokenUrl,
-					method: "POST",
-					headers: {"Content-Type": "application/x-www-form-urlencoded"},
-					body: new URLSearchParams({
-						grant_type: DEVICE_CODE_GRANT_TYPE,
-						client_id: clientId,
-						device_code: deviceCode.device_code,
-					}).toString(),
-					throw: false,
-				});
-
-				const token = tokenResponse.json as TokenResponse;
-
-				if (token.error) {
-					if (token.error === "authorization_pending") {
-						continue;
-					}
-					if (token.error === "slow_down") {
-						await this.sleep(5000);
-						continue;
-					}
-					console.error("[WhisperCal] Token poll error:", tokenResponse.status, token.error, token.error_description);
-					throw new AuthError(
-						token.error_description ?? token.error,
-						"AUTH_FAILED"
-					);
-				}
-
-				if (tokenResponse.status !== 200) {
-					console.error("[WhisperCal] Token poll unexpected status:", tokenResponse.status, tokenResponse.text);
-					continue; // retry on unexpected status
-				}
-
-				// Success
-				if (!token.refresh_token) {
-					throw new AuthError(
-						"Microsoft did not return a refresh token. Your tenant may require admin consent for offline_access.",
-						"AUTH_FAILED",
-					);
-				}
-				await this.saveToken({
-					accessToken: token.access_token,
-					refreshToken: token.refresh_token,
-					expiresAt: Date.now() + token.expires_in * 1000,
-				});
-				this.setState({status: "signed-in"});
+			// Open the browser using Electron shell
+			try {
+				// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
+				const electron = require("electron") as {shell: {openExternal(url: string): Promise<void>}};
+				void electron.shell.openExternal(authUrl);
+			} catch {
+				this.setState({status: "error", message: "Failed to open browser \u2014 Electron not available"});
 				return;
 			}
 
-			this.setState({status: "error", message: "Device code expired. Please try again."});
-		} catch (e) {
-			if (this.abortController?.signal.aborted) {
+			// Wait for the auth code from the redirect
+			const authCode = await codePromise;
+			if (!authCode) {
+				// Cancelled or timed out
 				this.setState({status: "signed-out"});
 				return;
 			}
-			const message = e instanceof Error ? e.message : "Authentication failed.";
-			this.setState({status: "error", message});
+
+			// Exchange code for tokens
+			const tokenUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/token`;
+			const response = await requestUrl({
+				url: tokenUrl,
+				method: "POST",
+				headers: {"Content-Type": "application/x-www-form-urlencoded"},
+				body: new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: clientId,
+					code: authCode,
+					redirect_uri: redirectUri,
+					code_verifier: codeVerifier,
+				}).toString(),
+			});
+
+			const token = response.json as TokenResponse;
+
+			if (token.error) {
+				throw new AuthError(
+					token.error_description ?? token.error,
+					"AUTH_FAILED",
+				);
+			}
+			if (!token.refresh_token) {
+				throw new AuthError(
+					"Microsoft did not return a refresh token. Your tenant may require admin consent for offline_access.",
+					"AUTH_FAILED",
+				);
+			}
+
+			await this.saveToken({
+				accessToken: token.access_token,
+				refreshToken: token.refresh_token,
+				expiresAt: Date.now() + token.expires_in * 1000,
+			});
+			this.setState({status: "signed-in"});
+		} catch (e) {
+			if (e instanceof AuthError) {
+				this.setState({status: "error", message: e.message});
+			} else {
+				const message = e instanceof Error ? e.message : "Authentication failed.";
+				this.setState({status: "error", message});
+			}
 		} finally {
-			this.abortController = null;
+			this.stopLoopbackServer();
 		}
 	}
 
 	cancelSignIn(): void {
-		this.abortController?.abort();
-		this.abortController = null;
+		this.stopLoopbackServer();
 	}
 
 	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
@@ -195,13 +182,65 @@ export class MsalAuth extends BaseCalendarAuth {
 		};
 	}
 
-	private sleep(ms: number): Promise<void> {
-		return new Promise((resolve) => {
-			const timer = window.setTimeout(resolve, ms);
-			this.abortController?.signal.addEventListener("abort", () => {
-				window.clearTimeout(timer);
-				resolve();
-			}, {once: true});
+	private startLoopbackServer(expectedState: string): Promise<{port: number; code: Promise<string | null>}> {
+		return new Promise((resolveStart, rejectStart) => {
+			let resolveCode: (code: string | null) => void;
+			const codePromise = new Promise<string | null>((r) => { resolveCode = r; });
+
+			const server = createServer((req, res) => {
+				const url = new URL(req.url ?? "", "http://127.0.0.1");
+				const code = url.searchParams.get("code");
+				const error = url.searchParams.get("error");
+				const state = url.searchParams.get("state");
+
+				if (state !== expectedState) {
+					res.writeHead(400, {"Content-Type": "text/plain"});
+					res.end("Sign-in failed: invalid state parameter");
+					return;
+				}
+
+				if (code) {
+					res.writeHead(200, {"Content-Type": "text/html"});
+					res.end("<html><body><h2>Sign-in complete</h2><p>You can close this tab and return to Obsidian.</p></body></html>");
+					resolveCode(code);
+				} else {
+					const msg = error ?? "No authorization code received.";
+					res.writeHead(400, {"Content-Type": "text/plain"});
+					res.end(`Sign-in failed: ${msg}`);
+					resolveCode(null);
+				}
+			});
+
+			server.on("error", (e) => {
+				rejectStart(e);
+			});
+
+			// Listen on random port on loopback
+			server.listen(0, "127.0.0.1", () => {
+				const addr = server.address();
+				if (!addr || typeof addr === "string") {
+					rejectStart(new Error("Failed to start loopback server"));
+					return;
+				}
+				this.server = server;
+				// Time out after 5 minutes if the user doesn't complete the flow
+				this.loopbackTimer = setTimeout(() => {
+					resolveCode(null);
+					this.stopLoopbackServer();
+				}, LOOPBACK_TIMEOUT_MS);
+				resolveStart({port: addr.port, code: codePromise});
+			});
 		});
+	}
+
+	private stopLoopbackServer(): void {
+		if (this.loopbackTimer) {
+			clearTimeout(this.loopbackTimer);
+			this.loopbackTimer = null;
+		}
+		if (this.server) {
+			this.server.close();
+			this.server = null;
+		}
 	}
 }

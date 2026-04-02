@@ -28,7 +28,6 @@ export function createCalendarStack(
 				tenantId: settings.tenantId,
 				clientId: settings.clientId,
 				cloudInstance: settings.cloudInstance,
-				deviceLoginUrl: settings.deviceLoginUrl,
 			},
 			callbacks,
 		);
@@ -59,7 +58,6 @@ export function getAuthConfig(type: CalendarProviderType, settings: WhisperCalSe
 			tenantId: settings.tenantId,
 			clientId: settings.clientId,
 			cloudInstance: settings.cloudInstance,
-			deviceLoginUrl: settings.deviceLoginUrl,
 		};
 	case "google":
 		return {

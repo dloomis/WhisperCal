@@ -390,28 +390,10 @@ export class CalendarView extends ItemView {
 		}
 		case "signing-in": {
 			this.authStatusEl.removeClass("whisper-cal-hidden");
-			if (state.userCode && state.verificationUri) {
-				// Microsoft Device Code Flow — show code + link
-				this.authStatusEl.createDiv({
-					cls: "whisper-cal-auth-label",
-					text: "Enter this code in your browser:",
-				});
-				const codeEl = this.authStatusEl.createDiv({cls: "whisper-cal-device-code"});
-				codeEl.setText(state.userCode);
-				const linkEl = this.authStatusEl.createEl("a", {
-					cls: "whisper-cal-auth-link",
-					text: state.verificationUri,
-					href: state.verificationUri,
-				});
-				linkEl.setAttr("target", "_blank");
-				linkEl.setAttr("rel", "noopener");
-			} else {
-				// Google loopback flow
-				this.authStatusEl.createDiv({
-					cls: "whisper-cal-auth-label",
-					text: state.message ?? "Signing in\u2026",
-				});
-			}
+			this.authStatusEl.createDiv({
+				cls: "whisper-cal-auth-label",
+				text: state.message ?? "Signing in\u2026",
+			});
 			this.authStatusEl.createDiv({
 				cls: "whisper-cal-auth-hint",
 				text: "Waiting for authorization\u2026",

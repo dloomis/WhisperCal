@@ -1,7 +1,7 @@
 import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
-import {CLOUD_INSTANCE_OPTIONS, CLOUD_ENDPOINTS} from "./services/AuthTypes";
+import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
 import type {CalendarProviderType} from "./types";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
@@ -24,7 +24,6 @@ export interface WhisperCalSettings {
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
-	deviceLoginUrl: string;
 	// Google-specific
 	googleClientId: string;
 	googleClientSecret: string;
@@ -67,7 +66,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	tenantId: "",
 	clientId: "",
 	cloudInstance: "Public",
-	deviceLoginUrl: "",
 	googleClientId: "",
 	googleClientSecret: "",
 	peopleFolderPath: "",
@@ -731,8 +729,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.debouncedSave();
 				}));
 
-		let deviceLoginUrlInput: import("obsidian").TextComponent | null = null;
-
 		new Setting(containerEl)
 			.setName("Cloud instance")
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -743,31 +739,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}
 				dropdown.setValue(this.plugin.settings.cloudInstance);
 				dropdown.onChange(async (value) => {
-					const oldDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
 					this.plugin.settings.cloudInstance = value as CloudInstance;
-					const newDefault = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
-					const current = this.plugin.settings.deviceLoginUrl.trim();
-					if (!current || current === oldDefault) {
-						this.plugin.settings.deviceLoginUrl = "";
-						deviceLoginUrlInput?.setValue("");
-					}
-					deviceLoginUrlInput?.setPlaceholder(newDefault);
 					await this.plugin.saveSettings();
 				});
-			});
-
-		new Setting(containerEl)
-			.setName("Device login URL")
-			.setDesc("Override the device code login URL. Leave empty to use the cloud default.")
-			.addText(text => {
-				deviceLoginUrlInput = text;
-				const defaultUrl = CLOUD_ENDPOINTS[this.plugin.settings.cloudInstance].deviceLoginUrl;
-				text.setPlaceholder(defaultUrl)
-					.setValue(this.plugin.settings.deviceLoginUrl)
-					.onChange(async (value) => {
-						this.plugin.settings.deviceLoginUrl = value.trim();
-						this.debouncedSave();
-					});
 			});
 	}
 
@@ -1004,36 +978,14 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			break;
 		}
 		case "signing-in": {
-			if (state.userCode && state.verificationUri) {
-				// Microsoft Device Code Flow
-				statusContainer.createDiv({
-					cls: "whisper-cal-auth-label",
-					text: "Sign in: enter this code in your browser",
-				});
-				const codeEl = statusContainer.createDiv({cls: "whisper-cal-device-code"});
-				codeEl.setText(state.userCode);
-				const linkEl = statusContainer.createEl("a", {
-					cls: "whisper-cal-auth-link",
-					text: state.verificationUri,
-					href: state.verificationUri,
-				});
-				linkEl.setAttr("target", "_blank");
-				linkEl.setAttr("rel", "noopener");
-				statusContainer.createDiv({
-					cls: "whisper-cal-auth-hint",
-					text: "Waiting for authorization\u2026",
-				});
-			} else {
-				// Google loopback flow (or generic)
-				statusContainer.createDiv({
-					cls: "whisper-cal-auth-label",
-					text: state.message ?? "Signing in\u2026",
-				});
-				statusContainer.createDiv({
-					cls: "whisper-cal-auth-hint",
-					text: "Waiting for authorization\u2026",
-				});
-			}
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-label",
+				text: state.message ?? "Signing in\u2026",
+			});
+			statusContainer.createDiv({
+				cls: "whisper-cal-auth-hint",
+				text: "Waiting for authorization\u2026",
+			});
 			const cancelBtn = statusContainer.createEl("button", {
 				cls: "whisper-cal-btn whisper-cal-btn-secondary",
 				text: "Cancel",
