@@ -927,7 +927,7 @@
 }
 
 .whisper-cal-card-status.whisper-cal-card-status-recording {
-	color: #e53935;
+	color: var(--text-muted);
 	animation: none;
 }
 
