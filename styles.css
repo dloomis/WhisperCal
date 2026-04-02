@@ -291,7 +291,7 @@
 	flex: 1;
 	min-width: 0;
 	padding: 12px;
-	background: var(--background-primary);
+	background: var(--background-secondary-alt);
 }
 
 .whisper-cal-card-subject-row {
