@@ -63,8 +63,8 @@ export class SpeakerTagModal extends Modal {
 		if (secondFence < 0) return map;
 		const body = content.slice(secondFence + 3);
 
-		// Match block starts: **Speaker Name** [HH:MM:SS] or **Speaker Name** (HH:MM:SS)
-		const re = /^\*\*(.+?)\*\*\s*[[(][\d:]+[\])]/gm;
+		// Match any line starting with a bold speaker label — format-agnostic
+		const re = /^\*\*(.+?)\*\*/gm;
 		const starts: {name: string; pos: number}[] = [];
 		let m: RegExpExecArray | null;
 		while ((m = re.exec(body)) !== null) {
