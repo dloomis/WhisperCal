@@ -289,7 +289,7 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	renderGutter(card, event, timezone, opts);
+	const {gutter} = renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
 	// Subject
@@ -345,6 +345,18 @@ export function renderMeetingCard(
 		});
 		return card;
 	}
+
+	// Collapse toggle in gutter — expands/collapses the action pill bar
+	const toggle = gutter.createDiv({
+		cls: "whisper-cal-card-toggle",
+		attr: {"aria-label": "Collapse actions"},
+	});
+	setIcon(toggle, "chevron-right");
+	toggle.addEventListener("click", (e) => {
+		e.stopPropagation();
+		const nowCollapsed = card.classList.toggle("whisper-cal-card-collapsed");
+		toggle.ariaLabel = nowCollapsed ? "Expand actions" : "Collapse actions";
+	});
 
 	// Dynamic zone — rebuilt in-place on card updates without touching static content
 	const dynamicZone = content.createDiv({cls: "whisper-cal-card-dynamic"});
@@ -420,8 +432,9 @@ function renderCardDynamic(
 		}
 	}
 
-	// Actions row
-	const actions = zone.createDiv({cls: "whisper-cal-card-actions"});
+	// Actions row (wrapped for collapse animation)
+	const actionsWrap = zone.createDiv({cls: "whisper-cal-card-actions-wrap"});
+	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Note pill
 	const notePill = renderPill(actions, "file-plus-2", "Note", states.note);
