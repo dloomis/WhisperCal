@@ -926,7 +926,7 @@
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
 }
 
-.whisper-cal-card-status-recording {
+.whisper-cal-card-status.whisper-cal-card-status-recording {
 	color: #e53935;
 	animation: none;
 }
