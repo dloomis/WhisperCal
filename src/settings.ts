@@ -706,7 +706,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Tenant ID")
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Directory (tenant) ID from your Azure AD app registration")
+			.setDesc("Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.")
 			.addText(text => text
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")

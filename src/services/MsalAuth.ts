@@ -47,9 +47,10 @@ export class MsalAuth extends BaseCalendarAuth {
 	}
 
 	async startSignIn(): Promise<void> {
-		const {tenantId, clientId, cloudInstance} = this.config;
-		if (!tenantId || !clientId) {
-			this.setState({status: "error", message: "Tenant ID and Client ID are required."});
+		const {clientId, cloudInstance} = this.config;
+		const tenantId = this.config.tenantId || "organizations";
+		if (!clientId) {
+			this.setState({status: "error", message: "Client ID is required."});
 			return;
 		}
 
@@ -151,7 +152,8 @@ export class MsalAuth extends BaseCalendarAuth {
 	}
 
 	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
-		const {tenantId, clientId, cloudInstance} = this.config;
+		const {clientId, cloudInstance} = this.config;
+		const tenantId = this.config.tenantId || "organizations";
 		const endpoints = CLOUD_ENDPOINTS[cloudInstance];
 		const tokenUrl = `${endpoints.authority}/${tenantId}/oauth2/v2.0/token`;
 
