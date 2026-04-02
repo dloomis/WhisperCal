@@ -31,8 +31,9 @@ export class SpeakerTagModal extends Modal {
 	private people: PersonEntry[] = [];
 	private microphoneUser: string;
 	private micMappings: ProposedSpeakerMapping[] = [];
+	private speakerBlocks: Map<string, string[]>;
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, microphoneUser: string) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, microphoneUser: string, transcriptContent: string) {
 		super(app);
 		this.microphoneUser = microphoneUser;
 		// Keep original index order so speakers appear in transcript sequence
@@ -49,6 +50,53 @@ export class SpeakerTagModal extends Modal {
 		this.meetingSubtitle = subtitle;
 		this.peopleFolderPath = peopleFolderPath;
 		this.people = this.buildPeopleList();
+		this.speakerBlocks = this.parseSpeakerBlocks(transcriptContent);
+	}
+
+	/** Parse transcript body into per-speaker blocks for the excerpt panel. */
+	private parseSpeakerBlocks(content: string): Map<string, string[]> {
+		const map = new Map<string, string[]>();
+		// Strip YAML frontmatter
+		const firstFence = content.indexOf("---");
+		if (firstFence < 0) return map;
+		const secondFence = content.indexOf("---", firstFence + 3);
+		if (secondFence < 0) return map;
+		const body = content.slice(secondFence + 3);
+
+		// Match block starts: **Speaker Name** [HH:MM:SS]
+		const re = /^\*\*(.+?)\*\*\s*\[[\d:]+\]/gm;
+		const starts: {name: string; pos: number}[] = [];
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(body)) !== null) {
+			starts.push({name: m[1]!, pos: m.index});
+		}
+
+		for (let i = 0; i < starts.length; i++) {
+			const {name, pos} = starts[i]!;
+			const end = i + 1 < starts.length ? starts[i + 1]!.pos : body.length;
+			const block = body.slice(pos, end).trim();
+			if (!map.has(name)) map.set(name, []);
+			map.get(name)!.push(block);
+		}
+
+		return map;
+	}
+
+	/** Render transcript blocks into the excerpt panel, stripping the bold speaker prefix. */
+	private renderExcerpt(container: HTMLElement, blocks: string[]): void {
+		for (const block of blocks) {
+			const lines = block.split("\n");
+			const firstLine = lines[0] ?? "";
+			// Strip leading **Speaker Name** to show just the timestamp
+			const stripped = firstLine.replace(/^\*\*.+?\*\*\s*/, "");
+			const bodyLines = lines.slice(1).join("\n").trim();
+
+			const blockEl = container.createDiv({cls: "whisper-cal-excerpt-block"});
+			blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
+			if (bodyLines) {
+				blockEl.createDiv({cls: "whisper-cal-excerpt-text", text: bodyLines});
+			}
+		}
 	}
 
 	private buildPeopleList(): PersonEntry[] {
@@ -86,10 +134,29 @@ export class SpeakerTagModal extends Modal {
 		const rows = contentEl.createDiv({cls: "whisper-cal-speaker-tag-rows"});
 
 		for (const mapping of this.mappings) {
-			const row = rows.createDiv({cls: "whisper-cal-speaker-tag-row"});
+			const container = rows.createDiv({cls: "whisper-cal-speaker-tag-container"});
+			const row = container.createDiv({cls: "whisper-cal-speaker-tag-row"});
 
-			// Left: stub name + line count
+			// Left: disclosure toggle + stub name + line count
 			const left = row.createDiv({cls: "whisper-cal-speaker-tag-left"});
+
+			const blocks = this.speakerBlocks.get(mapping.originalName) ?? [];
+			const hasExcerpt = blocks.length > 0;
+
+			if (hasExcerpt) {
+				const toggle = left.createSpan({cls: "whisper-cal-speaker-tag-toggle is-collapsed"});
+				toggle.setAttribute("aria-label", "Show transcript lines");
+				const excerptEl = container.createDiv({cls: "whisper-cal-speaker-tag-excerpt whisper-cal-hidden"});
+				this.renderExcerpt(excerptEl, blocks);
+
+				const flipToggle = () => {
+					const hidden = excerptEl.hasClass("whisper-cal-hidden");
+					excerptEl.toggleClass("whisper-cal-hidden", !hidden);
+					toggle.toggleClass("is-collapsed", !hidden);
+				};
+				toggle.addEventListener("click", flipToggle);
+			}
+
 			left.createSpan({
 				cls: "whisper-cal-speaker-tag-stub",
 				text: mapping.originalName,

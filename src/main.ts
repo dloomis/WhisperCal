@@ -533,10 +533,12 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice(warning);
 		}
 
+		// Always read transcript content — needed for line-count enrichment and excerpt panel
+		const transcriptContent = await this.app.vault.cachedRead(transcriptFile);
+
 		// Enrich line counts from body text when frontmatter lacks them (e.g. Tome transcripts)
 		if (mappings.some(m => m.lineCount === 0)) {
-			const content = await this.app.vault.cachedRead(transcriptFile);
-			enrichLineCountsFromBody(mappings, content);
+			enrichLineCountsFromBody(mappings, transcriptContent);
 		}
 
 		// Queue the modal so parallel completions are presented one at a time.
@@ -549,7 +551,7 @@ export default class WhisperCalPlugin extends Plugin {
 					: {};
 				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
 				const subtitle = buildMeetingSubtitle(meetingFm);
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser, transcriptContent).prompt();
 				if (!decisions) {
 					clearProgressStatus();
 					return;
