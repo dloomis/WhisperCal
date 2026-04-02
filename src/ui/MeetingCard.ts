@@ -2,11 +2,11 @@ import {App, Notice, TFile, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
-import {formatTime, formatRecordingDuration} from "../utils/time";
+import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, type CardStatusVariant} from "../state";
+import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, expandedCards, recordingStartTime, type CardStatusVariant} from "../state";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
@@ -50,6 +50,30 @@ const stateLabels: Record<PillState, string> = {
 	disabled: " (locked)",
 	running: " (running)",
 };
+
+/** Module-level duration timers keyed by notePath. Cleaned up on stop or card rebuild. */
+const recDurationTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function stopDurationTimer(notePath: string): void {
+	const id = recDurationTimers.get(notePath);
+	if (id != null) {
+		clearInterval(id);
+		recDurationTimers.delete(notePath);
+	}
+}
+
+function startDurationTimer(notePath: string, textEl: HTMLElement): void {
+	stopDurationTimer(notePath);
+	const start = recordingStartTime.get(notePath) ?? Date.now();
+	const tick = () => {
+		if (!textEl.isConnected) { stopDurationTimer(notePath); return; }
+		const elapsed = formatElapsed((Date.now() - start) / 1000);
+		textEl.textContent = elapsed;
+		cardStatus.set(notePath, {message: elapsed, variant: "recording"});
+	};
+	tick();
+	recDurationTimers.set(notePath, setInterval(tick, 1000));
+}
 
 function renderPill(container: HTMLElement, icon: string, label: string, state: PillState): HTMLButtonElement {
 	const btn = container.createEl("button", {
@@ -343,17 +367,24 @@ export function renderMeetingCard(
 		return card;
 	}
 
-	// Collapse toggle — appended to the gutter icon row, pushed right (default: collapsed)
-	card.addClass("whisper-cal-card-collapsed");
+	// Collapse toggle — appended to the gutter icon row, pushed right
+	// Restore expand/collapse state across refreshes via module-level set
+	const isExpanded = expandedCards.has(opts.event.id);
+	if (!isExpanded) card.addClass("whisper-cal-card-collapsed");
 	const toggle = iconRow.createDiv({
 		cls: "whisper-cal-card-toggle",
-		attr: {"aria-label": "Expand actions"},
+		attr: {"aria-label": isExpanded ? "Collapse actions" : "Expand actions"},
 	});
 	setIcon(toggle, "chevron-right");
 	toggle.addEventListener("click", (e) => {
 		e.stopPropagation();
 		const nowCollapsed = card.classList.toggle("whisper-cal-card-collapsed");
 		toggle.ariaLabel = nowCollapsed ? "Expand actions" : "Collapse actions";
+		if (nowCollapsed) {
+			expandedCards.delete(opts.event.id);
+		} else {
+			expandedCards.add(opts.event.id);
+		}
 	});
 
 	// Dynamic zone — rebuilt in-place on card updates without touching static content
@@ -480,18 +511,24 @@ function renderCardDynamic(
 		};
 
 		const setRecording = () => {
-			cardStatus.set(notePath, {message: "Recording\u2026", variant: "recording"});
+			if (!recordingStartTime.has(notePath)) recordingStartTime.set(notePath, Date.now());
+			const start = recordingStartTime.get(notePath)!;
+			const elapsed = formatElapsed((Date.now() - start) / 1000);
+			cardStatus.set(notePath, {message: elapsed, variant: "recording"});
 			opts.onStatusUpdate?.();
 		};
 		const clearRecording = () => {
+			stopDurationTimer(notePath);
+			recordingStartTime.delete(notePath);
 			cardStatus.delete(notePath);
 			opts.onStatusUpdate?.();
 		};
 
 		if (states.record === "running") {
-			if (!cardStatus.has(notePath)) {
-				cardStatus.set(notePath, {message: "Recording\u2026", variant: "recording"});
-			}
+			if (!recordingStartTime.has(notePath)) recordingStartTime.set(notePath, Date.now());
+			const start = recordingStartTime.get(notePath)!;
+			const elapsed = formatElapsed((Date.now() - start) / 1000);
+			cardStatus.set(notePath, {message: elapsed, variant: "recording"});
 			addRecDot();
 		}
 		if (states.record === "complete") {
@@ -674,7 +711,11 @@ function renderCardDynamic(
 			const ico = statusEl.createSpan({cls: "whisper-cal-card-status-icon"});
 			setIcon(ico, cs.icon);
 		}
-		statusEl.createSpan({text: cs.message});
+		const textSpan = statusEl.createSpan({text: cs.message});
+		// Live duration counter — updates the text span directly every second
+		if (variant === "recording" && recordingStartTime.has(notePath)) {
+			startDurationTimer(notePath, textSpan);
+		}
 	}
 }
 

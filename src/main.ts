@@ -670,7 +670,7 @@ export default class WhisperCalPlugin extends Plugin {
 					targetLabel: "Meeting note",
 					vaultPath,
 					...(result.bypassPrompt
-						? {inlinePrompt: result.instructions}
+						? {inlinePrompt: `Read the meeting note and follow these instructions. Write your results back into the meeting note under a ## Research section (replace it if one already exists). Instructions: ${result.instructions}`}
 						: {promptPath: this.settings.researchPromptPath}),
 					llmCli: this.settings.llmCli,
 					llmExtraFlags: this.settings.llmExtraFlags,

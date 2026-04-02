@@ -31,3 +31,9 @@ export type CardStatusVariant = "progress" | "recording" | "done" | "warning";
 
 /** Transient status messages displayed on meeting cards, keyed by notePath. */
 export const cardStatus = new Map<string, { message: string; icon?: string; variant?: CardStatusVariant }>();
+
+/** Event IDs whose cards are currently expanded (not collapsed). Survives card rebuilds. */
+export const expandedCards = new Set<string>();
+
+/** Recording start timestamps (epoch ms), keyed by notePath. Set when recording begins. */
+export const recordingStartTime = new Map<string, number>();

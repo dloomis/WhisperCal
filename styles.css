@@ -882,9 +882,17 @@
 	pointer-events: none;
 }
 
-/* Recording pill: pulse in sync with the red dot */
+/* Recording pill: solid red-tinted background, no pulse — looks clickable (stop) */
 .whisper-cal-pill-recording {
-	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
+	animation: none;
+	background: color-mix(in srgb, #e53935 15%, transparent);
+	border-color: #e53935;
+	color: #e53935;
+	cursor: pointer;
+}
+
+.whisper-cal-pill-recording:hover:not(:disabled) {
+	background: color-mix(in srgb, #e53935 25%, transparent);
 }
 
 /* Recording pill in running state is clickable (stop) — override wait cursor */

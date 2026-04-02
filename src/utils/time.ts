@@ -175,6 +175,17 @@ export function sleep(ms: number): Promise<void> {
  * Format a duration in seconds as a human-readable string (e.g. "45 min", "1h 30m").
  * Returns empty string for non-positive values.
  */
+/** Format elapsed seconds as a live counter: "0:05", "1:23", "1:05:23". */
+export function formatElapsed(seconds: number): string {
+	const s = Math.max(0, Math.floor(seconds));
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	const sec = s % 60;
+	const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+	const ss = String(sec).padStart(2, "0");
+	return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 export function formatRecordingDuration(seconds: number): string {
 	if (seconds <= 0) return "";
 	const minutes = Math.floor(seconds / 60);
