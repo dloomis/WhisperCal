@@ -503,9 +503,20 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): Promise<void> {
+		// Clear the "Tagging speakers…" progress status now that the LLM is done.
+		// Success/error paths below will set their own status as needed.
+		const clearProgressStatus = () => {
+			const cs = cardStatus.get(notePath);
+			if (cs?.variant === "progress") {
+				cardStatus.delete(notePath);
+				this.refreshCalendarCards(notePath);
+			}
+		};
+
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
 			new Notice("Transcript was deleted while speaker tagging was running");
+			clearProgressStatus();
 			return;
 		}
 
@@ -515,6 +526,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 		if (mappings.length === 0) {
 			new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
+			clearProgressStatus();
 			return;
 		}
 		if (warning) {
@@ -538,11 +550,15 @@ export default class WhisperCalPlugin extends Plugin {
 				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
 				const subtitle = buildMeetingSubtitle(meetingFm);
 				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser).prompt();
-				if (!decisions) return;
+				if (!decisions) {
+					clearProgressStatus();
+					return;
+				}
 
 				const hasTagged = decisions.some(d => d.confirmedName);
 				if (!hasTagged) {
 					new Notice("No speakers tagged — no changes made");
+					clearProgressStatus();
 					return;
 				}
 
@@ -563,6 +579,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const msg = e instanceof Error ? e.message : String(e);
 				console.error("[WhisperCal] Speaker tag modal error:", e);
 				new Notice(`Failed to apply speaker tags: ${msg}`);
+				clearProgressStatus();
 			}
 		});
 	}
