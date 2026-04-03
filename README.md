@@ -1,12 +1,12 @@
 # WhisperCal
 
-A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 365 or Google Calendar), creates templated meeting notes with one click, links [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings and transcripts to those notes, and drives an LLM-powered pipeline to tag speakers and summarize meetings.
+A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 365 or Google Calendar), creates templated meeting notes with one click, records meetings and links transcripts to notes, and drives an LLM-powered pipeline to tag speakers, research context, and summarize meetings.
 
 > **Desktop only.** WhisperCal uses Node APIs and AppleScript and will not load on Obsidian mobile.
 
-**Speaker-tagged transcript with calendar sidebar:**
+**Speaker tagging modal with per-speaker transcript excerpts:**
 
-![Transcript with speaker-tagged diarization and calendar sidebar](docs/screenshot-transcript.png)
+![Speaker tagging modal with per-speaker transcript excerpts and calendar sidebar](docs/screenshot-transcript.png)
 
 <br>
 
@@ -31,8 +31,12 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
   - [Navigation](#navigation)
   - [Status Indicator](#status-indicator)
   - [Meeting Cards](#meeting-cards)
+  - [Collapsible Cards](#collapsible-cards)
+  - [All-Day Events](#all-day-events)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
+  - [Conflict Detection](#conflict-detection)
+  - [Gap Markers](#gap-markers)
   - [Gutter Icons](#gutter-icons)
   - [Gutter Background Colors](#gutter-background-colors)
   - [Category Bar](#category-bar)
@@ -41,26 +45,31 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
   - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
   - [Unlinked Recordings](#unlinked-recordings)
-- [The Four-Stage Pipeline](#the-four-stage-pipeline)
+- [The Five-Stage Pipeline](#the-five-stage-pipeline)
   - [Stage 1 — Note](#stage-1--note)
-  - [Stage 2 — Transcript](#stage-2--transcript)
+  - [Stage 2 — Record / Transcript](#stage-2--record--transcript)
   - [Stage 3 — Speakers](#stage-3--speakers)
   - [Stage 4 — Summary](#stage-4--summary)
+  - [Stage 5 — Research](#stage-5--research)
   - [Pipeline State Tracking](#pipeline-state-tracking)
 - [Meeting Note Templates](#meeting-note-templates)
   - [Template Setup](#template-setup)
   - [Template Variables](#template-variables)
   - [Reserved Frontmatter Keys](#reserved-frontmatter-keys)
-- [MacWhisper Integration](#macwhisper-integration)
-  - [How Recording Matching Works](#how-recording-matching-works)
-  - [Transcript File Format](#transcript-file-format)
-  - [Linking Flow in Detail](#linking-flow-in-detail)
+- [Recording Sources](#recording-sources)
+  - [MacWhisper](#macwhisper)
+  - [Recording API](#recording-api)
+  - [Re-Recording](#re-recording)
 - [People Matching](#people-matching)
+  - [Auto-Created People Notes](#auto-created-people-notes)
 - [LLM Integration](#llm-integration)
   - [Speaker Tagging](#speaker-tagging)
+    - [Per-Speaker Transcript Excerpts](#per-speaker-transcript-excerpts)
     - [Required LLM Output Format](#required-llm-output-format)
     - [What Happens When You Apply](#what-happens-when-you-apply)
   - [Summarization](#summarization)
+  - [Meeting Research](#meeting-research)
+  - [Per-Prompt Model Selection](#per-prompt-model-selection)
   - [How Invocation Works](#how-invocation-works)
   - [Concurrency and Timeouts](#concurrency-and-timeouts)
   - [LLM Settings](#llm-settings)
@@ -76,12 +85,14 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 ## Features at a Glance
 
-- **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh and offline caching.
+- **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh, offline caching, and conflict detection.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
-- **MacWhisper recording linking** — Match MacWhisper recordings to meetings by timestamp, link them to the note, and auto-generate a transcript file.
-- **Speaker tagging** — Run an LLM in the background to identify speakers, then review and approve proposed names in an in-Obsidian confirmation modal.
+- **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
+- **Speaker tagging** — Run an LLM in the background to identify speakers, review proposals with per-speaker transcript excerpts, and approve names in an in-Obsidian modal.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
-- **People matching** — Attendees are automatically matched to notes in a People folder and rendered as `[[wiki links]]`.
+- **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline.
+- **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
+- **Per-prompt model selection** — Choose a different Claude model for each LLM prompt (speaker tagging, summarization, research).
 
 ---
 
@@ -91,8 +102,8 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 - A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
 - For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
-- **MacWhisper** (optional — needed for transcript features)
-- An **LLM CLI tool** (optional — needed for speaker tagging and summarization; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
+- **MacWhisper** or a **Recording API**-compatible app (optional — needed for transcript features; see [Recording Sources](#recording-sources))
+- An **LLM CLI tool** (optional — needed for speaker tagging, summarization, and research; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
 
 ---
 
@@ -119,8 +130,8 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 WhisperCal supports two calendar providers. In **Settings > WhisperCal > Calendar**, select your provider from the **Calendar provider** dropdown:
 
-- **Microsoft 365** — Connects via Microsoft Graph API using a Device Code Flow.
-- **Google Calendar** — Connects via Google Calendar API using an OAuth2 loopback flow.
+- **Microsoft 365** — Connects via Microsoft Graph API using OAuth2 Authorization Code with PKCE.
+- **Google Calendar** — Connects via Google Calendar API using OAuth2 Authorization Code with PKCE.
 
 The rest of the settings UI adapts to show only the fields relevant to your chosen provider. You can switch providers at any time — each provider's auth tokens are stored separately, so switching back preserves your sign-in.
 
@@ -131,15 +142,15 @@ WhisperCal connects to your calendar through the Microsoft Graph API. You need t
 1. Go to the [Azure Portal](https://portal.azure.com) > **Azure Active Directory** > **App registrations** > **New registration**.
 2. Set a name (e.g., "WhisperCal").
 3. Under **Supported account types**, choose the option that matches your organization.
-4. Under **Redirect URI**, select **Public client/native** and leave the URI blank (the Device Code flow does not use redirects).
+4. Under **Redirect URI**, select **Public client/native (mobile & desktop)** and set the URI to `http://localhost`.
 5. Click **Register**.
-6. On the app's **Overview** page, copy the **Application (client) ID** and the **Directory (tenant) ID**.
+6. On the app's **Overview** page, copy the **Application (client) ID**. The **Directory (tenant) ID** is optional — leave it empty to auto-detect from your account at sign-in.
 7. Go to **API permissions** > **Add a permission** > **Microsoft Graph** > **Delegated permissions**.
 8. Add **Calendars.Read** and **offline_access**.
 9. Click **Grant admin consent** (if required by your organization).
 
 Then in WhisperCal settings:
-- Paste the **Tenant ID** and **Client ID** into the corresponding fields.
+- Paste the **Client ID** into the corresponding field. **Tenant ID** is optional — leave it empty to auto-detect from your account at sign-in, or paste a specific tenant ID to restrict sign-in to one organization.
 - Select your **Cloud instance** (most users should leave this on "Public").
 
 ### Google Calendar Setup
@@ -159,19 +170,14 @@ Then in WhisperCal settings:
 
 ### Signing In
 
-The sign-in flow depends on your chosen provider:
+Both providers use an **OAuth2 Authorization Code flow with PKCE**. The experience is the same:
 
-**Microsoft 365** uses the **Device Code Flow**:
-1. Click **Sign in** in the WhisperCal settings panel.
-2. A **user code** appears (e.g., `ABC12DEF`) along with a link to the Microsoft device login page.
-3. Open the link in your browser, enter the code, and sign in with your Microsoft account.
-4. Once you complete sign-in in the browser, WhisperCal detects it automatically and shows "Signed in".
+1. Click **Sign in** in the WhisperCal settings panel (or in the calendar sidebar's inline sign-in banner).
+2. Your default browser opens to the provider's sign-in page.
+3. Sign in and grant WhisperCal access to your calendar.
+4. The browser redirects to a localhost page confirming success. You can close the tab and return to Obsidian.
 
-**Google Calendar** uses an **OAuth2 loopback flow**:
-1. Click **Sign in** in the WhisperCal settings panel.
-2. Your default browser opens to the Google sign-in page.
-3. Sign in and grant WhisperCal access to your calendar and contacts.
-4. The browser redirects to a local page confirming success. You can close the tab and return to Obsidian.
+If you don't complete sign-in within 5 minutes, the flow times out and you can try again.
 
 For both providers, tokens are stored locally in the plugin's `data.json` file within your vault. Access tokens refresh automatically; you should rarely need to sign in again. To sign out, click **Sign out** in settings.
 
@@ -187,7 +193,7 @@ If your organization uses a government or sovereign cloud, select the appropriat
 | **USGovDoD** | `login.microsoftonline.us` | `dod-graph.microsoft.us` | US Department of Defense |
 | **China** | `login.chinacloudapi.cn` | `microsoftgraph.chinacloudapi.cn` | 21Vianet (China) |
 
-You can also override the **Device login URL** if your environment uses a non-standard endpoint.
+You can also override the **Login URL** if your environment uses a non-standard endpoint.
 
 ---
 
@@ -200,6 +206,8 @@ Open the calendar sidebar by clicking the **calendar ribbon icon** or running th
 - **Left / right chevron** — Move one day backward or forward.
 - **Today button** — Jump to the current date (hidden when already viewing today).
 - **Refresh button** — Manually refresh calendar data from your calendar provider.
+- **Settings gear** — Opens WhisperCal settings directly from the calendar header.
+- **Sign in** — When signed out, an inline banner appears at the top of the calendar with a sign-in button, so you don't need to visit settings to authenticate.
 
 The calendar auto-refreshes on a configurable interval (default: every 5 minutes). At midnight, the view automatically advances to the new day.
 
@@ -215,13 +223,22 @@ A small dot below the header shows connection status:
 
 Each calendar event is displayed as a two-column card:
 
-- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). Shows a warning-colored bar when the workflow is incomplete, and a barber-pole stripe for meetings you haven't accepted.
+- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
 - **Content** (right):
   - **Subject** — The meeting title.
+  - **Organizer row** — Organizer name with People note link (if matched).
   - **Meta row** — Location (clickable for online meeting URLs), attendee count, and duration (e.g., "30m" or "1h 30m"), separated by middle dots.
-  - **Four workflow pills** — Note, Transcript, Speakers, Summary (see [The Four-Stage Pipeline](#the-four-stage-pipeline)).
+  - **Workflow pills** — Note, Record/Transcript, Speakers, Summary, Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)).
 
-All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
+Cards can be [collapsed](#collapsible-cards) to hide their action pills. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
+
+### Collapsible Cards
+
+Each card has a **chevron toggle** in the gutter icon row. Click it to collapse or expand the card's action pills. Collapsed cards show only the subject, organizer, and metadata — useful for a compact view of a busy day. The expanded/collapsed state persists across calendar refreshes.
+
+### All-Day Events
+
+When **"Show all-day events"** is enabled in settings, all-day events appear at the top of the calendar as compact, read-only cards. They show the event subject and category color bar but have no action pills — they are informational only.
 
 ### Unscheduled Meetings
 
@@ -234,6 +251,14 @@ Unscheduled notes use the current timestamp as their meeting time and get a wide
 When viewing today's calendar:
 - **Currently ongoing events** (between start and end time) are highlighted.
 - If no event is ongoing, the **next upcoming event** is highlighted instead.
+
+### Conflict Detection
+
+When multiple events overlap in time, they are grouped together and preceded by a banner showing the overlap window (e.g., "3 meetings overlap at 2:30 PM – 3:00 PM"). This makes scheduling conflicts immediately visible.
+
+### Gap Markers
+
+Between non-overlapping event groups, a gap indicator shows how much free time you have (e.g., "45m" or "1h 15m").
 
 ### Gutter Icons
 
@@ -257,7 +282,7 @@ The gutter background tint reflects the pipeline workflow state:
 
 ### Category Bar
 
-The vertical bar on the right edge of the gutter indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
+The vertical bar on the left edge of the card indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
 
 ### Button Highlights
 
@@ -284,15 +309,15 @@ When you open a meeting note in any editor tab, the corresponding card in the ca
 
 ### Unlinked Recordings
 
-A collapsible **"Unlinked recordings"** section appears at the bottom of the calendar view when there are MacWhisper sessions that haven't been linked to any note in your vault. This helps you catch recordings you forgot to process.
+A collapsible **"Unlinked recordings"** section appears at the bottom of the calendar view when there are recordings that haven't been linked to any note in your vault. This helps you catch recordings you forgot to process. The source depends on your recording setting — MacWhisper sessions or Recording API transcript files.
 
 **How it works:**
-- Scans the MacWhisper database for sessions within a configurable lookback window (default: 30 days).
-- Skips recent recordings within a grace period (default: 48 hours) — today's recordings are expected to be unlinked during your normal workflow.
-- Cross-references against all vault notes with a `macwhisper_session_id` in frontmatter. Any session not found in the vault is shown as unlinked.
+- **MacWhisper:** Scans the MacWhisper database for sessions within a configurable lookback window (default: 30 days). Skips recent recordings within a grace period (default: 48 hours).
+- **Recording API:** Scans the transcripts folder for transcript files not linked to any meeting note.
+- Cross-references against vault notes. Any recording not found linked to a note is shown as unlinked.
 
 **Linking an unlinked recording:**
-1. Click the **Link** button on an unlinked recording card.
+1. Click the **Link** button on an unlinked recording card. A **View** button also lets you open the transcript directly.
 2. WhisperCal checks the calendar cache for events near the recording's start time (using the same recording match window).
 3. If matching calendar events are found, a picker shows them along with a **"Create unscheduled note"** fallback. Events whose notes already have a recording linked are filtered out.
 4. If no matches are found, an unscheduled note is created directly, dated to the recording's actual start time.
@@ -302,12 +327,13 @@ The section is collapsed by default and only appears when the count is greater t
 
 ---
 
-## The Four-Stage Pipeline
+## The Five-Stage Pipeline
 
-Each meeting card has four **pill buttons** that track your progress through the meeting workflow. Pills are filled with a checkmark when complete, outlined when ready to act on, and grayed out when their prerequisites aren't met.
+Each meeting card has up to five **pill buttons** that track your progress through the meeting workflow. Pills are filled with a checkmark when complete, outlined when ready to act on, and grayed out when their prerequisites aren't met.
 
 ```
-Note  -->  Transcript  -->  Speakers  -->  Summary
+Note  -->  Record/Transcript  -->  Speakers  -->  Summary
+                                                     Research (independent)
 ```
 
 ### Stage 1 — Note
@@ -318,21 +344,22 @@ Note  -->  Transcript  -->  Speakers  -->  Summary
 - The filename follows your configured pattern (default: `YYYY-MM-DD - Subject.md`).
 - Frontmatter is populated with meeting metadata (subject, date, time, location, attendees, etc.).
 - Attendees are matched against your People folder and rendered as `[[wiki links]]`.
+- The organizer is shown with a People note link if matched.
 - The note opens in a new tab with the cursor placed after the `# Notes` heading.
 
 Once the note exists, clicking the pill opens it.
 
-### Stage 2 — Transcript
+### Stage 2 — Record / Transcript
 
-**Click the "Transcript" pill** to link a MacWhisper recording and generate a transcript file.
+The second pill adapts based on your configured [recording source](#recording-sources):
 
+**MacWhisper mode** — The pill is labeled "Transcript". Click it to link an existing MacWhisper recording:
 - A picker modal shows MacWhisper recordings that started near the meeting time.
-- Select a recording, and WhisperCal:
-  1. Writes the MacWhisper session ID into the note's frontmatter.
-  2. Sets the recording's title in MacWhisper to match the note name.
-  3. Waits for MacWhisper to finish transcribing (polls every 3 seconds, up to ~3 minutes).
-  4. Creates a transcript Markdown file in your configured transcripts folder.
-  5. Links the transcript back to the meeting note via frontmatter.
+- Select a recording, and WhisperCal writes the session ID to frontmatter, sets the recording title in MacWhisper, waits for transcription, creates a transcript file, and links everything together.
+
+**Recording API mode** — The pill is labeled "Record". Click it to start a live recording:
+- The recording starts via the configured API, and a **live elapsed timer** appears on the card with a pulsing red dot.
+- Click again to stop the recording. WhisperCal polls for transcription completion, then links the transcript file to the meeting note.
 
 Once the transcript exists, clicking the pill opens it.
 
@@ -341,7 +368,7 @@ Once the transcript exists, clicking the pill opens it.
 **Click the "Speakers" pill** to run LLM speaker tagging in the background.
 
 - The LLM reads your speaker tagging prompt and the transcript, then outputs proposed speaker identities.
-- A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, and evidence.
+- A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, evidence, and [transcript excerpts](#per-speaker-transcript-excerpts).
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
@@ -356,6 +383,17 @@ The pill shows a spinning indicator while the LLM is running. Once speakers are 
 - When finished, the LLM sets `pipeline_state: summarized` and the banner disappears.
 
 Once the summary is complete, clicking the pill opens the meeting note.
+
+### Stage 5 — Research
+
+**Click the "Research" pill** to run LLM-powered meeting research. This stage is **independent** of the transcript pipeline — you can run it anytime after creating a meeting note, even before a recording exists.
+
+- A modal lets you **search and select vault notes** as context (project plans, policies, prior meeting notes, etc.).
+- Add optional instructions or override the prompt entirely with a custom one.
+- The LLM reads your research prompt along with the selected notes and meeting context, then writes its findings into the meeting note.
+- When complete, `research_notes` is added to the meeting note's frontmatter and the Research pill fills in.
+
+This is useful for pre-meeting preparation or post-meeting fact-checking against organizational documents.
 
 ### Pipeline State Tracking
 
@@ -428,9 +466,13 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 
 ---
 
-## MacWhisper Integration
+## Recording Sources
 
-WhisperCal reads directly from MacWhisper's local SQLite database to match recordings to meetings and extract transcripts. It does not modify your audio files.
+WhisperCal supports two recording sources, configurable in **Settings > WhisperCal > Recording > Source**:
+
+### MacWhisper
+
+The default source. WhisperCal reads directly from [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper)'s local SQLite database to match recordings to meetings and extract transcripts. It does not modify your audio files.
 
 **Requirements:**
 - MacWhisper must be installed (database path: `~/Library/Application Support/MacWhisper/Database/main.sqlite`).
@@ -438,9 +480,7 @@ WhisperCal reads directly from MacWhisper's local SQLite database to match recor
 
 A **microphone ribbon icon** is provided to quickly launch MacWhisper.
 
-### How Recording Matching Works
-
-When you click the Transcript pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
+**How recording matching works:** When you click the Transcript pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
 
 - **Default window:** 15 minutes before or after the meeting start.
 - **Unscheduled meetings:** 720-minute window (12 hours).
@@ -448,45 +488,32 @@ When you click the Transcript pill, WhisperCal queries the MacWhisper database f
 
 If multiple recordings match, a picker modal lets you choose. The picker shows the recording title, date, time, and duration for each match.
 
-### Transcript File Format
+**Transcript file format:** Transcript files are created in your configured transcripts folder with the naming pattern `<Note Name> - Transcript.md`. They contain:
 
-Transcript files are created in your configured transcripts folder with the naming pattern `<Note Name> - Transcript.md`. They contain:
+- **Frontmatter:** Recording date, `tags: [transcript]`, `macwhisper_session_id`, duration, `meeting_note` backlink, speaker metadata, meeting context fields, and `pipeline_state: titled`.
+- **Body:** AI Summary (if MacWhisper generated one) as a blockquote, followed by the Full Transcript section. Diarized recordings show speaker-grouped lines with timestamps (`**Jane Smith** [00:01:23]`); non-diarized recordings show timestamped lines without speaker labels.
 
-**Frontmatter:**
-- `date` — Recording date with timezone offset
-- `tags: [transcript]` — Identifies the file as a transcript
-- `macwhisper_session_id` — Links back to the MacWhisper session
-- `duration` — Recording length in seconds
-- `meeting_note` — Wiki link back to the meeting note
-- `speaker_count` — Number of detected speakers
-- `speakers` — List of speaker names, IDs, and line counts
-- `meeting_subject`, `is_recurring`, `meeting_invitees` — Copied from the meeting note so the transcript is self-contained (these are read by LLM prompts)
-- `pipeline_state: titled` — Initial pipeline state
+**Linking flow:** Match → Select → Title → Link session ID to frontmatter → Wait for transcription → Create transcript file → Backlink to meeting note.
 
-**Body:**
-- **AI Summary** section (if MacWhisper generated one) — Displayed as a blockquote.
-- **Full Transcript** section:
-  - **Diarized recordings** (speakers identified): Grouped by speaker with timestamps:
-    ```
-    **Jane Smith** [00:01:23]
-    Let's start with the status update from last week...
-    ```
-  - **Non-diarized recordings**: Timestamped lines without speaker labels:
-    ```
-    [00:01:23] Let's start with the status update from last week...
-    ```
+### Recording API
 
-### Linking Flow in Detail
+An alternative source that records meetings directly via a REST API (compatible with apps like [Tome](https://tome.app)). The Record pill on meeting cards starts and stops recordings without leaving Obsidian.
 
-1. **Match** — Query MacWhisper DB for recordings near the meeting time.
-2. **Select** — If multiple matches, pick one from the modal.
-3. **Title** — Set the recording's title in MacWhisper to match the note name.
-4. **Link** — Write `macwhisper_session_id` to the meeting note's frontmatter.
-5. **Wait** — Poll for transcription completion (every 3s, up to ~3 min).
-6. **Transcribe** — Create the transcript Markdown file with full text and metadata.
-7. **Backlink** — Write `transcript: [[path/to/transcript]]` to the meeting note.
+**Requirements:**
+- A recording application running a compatible REST API on localhost.
+- The API must implement: `GET /health`, `POST /start`, `POST /stop`, `GET /status`.
 
-If MacWhisper hasn't finished transcribing within the timeout, you'll see a notice suggesting you try linking again later. The session ID is already saved, so re-linking will skip to step 5.
+**API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for the Tome port file at `~/Library/Application Support/Tome/api-port` and constructs the URL automatically.
+
+**Recording flow:**
+1. Click the Record pill — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
+2. A **pulsing red dot** and **live elapsed timer** appear on the card while recording.
+3. Click again to stop — WhisperCal polls `/status` every 3 seconds until transcription is complete (up to 5 minutes).
+4. The transcript file is located in the vault's transcripts folder, enriched with pipeline frontmatter (meeting subject, invitees, date, organizer, location), and linked to the meeting note.
+
+### Re-Recording
+
+If a meeting already has a linked transcript, clicking the Record/Transcript pill shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
 
 ---
 
@@ -516,6 +543,12 @@ WhisperCal matches attendees by checking these frontmatter fields in People note
 
 Email matching is tried first; if no email match is found, name matching is attempted. Matched attendees appear as `[[Note Name]]` wiki links in the template output. Unmatched attendees appear as plain text names.
 
+### Auto-Created People Notes
+
+WhisperCal can automatically create People notes for meeting organizers who don't have a matching note in your vault. When the calendar view refreshes, it scans organizers and silently creates notes for ones that look like real people (filtering out team calendars, room resources, and system accounts).
+
+Auto-created notes include frontmatter with `full_name`, `nickname`, organization (derived from email domain), and personnel type. A Dataview query is included to show related meetings.
+
 ### Example People Note
 
 ```markdown
@@ -533,9 +566,11 @@ Role: Engineering Manager
 
 ## LLM Integration
 
-WhisperCal invokes an external LLM CLI tool as a background process to tag speakers in transcripts and summarize meetings. The LLM runs headlessly inside Obsidian — no terminal window is required. Progress and errors are reported via Obsidian notices.
+WhisperCal invokes an external LLM CLI tool as a background process to tag speakers in transcripts, summarize meetings, and run meeting research. The LLM runs headlessly inside Obsidian — no terminal window is required. Progress and errors are reported via Obsidian notices.
 
-**Included prompts:** The plugin ships with two ready-to-use prompt files in the `samples/` directory — one for speaker tagging and one for summarization. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
+**Enable LLM features:** LLM features are disabled by default. Toggle **"Enable LLM features"** in settings. On first enable, a consent modal explains that transcripts and note content may be sent to a cloud LLM provider, and asks you to confirm.
+
+**Included prompts:** The plugin ships with three ready-to-use prompt files in the `samples/` directory — speaker tagging, summarization, and meeting research. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
 
 ### Speaker Tagging
 
@@ -562,6 +597,10 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 - Speakers are sorted by confidence (highest first) so you can quickly approve high-confidence matches and focus attention on uncertain ones.
 
 You can clear a name field to leave that speaker untagged, or type a different name. Click **Cancel** to discard all changes.
+
+#### Per-Speaker Transcript Excerpts
+
+Each speaker row in the confirmation modal has an expandable **excerpt panel**. Click the chevron toggle next to a speaker to see their actual transcript lines — timestamps and spoken text. This lets you hear each speaker's "voice" in context, making it easier to confirm or correct the LLM's identification without leaving the modal.
 
 #### Required LLM Output Format
 
@@ -639,6 +678,31 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
 
 **Auto-summarize:** If **"Auto-summarize after tagging"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no need to click the Summary pill. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
 
+### Meeting Research
+
+**Prerequisite:** A meeting note must exist (Stage 1 complete). No transcript is required — research can run before, during, or after a meeting.
+
+**Setup:**
+
+1. Copy `samples/Meeting Research Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Research Prompt.md`). This prompt works as a ready-to-use default — customize it if needed.
+2. Set the **"Research prompt"** path in WhisperCal settings.
+
+**Usage:**
+
+1. Click the **Research pill** on a meeting card, or run the **"Research meeting"** command.
+2. A modal opens where you can:
+   - **Search and select vault notes** to include as context (project plans, policies, prior notes, etc.).
+   - **Add custom instructions** for the LLM.
+   - **Bypass the prompt file** entirely by checking "Use as direct prompt" and writing a custom prompt in the text area.
+3. Click **Research** to run the LLM in the background.
+4. When complete, the research output is written into the meeting note and `research_notes` is set in frontmatter.
+
+### Per-Prompt Model Selection
+
+Each LLM prompt (Speaker Tagging, Summarizer, Research) has its own **model selector** dropdown. This lets you use a more capable model for summarization while using a faster model for speaker tagging, for example.
+
+Model options are populated from the Anthropic API if the `ANTHROPIC_API_KEY` environment variable is set. If no API key is available, only "Default" (whatever the CLI tool defaults to) is shown.
+
 ### How Invocation Works
 
 WhisperCal spawns the LLM CLI as a child process using your login shell (so your PATH includes tools installed via Homebrew, nvm, etc.). The process runs in the background with no terminal window. The working directory is set to your vault root.
@@ -667,14 +731,20 @@ If any check fails, an Obsidian notice explains the problem.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Speaker tagging prompt** | *(empty)* | Path to your speaker tagging prompt file (vault-relative, absolute, or `~/`-relative). |
-| **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
-| **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
+| **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
+| **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
+| **Speaker tagging prompt** | `Prompts/Speaker Auto-Tag Prompt.md` | Path to your speaker tagging prompt file (vault-relative, absolute, or `~/`-relative). |
+| **Speaker tagging model** | *(default)* | Claude model to use for speaker tagging. |
+| **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
+| **Summarizer model** | *(default)* | Claude model to use for summarization. |
+| **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your meeting research prompt file. |
+| **Research model** | *(default)* | Claude model to use for meeting research. |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization after speaker tagging completes. Requires a summarizer prompt to be configured. |
+| **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
 ---
 
@@ -700,6 +770,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Link MacWhisper recording** | Links a MacWhisper recording to the active meeting note (only available when a meeting note is open) |
 | **Tag speakers in transcript** | Launches LLM speaker tagging for the active note's transcript (available on meeting notes with a transcript, or directly on transcript files) |
 | **Summarize meeting transcript** | Launches LLM summarization (available when `pipeline_state` is `tagged`) |
+| **Research meeting** | Opens the research modal to run LLM-powered meeting research with selected vault notes as context (available on meeting notes) |
 
 **Link MacWhisper recording** is also available in the file context menu (right-click) for meeting notes.
 
@@ -722,35 +793,45 @@ All commands are available from the command palette (`Cmd+P`):
 | **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
 | **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
 
-### MacWhisper
+### Recording
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Database path** | *(read-only)* | Shows the MacWhisper database location. |
-| **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker. |
-| **Unlinked lookback** | `30` days | How far back to check for unlinked recordings. |
+| **Source** | MacWhisper | Recording source: MacWhisper (link existing recordings) or Recording API (record directly). |
+| **Database path** | *(read-only)* | Shows the MacWhisper database location (MacWhisper source only). |
+| **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker (MacWhisper source only). |
+| **Unlinked lookback** | `30` days | How far back to check for unlinked recordings (MacWhisper source only). |
+| **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from Tome's port file (Recording API source only). |
 
 ### LLM
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Speaker tagging prompt** | *(empty)* | Path to your speaker tagging prompt file. |
-| **Summarizer prompt** | *(empty)* | Path to your summarization prompt file. |
-| **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
+| **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. |
 | **CLI command** | `claude` | LLM CLI executable name or path. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
+| **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
+| **Speaker tagging prompt** | `Prompts/Speaker Auto-Tag Prompt.md` | Path to your speaker tagging prompt file. |
+| **Speaker tagging model** | *(default)* | Claude model for speaker tagging. |
+| **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
+| **Summarizer model** | *(default)* | Claude model for summarization. |
+| **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your research prompt file. |
+| **Research model** | *(default)* | Claude model for meeting research. |
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |
+| **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
 
 ### Calendar
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Calendar provider** | Microsoft 365 | Which calendar service to connect to (Microsoft 365 or Google Calendar). |
-| **Timezone** | `America/New_York` | IANA timezone for displaying meeting times. |
+| **Timezone** | *(system locale)* | IANA timezone for displaying meeting times. Defaults to your system's timezone. |
+| **Time format** | Auto | 12-hour, 24-hour, or auto-detect from system locale. |
 | **Refresh interval** | `5` min | Auto-refresh frequency for the calendar view. |
 | **Show all-day events** | Off | Display all-day events in the calendar view. |
+| **Important organizers** | *(empty)* | Organizers whose meetings show an alert icon in the gutter. Autocomplete from your calendar provider. |
 | **Cache future days** | `5` | Number of upcoming days to pre-fetch. |
 | **Cache retention** | `30` days | How long past calendar data is kept locally. |
 
@@ -760,10 +841,9 @@ Shown when Calendar provider is set to "Microsoft 365".
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Tenant ID** | *(empty)* | Directory (tenant) ID from your Azure AD app registration. |
+| **Tenant ID** | *(empty)* | Directory (tenant) ID from your Azure AD app registration. Leave empty to auto-detect from your account at sign-in. |
 | **Client ID** | *(empty)* | Application (client) ID from your Azure AD app registration. |
 | **Cloud instance** | Public | Microsoft cloud environment. |
-| **Device login URL** | *(empty = auto)* | Override the device code login URL for non-standard environments. |
 
 ### Google Account
 
@@ -778,23 +858,25 @@ Shown when Calendar provider is set to "Google Calendar".
 
 ## Disclosures
 
-- **Remote services:** This plugin connects to the **Microsoft Graph API** or the **Google Calendar API** (depending on your chosen provider) to fetch calendar events. For Microsoft, authentication uses the OAuth 2.0 Device Code Flow. For Google, authentication uses an OAuth 2.0 Authorization Code flow with PKCE via a localhost redirect. OAuth tokens for both providers are stored locally in the plugin's `data.json` file within your vault.
+- **Remote services:** This plugin connects to the **Microsoft Graph API** or the **Google Calendar API** (depending on your chosen provider) to fetch calendar events. Both providers use OAuth 2.0 Authorization Code flow with PKCE via a localhost redirect. OAuth tokens for both providers are stored locally in the plugin's `data.json` file within your vault.
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
-- **LLM invocation:** When you use the speaker tagging or summarization features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
+- **Recording API:** When using the Recording API source, WhisperCal communicates with a localhost REST API to start/stop recordings and poll transcription status. All communication is local.
+- **LLM invocation:** When you use the speaker tagging, summarization, or research features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
+- **LLM model discovery:** If the `ANTHROPIC_API_KEY` environment variable is set, WhisperCal fetches available Claude models from the Anthropic API to populate per-prompt model selectors. No other data is sent.
 - **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
 
 ---
 
 ## Troubleshooting
 
-### "Tenant ID and Client ID are required" (Microsoft)
-Both fields must be filled in before you can sign in. See [Microsoft 365 Setup](#microsoft-365-setup).
+### "Client ID is required" (Microsoft)
+The Client ID must be filled in before you can sign in. Tenant ID is optional. See [Microsoft 365 Setup](#microsoft-365-setup).
 
 ### "Client ID and Client secret are required" (Google)
 Both fields must be filled in before you can sign in. See [Google Calendar Setup](#google-calendar-setup).
 
-### Device code expired
-The device code is valid for about 15 minutes. If it expires before you complete sign-in in the browser, click **"Try again"** in settings to get a new code.
+### Sign-in timed out
+The sign-in flow is valid for 5 minutes. If it times out before you complete sign-in in the browser, click **Sign in** again.
 
 ### Calendar shows "Offline" with no events
 - Check that you're signed in (Settings > WhisperCal > Microsoft Account section should show "Signed in").

@@ -1244,8 +1244,8 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 16px;
-	height: 16px;
+	width: 20px;
+	height: 20px;
 	cursor: pointer;
 	color: var(--text-faint);
 	flex-shrink: 0;
@@ -1259,7 +1259,7 @@
 
 .whisper-cal-speaker-tag-toggle::after {
 	content: "▶";
-	font-size: 8px;
+	font-size: 11px;
 }
 
 .whisper-cal-speaker-tag-toggle:hover {
