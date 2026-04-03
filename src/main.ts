@@ -23,6 +23,7 @@ import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFac
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
+import {applyWordReplacements} from "./services/WordReplacer";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
 function formatModelName(modelId: string): string {
@@ -614,7 +615,8 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		this.runLlmJob({
+		// Apply word replacements to transcript before LLM processing, then start job
+		const startJob = () => this.runLlmJob({
 			jobSet: summarizeJobs,
 			filePath: notePath,
 			label: "Summarizing",
@@ -647,6 +649,24 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 			},
 		});
+
+		if (this.settings.replacementFilePath) {
+			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
+			const transcriptFile = resolveWikiLink(this.app, fm, "transcript", notePath);
+			if (transcriptFile) {
+				void applyWordReplacements(this.app, transcriptFile.path, this.settings.replacementFilePath)
+					.then(count => {
+						if (count > 0) console.debug(`[WhisperCal] Applied ${count} word replacement(s) to transcript`);
+						startJob();
+					})
+					.catch(e => {
+						console.warn("[WhisperCal] Word replacement error:", e);
+						startJob(); // proceed with summarization even if replacement fails
+					});
+				return;
+			}
+		}
+		startJob();
 	}
 
 	private doResearch(notePath: string): void {

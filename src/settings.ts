@@ -1,4 +1,4 @@
-import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, Notice, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -52,6 +52,7 @@ export interface WhisperCalSettings {
 	cacheFutureDays: number;
 	cacheRetentionDays: number;
 	timeFormat: "auto" | "12h" | "24h";
+	replacementFilePath: string;
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
 }
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
+	replacementFilePath: "",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 };
@@ -655,6 +657,33 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.autoSummarizeAfterTagging = value;
 					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Word replacement file")
+			.setDesc("Vault path to a CSV file of word replacements applied to transcripts before summarization (one per line: search,replacement)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Word Replacements.csv")
+					.setValue(this.plugin.settings.replacementFilePath)
+					.onChange((value) => {
+						this.plugin.settings.replacementFilePath = value;
+						this.debouncedSave();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			})
+			.addButton(button => button
+				.setButtonText("Open")
+				.onClick(() => {
+					const filePath = this.plugin.settings.replacementFilePath;
+					if (!filePath) {
+						return;
+					}
+					const file = this.app.vault.getAbstractFileByPath(filePath);
+					if (file) {
+						void this.app.workspace.openLinkText(filePath, "", false);
+					} else {
+						new Notice(`File not found: ${filePath}`);
+					}
 				}));
 	}
 
