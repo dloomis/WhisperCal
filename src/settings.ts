@@ -1,4 +1,4 @@
-import {App, Modal, Notice, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";

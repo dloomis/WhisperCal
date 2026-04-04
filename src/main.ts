@@ -1,7 +1,7 @@
 import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
@@ -24,6 +24,7 @@ import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements} from "./services/WordReplacer";
+import {WordReplacementModal} from "./ui/WordReplacementModal";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
 function formatModelName(modelId: string): string {
@@ -235,6 +236,31 @@ export default class WhisperCalPlugin extends Plugin {
 				return true;
 			},
 		});
+
+		this.addCommand({
+			id: COMMAND_WORD_REPLACE,
+			name: "Run word replacements",
+			editorCallback: (_editor, ctx) => {
+				if (ctx.file) {
+					void this.doWordReplacements(ctx.file);
+				}
+			},
+		});
+
+		// Add word-replacement icon to note toolbar on every markdown view
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", (leaf) => {
+				if (!leaf) return;
+				const view = leaf.view;
+				if (!(view instanceof MarkdownView)) return;
+				if (view.containerEl.querySelector(".whisper-cal-word-replace-action")) return;
+				const action = view.addAction("replace-all", "Run word replacements", () => {
+					const file = view.file;
+					if (file) void this.doWordReplacements(file);
+				});
+				action.addClass("whisper-cal-word-replace-action");
+			}),
+		);
 
 		// Show/hide summarize banner when switching between notes
 		this.registerEvent(
@@ -657,6 +683,32 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		startJob();
+	}
+
+	private async doWordReplacements(file: TFile): Promise<void> {
+		if (!this.settings.replacementFilePath) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("Word replacement file not configured — set it in WhisperCal settings");
+			return;
+		}
+		const confirmed = await new WordReplacementModal(
+			this.app,
+			this.settings.replacementFilePath,
+			file.basename,
+		).prompt();
+		if (!confirmed) return;
+
+		try {
+			const count = await applyWordReplacements(this.app, file.path, this.settings.replacementFilePath);
+			if (count > 0) {
+				new Notice(`Applied ${count} word replacement(s)`);
+			} else {
+				new Notice("No matches found — no changes made");
+			}
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			new Notice(`Word replacement failed: ${msg}`);
+		}
 	}
 
 	private doResearch(notePath: string): void {

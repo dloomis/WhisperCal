@@ -32,36 +32,22 @@ export function parseReplacementFile(content: string): Replacement[] {
 }
 
 /**
- * Apply word replacements to a transcript file's body (preserving frontmatter).
- * Returns the number of individual replacements made, or 0 if nothing changed.
+ * Load replacement pairs from a vault file. Returns empty array if file
+ * doesn't exist or contains no valid rules.
  */
-export async function applyWordReplacements(
-	app: App,
-	transcriptPath: string,
-	replacementFilePath: string,
-): Promise<number> {
-	// Load replacement mappings
+export async function loadReplacements(app: App, replacementFilePath: string): Promise<Replacement[]> {
 	const mapFile = app.vault.getAbstractFileByPath(replacementFilePath);
-	if (!(mapFile instanceof TFile)) return 0;
+	if (!(mapFile instanceof TFile)) return [];
 	const mapContent = await app.vault.cachedRead(mapFile);
-	const replacements = parseReplacementFile(mapContent);
-	if (replacements.length === 0) return 0;
+	return parseReplacementFile(mapContent);
+}
 
-	// Load transcript
-	const transcriptFile = app.vault.getAbstractFileByPath(transcriptPath);
-	if (!(transcriptFile instanceof TFile)) return 0;
-	const content = await app.vault.read(transcriptFile);
-
-	// Split frontmatter from body to avoid corrupting YAML
-	const fmEnd = content.indexOf("\n---", 1);
-	if (fmEnd < 0) return 0; // no frontmatter — unexpected for a transcript
-	const bodyStart = content.indexOf("\n", fmEnd + 4);
-	if (bodyStart < 0) return 0;
-
-	const frontmatter = content.slice(0, bodyStart);
-	let body = content.slice(bodyStart);
-
-	// Partition replacements by boundary type for efficient batching
+/**
+ * Run replacements on a string. Returns the transformed text and a count
+ * of individual substitutions made.
+ */
+export function runReplacements(text: string, replacements: Replacement[]): {text: string; count: number} {
+	// Partition by boundary type for efficient batching
 	const wordBounded = new Map<string, string>();
 	const custom: Replacement[] = [];
 	for (const {search, replace} of replacements) {
@@ -72,7 +58,7 @@ export async function applyWordReplacements(
 		}
 	}
 
-	let totalCount = 0;
+	let count = 0;
 
 	// Single-pass for word-bounded terms (the common case)
 	if (wordBounded.size > 0) {
@@ -80,10 +66,10 @@ export async function applyWordReplacements(
 			.sort((a, b) => b.length - a.length)
 			.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 		const re = new RegExp(`\\b(?:${patterns.join("|")})\\b`, "g");
-		body = body.replace(re, (match) => {
+		text = text.replace(re, (match) => {
 			const r = wordBounded.get(match);
 			if (r !== undefined) {
-				totalCount++;
+				count++;
 				return r;
 			}
 			return match;
@@ -96,14 +82,46 @@ export async function applyWordReplacements(
 		const prefix = /^\w/.test(search) ? "\\b" : "";
 		const suffix = /\w$/.test(search) ? "\\b" : "";
 		const re = new RegExp(`${prefix}${escaped}${suffix}`, "g");
-		body = body.replace(re, () => {
-			totalCount++;
+		text = text.replace(re, () => {
+			count++;
 			return replace;
 		});
 	}
 
-	if (totalCount === 0) return 0;
+	return {text, count};
+}
 
-	await app.vault.modify(transcriptFile, frontmatter + body);
-	return totalCount;
+/**
+ * Apply word replacements to a file's body (preserving any frontmatter).
+ * Returns the number of individual replacements made, or 0 if nothing changed.
+ */
+export async function applyWordReplacements(
+	app: App,
+	filePath: string,
+	replacementFilePath: string,
+): Promise<number> {
+	const replacements = await loadReplacements(app, replacementFilePath);
+	if (replacements.length === 0) return 0;
+
+	const file = app.vault.getAbstractFileByPath(filePath);
+	if (!(file instanceof TFile)) return 0;
+	const content = await app.vault.read(file);
+
+	// Split frontmatter from body to avoid corrupting YAML
+	let frontmatter = "";
+	let body = content;
+	const fmEnd = content.indexOf("\n---", 1);
+	if (fmEnd >= 0) {
+		const bodyStart = content.indexOf("\n", fmEnd + 4);
+		if (bodyStart >= 0) {
+			frontmatter = content.slice(0, bodyStart);
+			body = content.slice(bodyStart);
+		}
+	}
+
+	const result = runReplacements(body, replacements);
+	if (result.count === 0) return 0;
+
+	await app.vault.modify(file, frontmatter + result.text);
+	return result.count;
 }

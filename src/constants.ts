@@ -7,6 +7,7 @@ export const COMMAND_LINK_RECORDING = "link-macwhisper-recording";
 export const COMMAND_TAG_SPEAKERS = "tag-speakers";
 export const COMMAND_SUMMARIZE = "summarize-transcript";
 export const COMMAND_RESEARCH = "research-meeting";
+export const COMMAND_WORD_REPLACE = "run-word-replacements";
 
 export const RECORDING_API_PORT_FILE = join(homedir(), "Library", "Application Support", "Tome", "api-port");
 
