@@ -289,6 +289,31 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
+			.setName("Word replacement file")
+			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Word Replacements.md")
+					.setValue(this.plugin.settings.replacementFilePath)
+					.onChange((value) => {
+						this.plugin.settings.replacementFilePath = value;
+						this.debouncedSave();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			})
+			.addButton(button => button
+				.setButtonText("Open")
+				.onClick(async () => {
+					const filePath = this.plugin.settings.replacementFilePath;
+					if (!filePath) {
+						return;
+					}
+					if (!this.app.vault.getAbstractFileByPath(filePath)) {
+						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
+					}
+					void this.app.workspace.openLinkText(filePath, "", false);
+				}));
+
+		new Setting(containerEl)
 			.setName("Calendar")
 			.setHeading();
 
@@ -685,30 +710,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
-			.setName("Word replacement file")
-			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Word Replacements.md")
-					.setValue(this.plugin.settings.replacementFilePath)
-					.onChange((value) => {
-						this.plugin.settings.replacementFilePath = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			})
-			.addButton(button => button
-				.setButtonText("Open")
-				.onClick(async () => {
-					const filePath = this.plugin.settings.replacementFilePath;
-					if (!filePath) {
-						return;
-					}
-					if (!this.app.vault.getAbstractFileByPath(filePath)) {
-						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
-					}
-					void this.app.workspace.openLinkText(filePath, "", false);
-				}));
 	}
 
 	hide(): void {
