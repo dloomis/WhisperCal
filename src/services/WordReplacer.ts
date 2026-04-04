@@ -105,23 +105,26 @@ export async function applyWordReplacements(
 
 	const file = app.vault.getAbstractFileByPath(filePath);
 	if (!(file instanceof TFile)) return 0;
-	const content = await app.vault.read(file);
 
-	// Split frontmatter from body to avoid corrupting YAML
-	let frontmatter = "";
-	let body = content;
-	const fmEnd = content.indexOf("\n---", 1);
-	if (fmEnd >= 0) {
-		const bodyStart = content.indexOf("\n", fmEnd + 4);
-		if (bodyStart >= 0) {
-			frontmatter = content.slice(0, bodyStart);
-			body = content.slice(bodyStart);
+	let count = 0;
+	await app.vault.process(file, (content) => {
+		// Split frontmatter from body to avoid corrupting YAML
+		let frontmatter = "";
+		let body = content;
+		const fmEnd = content.indexOf("\n---", 1);
+		if (fmEnd >= 0) {
+			const bodyStart = content.indexOf("\n", fmEnd + 4);
+			if (bodyStart >= 0) {
+				frontmatter = content.slice(0, bodyStart);
+				body = content.slice(bodyStart);
+			}
 		}
-	}
 
-	const result = runReplacements(body, replacements);
-	if (result.count === 0) return 0;
+		const result = runReplacements(body, replacements);
+		count = result.count;
+		if (count === 0) return content; // no changes
+		return frontmatter + result.text;
+	});
 
-	await app.vault.modify(file, frontmatter + result.text);
-	return result.count;
+	return count;
 }

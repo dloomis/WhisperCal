@@ -230,3 +230,30 @@ export function formatDateTimeWithOffset(date: Date, timezone: string): string {
 
 	return `${year}-${month}-${day} ${hour}:${minute}:${second}${sign}${offH}:${offM}`;
 }
+
+/** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
+ *  YAML parses unquoted "16:39" as sexagesimal number 999. */
+export function coerceFmTime(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (typeof val === "number") {
+		const h = Math.floor(val / 60);
+		const m = val % 60;
+		return `${h}:${String(m).padStart(2, "0")}`;
+	}
+	if (typeof val === "string") return val;
+	return undefined;
+}
+
+/** Coerce a YAML frontmatter date value to "YYYY-MM-DD" string.
+ *  YAML may parse unquoted dates as Date objects. */
+export function coerceFmDate(val: unknown): string | undefined {
+	if (val == null) return undefined;
+	if (val instanceof Date) {
+		const y = val.getFullYear();
+		const m = String(val.getMonth() + 1).padStart(2, "0");
+		const d = String(val.getDate()).padStart(2, "0");
+		return `${y}-${m}-${d}`;
+	}
+	if (typeof val === "string") return val;
+	return undefined;
+}

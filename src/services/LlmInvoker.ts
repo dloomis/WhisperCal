@@ -1,4 +1,4 @@
-import {spawn, execSync, type ChildProcess} from "child_process";
+import {spawn, execFile, type ChildProcess} from "child_process";
 import * as os from "os";
 import * as path from "path";
 
@@ -203,13 +203,15 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		`end tell`,
 	].join("\n");
 
-	try {
-		execSync(`osascript -e ${shellQuote(osascript)}`, {timeout: 10000});
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		return Promise.resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
-	}
-
-	// Debug mode is fire-and-forget — the user interacts in Terminal directly.
-	return Promise.resolve({exitCode: 0, stdout: "", stderr: ""});
+	return new Promise((resolve) => {
+		execFile("osascript", ["-e", osascript], {timeout: 10000}, (err) => {
+			if (err) {
+				const msg = err.message;
+				resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
+			} else {
+				// Debug mode is fire-and-forget — the user interacts in Terminal directly.
+				resolve({exitCode: 0, stdout: "", stderr: ""});
+			}
+		});
+	});
 }

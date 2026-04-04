@@ -53,6 +53,8 @@ export interface WhisperCalSettings {
 	cacheRetentionDays: number;
 	timeFormat: "auto" | "12h" | "24h";
 	replacementFilePath: string;
+	autoCreatePeopleNotes: boolean;
+	peopleTemplatePath: string;
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
 }
@@ -94,6 +96,8 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
 	replacementFilePath: "Prompts/Word Replacements.md",
+	autoCreatePeopleNotes: false,
+	peopleTemplatePath: "",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 };
@@ -197,6 +201,29 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.debouncedSave();
 					});
 				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName("Auto-create people notes")
+			.setDesc("Automatically create people notes for meeting organizers that don't have one yet. Requires a people template.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoCreatePeopleNotes)
+				.onChange(async (value) => {
+					this.plugin.settings.autoCreatePeopleNotes = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("People template")
+			.setDesc("Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}")
+			.addText(text => {
+				text.setPlaceholder("Templates/Person.md")
+					.setValue(this.plugin.settings.peopleTemplatePath)
+					.onChange((value) => {
+						this.plugin.settings.peopleTemplatePath = value;
+						this.debouncedSave();
+					});
+				new FileSuggest(this.app, text.inputEl);
 			});
 
 		new Setting(containerEl)
@@ -550,7 +577,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 			new Setting(containerEl)
 				.setName(`${name} model`)
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setDesc(`Claude model for ${name.toLowerCase()}. Set ANTHROPIC_API_KEY to load available models.`)
 				.addDropdown(dropdown => {
 					modelSelects.push(dropdown.selectEl);
@@ -702,7 +728,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
 		try {
-			const apiKey = process.env["ANTHROPIC_API_KEY"];
+			const apiKey = globalThis.process?.env?.["ANTHROPIC_API_KEY"];
 			if (!apiKey) return [];
 
 			const response = await requestUrl({

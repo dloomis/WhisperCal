@@ -5,7 +5,7 @@ import type {TranscriptData} from "./MacWhisperDb";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import {ensureFolder} from "../utils/vault";
 import {yamlEscape} from "../utils/sanitize";
-import {formatDateTimeWithOffset} from "../utils/time";
+import {coerceFmDate, coerceFmTime, formatDateTimeWithOffset} from "../utils/time";
 
 interface SpeakerBlock {
 	speaker: string | null;
@@ -46,31 +46,6 @@ function groupBySpeaker(lines: TranscriptData["lines"]): SpeakerBlock[] {
 		}
 	}
 	return blocks;
-}
-
-/** Coerce a YAML frontmatter time value that may have been parsed as sexagesimal. */
-function coerceFmTime(val: unknown): string | undefined {
-	if (val == null) return undefined;
-	if (typeof val === "number") {
-		const h = Math.floor(val / 60);
-		const m = val % 60;
-		return `${h}:${String(m).padStart(2, "0")}`;
-	}
-	if (typeof val === "string") return val;
-	return undefined;
-}
-
-/** Coerce a YAML frontmatter date value that may have been parsed as a Date object. */
-function coerceFmDate(val: unknown): string | undefined {
-	if (val == null) return undefined;
-	if (val instanceof Date) {
-		const y = val.getFullYear();
-		const mo = String(val.getMonth() + 1).padStart(2, "0");
-		const d = String(val.getDate()).padStart(2, "0");
-		return `${y}-${mo}-${d}`;
-	}
-	if (typeof val === "string") return val;
-	return undefined;
 }
 
 function buildFrontmatter(opts: {

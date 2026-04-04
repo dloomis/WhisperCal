@@ -9,40 +9,12 @@ import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
-import {formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
+import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {resolveRecordingApiBaseUrl} from "../services/RecordingApi";
-
-/** Coerce a YAML frontmatter time value to "HH:MM" or "H:MM AM/PM" string.
- *  YAML parses unquoted "16:39" as sexagesimal number 999. */
-function coerceFmTime(val: unknown): string | undefined {
-	if (val == null) return undefined;
-	if (typeof val === "number") {
-		const h = Math.floor(val / 60);
-		const m = val % 60;
-		return `${h}:${String(m).padStart(2, "0")}`;
-	}
-	if (typeof val === "string") return val;
-	// YAML may produce unexpected types — coerce to string as last resort
-	return `${val as string}`;
-}
-
-/** Coerce a YAML frontmatter date value to "YYYY-MM-DD" string.
- *  YAML may parse unquoted dates as Date objects. */
-function coerceFmDate(val: unknown): string | undefined {
-	if (val == null) return undefined;
-	if (val instanceof Date) {
-		const y = val.getFullYear();
-		const m = String(val.getMonth() + 1).padStart(2, "0");
-		const d = String(val.getDate()).padStart(2, "0");
-		return `${y}-${m}-${d}`;
-	}
-	if (typeof val === "string") return val;
-	return `${val as string}`;
-}
 
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
@@ -306,10 +278,11 @@ export class CalendarView extends ItemView {
 			this.updateNowMarker();
 
 			// Auto-create People notes for unmatched organizers (fire-and-forget)
-			if (this.settings.peopleFolderPath) {
+			if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath && this.settings.peopleTemplatePath) {
 				void autoCreatePeopleNotes(
 					this.app,
 					this.settings.peopleFolderPath,
+					this.settings.peopleTemplatePath,
 					events,
 					this.callbacks.getUserEmail(),
 				);

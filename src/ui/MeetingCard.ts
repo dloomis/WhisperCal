@@ -310,7 +310,7 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	const {gutter, iconRow} = renderGutter(card, event, timezone, opts);
+	const {iconRow} = renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
 	// Subject

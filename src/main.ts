@@ -105,9 +105,10 @@ export default class WhisperCalPlugin extends Plugin {
 			getAuthState: () => this.auth.getState(),
 			onSignIn: () => this.auth.startSignIn(),
 			onOpenSettings: () => {
-				const setting = (this.app as unknown as Record<string, unknown>).setting as { open(): void; openTabById(id: string): void };
-				setting.open();
-				setting.openTabById(this.manifest.id);
+				// app.setting is undocumented but widely used by community plugins
+				const appWithSetting = this.app as unknown as {setting?: {open(): void; openTabById(id: string): void}};
+				appWithSetting.setting?.open();
+				appWithSetting.setting?.openTabById(this.manifest.id);
 			},
 			subscribeAuthState: (listener) => this.onAuthStateChange(listener),
 			getUnlinkedProvider: () => this.unlinkedProvider,
@@ -119,11 +120,11 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Mirror pipeline_state from transcript files back to their meeting notes
 		this.registerEvent(
-			this.app.metadataCache.on("changed", (file) => {
+			this.app.metadataCache.on("changed", (file: TFile) => {
 				if (!file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 				if (!fm) return;
-				const pipelineState = fm["pipeline_state"];
+				const pipelineState = (fm as Record<string, unknown>)["pipeline_state"];
 				if (typeof pipelineState !== "string" || !pipelineState) return;
 				// Resolve meeting note from transcript's meeting_note backlink
 				const meetingFile = resolveWikiLink(this.app, fm as Record<string, unknown>, "meeting_note", file.path);
@@ -138,11 +139,6 @@ export default class WhisperCalPlugin extends Plugin {
 
 		this.addRibbonIcon("calendar", "Open calendar view", () => {
 			void this.activateView();
-		});
-
-		// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
-		this.addRibbonIcon("mic", "Open MacWhisper", () => {
-			window.open("macwhisper://reopenWindow");
 		});
 
 		this.addCommand({
@@ -248,11 +244,14 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		// Add word-replacement icon to note toolbar on every markdown view
+		// (only when a replacement file is configured and exists)
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf) => {
 				if (!leaf) return;
 				const view = leaf.view;
 				if (!(view instanceof MarkdownView)) return;
+				if (!this.settings.replacementFilePath) return;
+				if (!this.app.vault.getAbstractFileByPath(this.settings.replacementFilePath)) return;
 				if (view.containerEl.querySelector(".whisper-cal-word-replace-action")) return;
 				const action = view.addAction("replace-all", "Run word replacements", () => {
 					const file = view.file;
@@ -271,7 +270,6 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	onunload() {
-		this.app.workspace.detachLeavesOfType(VIEW_TYPE_CALENDAR);
 		this.auth.cancelSignIn();
 		void this.cachedProvider?.flush();
 		// Kill any running LLM processes and clean up job tracking
@@ -335,7 +333,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 		// Migrate legacy single llmModel → per-prompt model settings
 		if (legacy?.llmModel && typeof legacy.llmModel === "string") {
-			const old = legacy.llmModel as string;
+			const old = legacy.llmModel;
 			if (!this.settings.speakerTagModel) this.settings.speakerTagModel = old;
 			if (!this.settings.summarizerModel) this.settings.summarizerModel = old;
 			if (!this.settings.researchModel) this.settings.researchModel = old;
@@ -1021,14 +1019,6 @@ export default class WhisperCalPlugin extends Plugin {
 		if (leaf) {
 			await leaf.setViewState({type: VIEW_TYPE_CALENDAR, active: true});
 			await this.app.workspace.revealLeaf(leaf);
-
-			// Set a comfortable default width so pill buttons don't wrap
-			const rightSplit = this.app.workspace.rightSplit as unknown as
-				{ containerEl: HTMLElement; size: number; resize: () => void } | undefined;
-			if (rightSplit && rightSplit.size < 480) {
-				rightSplit.size = 480;
-				rightSplit.resize();
-			}
 		}
 	}
 }
