@@ -269,9 +269,9 @@
 	transform: translateY(-50%);
 	width: 0;
 	height: 0;
-	border-top: 10px solid transparent;
-	border-bottom: 10px solid transparent;
-	border-left: 13px solid var(--text-warning);
+	border-top: 8px solid transparent;
+	border-bottom: 8px solid transparent;
+	border-left: 11px solid var(--text-warning);
 	opacity: 0.8;
 }
 
@@ -322,7 +322,6 @@
 	flex-wrap: wrap;
 	gap: 4px;
 	margin-top: 10px;
-	margin-left: 2px;
 }
 
 /* Collapse toggle in gutter icon row */
@@ -368,6 +367,7 @@
 	overflow: hidden;
 	min-height: 0;
 	margin-top: 0;
+	padding: 0 1px;
 }
 
 .whisper-cal-card-meta-item {
@@ -402,6 +402,18 @@
 .whisper-cal-card-icon svg {
 	width: 14px;
 	height: 14px;
+}
+
+.whisper-cal-rsvp-accepted {
+	color: var(--text-success);
+}
+
+.whisper-cal-rsvp-tentative {
+	color: var(--text-warning);
+}
+
+.whisper-cal-rsvp-declined {
+	color: var(--text-error);
 }
 
 .whisper-cal-btn {

@@ -1,5 +1,5 @@
 import {htmlToMarkdown, requestUrl} from "obsidian";
-import type {CalendarEvent, CalendarProvider, EventCategory} from "../types";
+import type {CalendarEvent, CalendarProvider, EventCategory, ResponseStatus} from "../types";
 import {getDayStartUTC, getDayEndUTC} from "../utils/time";
 import type {MsalAuth} from "./MsalAuth";
 
@@ -16,6 +16,7 @@ interface GraphEmailAddress {
 
 interface GraphAttendee {
 	emailAddress: GraphEmailAddress;
+	status?: { response: string };
 }
 
 interface GraphBody {
@@ -186,6 +187,7 @@ function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<str
 	const attendees = event.attendees?.map(a => ({
 		name: a.emailAddress.name ?? "",
 		email: a.emailAddress.address ?? "",
+		responseStatus: (a.status?.response ?? "none") as ResponseStatus,
 	})) ?? [];
 	const rawBody = event.body?.content ?? "";
 	const body = event.body?.contentType === "text"

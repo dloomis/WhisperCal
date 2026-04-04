@@ -1,6 +1,7 @@
 export interface EventAttendee {
 	name: string;
 	email: string;
+	responseStatus?: ResponseStatus;
 }
 
 export type ResponseStatus = "accepted" | "tentativelyAccepted" | "declined" | "notResponded" | "organizer" | "none";

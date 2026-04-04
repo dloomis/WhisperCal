@@ -177,6 +177,29 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 		const attIcon = attEl.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(attIcon, "users-round");
 		attEl.createSpan({text: `${event.attendeeCount}`});
+
+		const accepted = event.attendees.filter(a => a.responseStatus === "accepted" || a.responseStatus === "organizer").length;
+		const tentative = event.attendees.filter(a => a.responseStatus === "tentativelyAccepted").length;
+		const declined = event.attendees.filter(a => a.responseStatus === "declined").length;
+
+		if (accepted > 0) {
+			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-accepted"});
+			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
+			setIcon(icon, "user-round-check");
+			el.createSpan({text: `${accepted}`});
+		}
+		if (tentative > 0) {
+			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-tentative"});
+			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
+			setIcon(icon, "user-round-minus");
+			el.createSpan({text: `${tentative}`});
+		}
+		if (declined > 0) {
+			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-declined"});
+			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
+			setIcon(icon, "user-round-x");
+			el.createSpan({text: `${declined}`});
+		}
 	}
 }
 
