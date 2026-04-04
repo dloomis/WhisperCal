@@ -91,20 +91,17 @@
 }
 
 .whisper-cal-card {
+	--wc-cat-color: color-mix(in srgb, var(--wc-subtle) 40%, var(--background-secondary));
 	display: flex;
 	flex-direction: row;
 	align-items: stretch;
 	background: var(--background-secondary);
 	border: 1px solid var(--background-modifier-border);
-	border-left: 5px solid color-mix(in srgb, var(--wc-subtle) 40%, var(--background-secondary));
+	border-left: 5px solid var(--wc-cat-color);
 	border-radius: var(--radius-m);
 	margin-bottom: 8px;
 	overflow: hidden;
 	contain: layout style;
-}
-
-.whisper-cal-card-categorized {
-	border-left-color: var(--wc-cat-color);
 }
 
 /* Spacer below the ad-hoc card */
@@ -291,7 +288,7 @@
 	flex: 1;
 	min-width: 0;
 	padding: 12px;
-	background: var(--background-secondary-alt);
+	background: var(--background-secondary);
 }
 
 .whisper-cal-card-subject-row {
@@ -325,6 +322,7 @@
 	flex-wrap: wrap;
 	gap: 4px;
 	margin-top: 10px;
+	margin-left: 2px;
 }
 
 /* Collapse toggle in gutter icon row */
