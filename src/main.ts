@@ -62,7 +62,11 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
-		await installBundledPrompts(this.app);
+
+		// Defer prompt installation until the vault layout is ready
+		this.app.workspace.onLayoutReady(() => {
+			void installBundledPrompts(this.app);
+		});
 
 		this.activeProviderType = this.settings.calendarProvider;
 		const stack = createCalendarStack(
