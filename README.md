@@ -67,6 +67,7 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
     - [Per-Speaker Transcript Excerpts](#per-speaker-transcript-excerpts)
     - [Required LLM Output Format](#required-llm-output-format)
     - [What Happens When You Apply](#what-happens-when-you-apply)
+  - [Word Replacements](#word-replacements)
   - [Summarization](#summarization)
   - [Meeting Research](#meeting-research)
   - [Per-Prompt Model Selection](#per-prompt-model-selection)
@@ -657,6 +658,37 @@ When you click **Apply** in the modal, WhisperCal:
 2. Adds a `confirmed_speakers` frontmatter key with wiki links to all confirmed names (e.g., `["[[Jane Smith]]", "[[Bob Lee]]"]`).
 3. Sets `pipeline_state: tagged` in the transcript frontmatter (and mirrors it to the meeting note).
 4. Replaces all occurrences of `**Original Name**` with `**Confirmed Name**` in the transcript body text.
+5. Applies word replacements from the configured replacement file (see [Word Replacements](#word-replacements) below).
+
+### Word Replacements
+
+WhisperCal can fix common transcription errors automatically using a word replacement file — a simple list of search/replace pairs, one per line.
+
+**Setup:**
+
+1. Create a markdown file in your vault (default path: `Prompts/Word Replacements.md`).
+2. Add one replacement per line in `search,replace` format. Lines starting with `#` are comments.
+
+```
+# Fix common transcription errors
+Nipper,NIPR
+Kariosoft,Carahsoft
+Shine Mountain,Cheyenne Mountain
+```
+
+3. Set the **"Word replacement file"** path in WhisperCal settings, or use the default. Click **Open** next to the setting to create and edit the file.
+
+**How it works:**
+
+- Replacements are case-sensitive and use word boundaries to avoid partial matches (e.g., `ash` → `ASH` won't affect "crash").
+- Longer search terms are matched first, so `Shine Mountain` matches before `Shine` would.
+- Frontmatter is preserved — only the note body is modified.
+- All word-bounded terms are combined into a single regex pass for efficiency, even with 100+ rules.
+
+**When replacements run:**
+
+- **Automatically** after speaker tagging — when you click Apply in the speaker tag modal, word replacements run on the transcript immediately after speaker names are applied.
+- **Manually on any note** — use the replace-all icon (⇄) in the note toolbar or the **"Run word replacements"** command from the command palette. A confirmation modal lets you review the replacement list before running.
 
 ### Summarization
 
@@ -771,12 +803,16 @@ All commands are available from the command palette (`Cmd+P`):
 | **Tag speakers in transcript** | Launches LLM speaker tagging for the active note's transcript (available on meeting notes with a transcript, or directly on transcript files) |
 | **Summarize meeting transcript** | Launches LLM summarization (available when `pipeline_state` is `tagged`) |
 | **Research meeting** | Opens the research modal to run LLM-powered meeting research with selected vault notes as context (available on meeting notes) |
+| **Run word replacements** | Applies word replacement rules to the active note (available on any open note; also accessible via the ⇄ toolbar icon) |
 
 **Link MacWhisper recording** is also available in the file context menu (right-click) for meeting notes.
 
 **Ribbon icons:**
 - **Calendar icon** — Opens the calendar view.
 - **Microphone icon** — Launches the MacWhisper app.
+
+**Note toolbar icon:**
+- **Replace-all icon (⇄)** — Runs word replacements on the active note (appears on every markdown note).
 
 ---
 
@@ -819,6 +855,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Research model** | *(default)* | Claude model for meeting research. |
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
+| **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts after speaker tagging (one per line: `search,replace`). Click **Open** to create and edit. |
 | **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |
 | **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
 
