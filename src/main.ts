@@ -567,6 +567,12 @@ export default class WhisperCalPlugin extends Plugin {
 
 				await applySpeakerTags(this.app, transcriptPath, decisions);
 
+				// Apply word replacements to transcript now that speaker tags are in place
+				if (this.settings.replacementFilePath) {
+					const count = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+					if (count > 0) console.debug(`[WhisperCal] Applied ${count} word replacement(s) to transcript`);
+				}
+
 				// Directly update meeting note pipeline_state rather than
 				// waiting for the async metadataCache mirror event.
 				await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
@@ -650,22 +656,6 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
-		if (this.settings.replacementFilePath) {
-			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
-			const transcriptFile = resolveWikiLink(this.app, fm, "transcript", notePath);
-			if (transcriptFile) {
-				void applyWordReplacements(this.app, transcriptFile.path, this.settings.replacementFilePath)
-					.then(count => {
-						if (count > 0) console.debug(`[WhisperCal] Applied ${count} word replacement(s) to transcript`);
-						startJob();
-					})
-					.catch(e => {
-						console.warn("[WhisperCal] Word replacement error:", e);
-						startJob(); // proceed with summarization even if replacement fails
-					});
-				return;
-			}
-		}
 		startJob();
 	}
 

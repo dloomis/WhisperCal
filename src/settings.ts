@@ -673,17 +673,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			})
 			.addButton(button => button
 				.setButtonText("Open")
-				.onClick(() => {
+				.onClick(async () => {
 					const filePath = this.plugin.settings.replacementFilePath;
 					if (!filePath) {
 						return;
 					}
-					const file = this.app.vault.getAbstractFileByPath(filePath);
-					if (file) {
-						void this.app.workspace.openLinkText(filePath, "", false);
-					} else {
-						new Notice(`File not found: ${filePath}`);
+					if (!this.app.vault.getAbstractFileByPath(filePath)) {
+						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
 					}
+					void this.app.workspace.openLinkText(filePath, "", false);
 				}));
 	}
 

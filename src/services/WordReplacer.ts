@@ -61,21 +61,45 @@ export async function applyWordReplacements(
 	const frontmatter = content.slice(0, bodyStart);
 	let body = content.slice(bodyStart);
 
-	// Apply replacements (case-sensitive, whole-word where possible)
-	let totalCount = 0;
+	// Partition replacements by boundary type for efficient batching
+	const wordBounded = new Map<string, string>();
+	const custom: Replacement[] = [];
 	for (const {search, replace} of replacements) {
-		// Escape regex special chars in search term
+		if (/^\w/.test(search) && /\w$/.test(search)) {
+			wordBounded.set(search, replace);
+		} else {
+			custom.push({search, replace});
+		}
+	}
+
+	let totalCount = 0;
+
+	// Single-pass for word-bounded terms (the common case)
+	if (wordBounded.size > 0) {
+		const patterns = [...wordBounded.keys()]
+			.sort((a, b) => b.length - a.length)
+			.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+		const re = new RegExp(`\\b(?:${patterns.join("|")})\\b`, "g");
+		body = body.replace(re, (match) => {
+			const r = wordBounded.get(match);
+			if (r !== undefined) {
+				totalCount++;
+				return r;
+			}
+			return match;
+		});
+	}
+
+	// Individual passes for non-word-bounded terms (rare)
+	for (const {search, replace} of custom) {
 		const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		// Use word boundaries when the search term starts/ends with word chars
 		const prefix = /^\w/.test(search) ? "\\b" : "";
 		const suffix = /\w$/.test(search) ? "\\b" : "";
 		const re = new RegExp(`${prefix}${escaped}${suffix}`, "g");
-		let count = 0;
 		body = body.replace(re, () => {
-			count++;
+			totalCount++;
 			return replace;
 		});
-		totalCount += count;
 	}
 
 	if (totalCount === 0) return 0;
