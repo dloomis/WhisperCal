@@ -7,7 +7,9 @@ function smartCase(word: string): string {
 	if (word === word.toUpperCase() && word.length > 1) {
 		return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
 	}
-	return word;
+	// Ensure first character is capitalized (e.g. "francis" → "Francis")
+	// but preserve internal casing like "DeAndrea" or "McCaughey"
+	return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 const NAME_SUFFIXES = new Set([

@@ -99,9 +99,9 @@ export async function autoCreatePeopleNotes(
 		if (last) existingLastNames.add(last.toLowerCase());
 	}
 
-	// Deduplicate organizers by email
+	// Deduplicate organizers by email, keeping the first meeting subject
 	const seen = new Set<string>();
-	const organizers: {name: string; email: string}[] = [];
+	const organizers: {name: string; email: string; meetingSubject: string}[] = [];
 
 	for (const event of events) {
 		if (!event.organizerEmail || !event.organizerName) continue;
@@ -109,7 +109,7 @@ export async function autoCreatePeopleNotes(
 		if (emailLower === userLower) continue;
 		if (seen.has(emailLower)) continue;
 		seen.add(emailLower);
-		organizers.push({name: event.organizerName, email: event.organizerEmail});
+		organizers.push({name: event.organizerName, email: event.organizerEmail, meetingSubject: event.subject});
 	}
 
 	let created = 0;
@@ -133,7 +133,8 @@ export async function autoCreatePeopleNotes(
 		if (app.vault.getAbstractFileByPath(path)) continue;
 
 		const variables = buildPeopleVariableMap(parsed, org.email);
-		const content = applyTemplate(template, variables);
+		let content = applyTemplate(template, variables);
+		content += `\n\n> [!info] Auto-created\n> Organizer of **${org.meetingSubject}**\n`;
 		await app.vault.create(path, content);
 		created++;
 		console.debug(`[WhisperCal] Auto-created People note: ${path}`);
