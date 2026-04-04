@@ -466,7 +466,8 @@ function renderCardDynamic(
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Note pill
-	const notePill = renderPill(actions, "file-plus-2", "Note", states.note);
+	const noteIcon = states.note === "complete" ? "file-text" : "file-plus-2";
+	const notePill = renderPill(actions, noteIcon, "Note", states.note);
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
