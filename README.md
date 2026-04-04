@@ -116,6 +116,15 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 2. Search for "WhisperCal".
 3. Click **Install**, then **Enable**.
 
+### Using BRAT (recommended before community release)
+
+1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin from Community plugins.
+2. Open **Settings > BRAT > Add Beta plugin**.
+3. Enter `dloomis/whisper-cal` and click **Add Plugin**.
+4. Enable **WhisperCal** in **Settings > Community plugins**.
+
+BRAT automatically downloads new releases and keeps the plugin up to date.
+
 ### Manual Installation
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/dloomis/whisper-cal/releases/latest).

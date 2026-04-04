@@ -25,6 +25,7 @@ import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvid
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
+import {installBundledPrompts} from "./services/PromptInstaller";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
 function formatModelName(modelId: string): string {
@@ -61,6 +62,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		await installBundledPrompts(this.app);
 
 		this.activeProviderType = this.settings.calendarProvider;
 		const stack = createCalendarStack(
