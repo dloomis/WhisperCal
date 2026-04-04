@@ -1,6 +1,7 @@
 import {spawn, execFile, type ChildProcess} from "child_process";
 import * as os from "os";
 import * as path from "path";
+import {Platform} from "obsidian";
 
 interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on
@@ -35,6 +36,15 @@ function shellQuote(s: string): string {
 	return `'${escapeSq(s)}'`;
 }
 
+/** Quote a shell argument for the current platform. */
+function platformQuote(s: string): string {
+	if (Platform.isWin) {
+		// cmd.exe: wrap in double quotes, escape internal double quotes
+		return `"${s.replace(/"/g, '""')}"`;
+	}
+	return shellQuote(s);
+}
+
 /** Strip ANSI escape sequences from a string. */
 export function stripAnsi(s: string): string {
 	// eslint-disable-next-line no-control-regex
@@ -46,6 +56,15 @@ export function stripAnsi(s: string): string {
  * Returns true if found, false otherwise.
  */
 export async function validateLlmCli(cliPath: string): Promise<boolean> {
+	if (Platform.isWin) {
+		return new Promise((resolve) => {
+			const child = spawn("where.exe", [cliPath], {
+				stdio: ["ignore", "ignore", "ignore"],
+			});
+			child.on("error", () => resolve(false));
+			child.on("close", (code) => resolve(code === 0));
+		});
+	}
 	const userShell = os.userInfo().shell || "/bin/zsh";
 	return new Promise((resolve) => {
 		// Use login shell so the user's PATH (Homebrew etc.) is available
@@ -61,7 +80,7 @@ export async function validateLlmCli(cliPath: string): Promise<boolean> {
  * Resolve a prompt path (absolute, ~/relative, or vault-relative) to an absolute path.
  */
 export function resolvePromptPath(promptPath: string, vaultPath: string): string {
-	if (promptPath.startsWith("/")) return promptPath;
+	if (path.isAbsolute(promptPath)) return promptPath;
 	if (promptPath.startsWith("~/")) return path.join(os.homedir(), promptPath.slice(2));
 	return path.join(vaultPath, promptPath);
 }
@@ -90,15 +109,15 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	const trigger = parts.join(" ");
 
 	const flagParts: string[] = [];
-	if (opts.llmModel) flagParts.push(`--model ${shellQuote(opts.llmModel)}`);
+	if (opts.llmModel) flagParts.push(`--model ${platformQuote(opts.llmModel)}`);
 	if (opts.llmExtraFlags.trim()) {
 		// Split extra flags on whitespace and quote each individually to prevent injection
 		for (const flag of opts.llmExtraFlags.trim().split(/\s+/)) {
-			flagParts.push(shellQuote(flag));
+			flagParts.push(platformQuote(flag));
 		}
 	}
 	const flags = flagParts.join(" ");
-	const cmd = `${shellQuote(opts.llmCli)}${flags ? " " + flags : ""} ${shellQuote(trigger)}`;
+	const cmd = `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""} ${platformQuote(trigger)}`;
 	return {cmd, vaultPath: opts.vaultPath};
 }
 
@@ -114,27 +133,36 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 	const {cmd, vaultPath} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
 
-	// Use a login shell so the user's PATH (e.g. Homebrew) is available.
-	const userShell = os.userInfo().shell || "/bin/zsh";
-
 	return new Promise((resolve) => {
-		const child = spawn(userShell, ["-l", "-c", cmd], {
-			cwd: vaultPath,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		// Windows: shell: true delegates to cmd.exe which inherits system PATH.
+		// macOS/Linux: login shell so the user's PATH (Homebrew etc.) is available.
+		let child: ChildProcess;
+		if (Platform.isWin) {
+			child = spawn(cmd, [], {
+				cwd: vaultPath,
+				shell: true,
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+		} else {
+			const userShell = os.userInfo().shell || "/bin/zsh";
+			child = spawn(userShell, ["-l", "-c", cmd], {
+				cwd: vaultPath,
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+		}
 
 		activeProcesses.add(child);
 
 		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
 
-		child.stdout.on("data", (data: {toString(): string}) => {
+		child.stdout!.on("data", (data: {toString(): string}) => {
 			const text = data.toString();
 			stdoutChunks.push(text);
 			console.debug("[WhisperCal] LLM stdout:", text);
 		});
 
-		child.stderr.on("data", (data: {toString(): string}) => {
+		child.stderr!.on("data", (data: {toString(): string}) => {
 			const text = data.toString();
 			stderrChunks.push(text);
 			console.error("[WhisperCal] LLM stderr:", text);
@@ -182,6 +210,9 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
  * Returns immediately with exitCode 0 — this is fire-and-forget.
  */
 function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
+	if (!Platform.isMacOS) {
+		return Promise.resolve({exitCode: 1, stdout: "", stderr: "Debug terminal mode is only available on macOS"});
+	}
 	const {vaultPath} = opts;
 
 	// Build the command WITHOUT --dangerously-skip-permissions so it's interactive.

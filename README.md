@@ -2,7 +2,7 @@
 
 A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 365 or Google Calendar), creates templated meeting notes with one click, records meetings and links transcripts to notes, and drives an LLM-powered pipeline to tag speakers, research context, and summarize meetings.
 
-> **Desktop only.** WhisperCal uses Node APIs and AppleScript and will not load on Obsidian mobile.
+> **Desktop only** — works on macOS and Windows. Some features are macOS-only (see [Platform Support](#platform-support) below). Will not load on Obsidian mobile.
 
 **Speaker tagging modal with per-speaker transcript excerpts:**
 
@@ -19,6 +19,7 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 ## Table of Contents
 
 - [Features at a Glance](#features-at-a-glance)
+- [Platform Support](#platform-support)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Setup](#setup)
@@ -97,13 +98,31 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 ---
 
+## Platform Support
+
+| Feature | macOS | Windows |
+|---------|:-----:|:-------:|
+| Calendar sidebar | Yes | Yes |
+| One-click meeting notes | Yes | Yes |
+| People matching | Yes | Yes |
+| LLM speaker tagging | Yes | Yes |
+| LLM summarization | Yes | Yes |
+| LLM meeting research | Yes | Yes |
+| MacWhisper recording | Yes | No |
+| Recording API | Yes | Yes |
+| LLM debug mode (Terminal) | Yes | No |
+
+MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and the plugin defaults to the Recording API for transcript capture. LLM debug mode (which opens an interactive Terminal.app window) is also macOS-only; on Windows, LLM commands always run in the background.
+
+---
+
 ## Prerequisites
 
-- **Obsidian** 1.4.10 or later (desktop only)
+- **Obsidian** 1.4.10 or later (desktop only — macOS or Windows)
 - A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
 - For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
-- **MacWhisper** or a **Recording API**-compatible app (optional — needed for transcript features; see [Recording Sources](#recording-sources))
+- **MacWhisper** (macOS only) or a **Recording API**-compatible app (optional — needed for transcript features; see [Recording Sources](#recording-sources))
 - An **LLM CLI tool** (optional — needed for speaker tagging, summarization, and research; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
 
 ---

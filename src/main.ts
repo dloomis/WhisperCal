@@ -1,4 +1,4 @@
-import {MarkdownView, Notice, Plugin, TFile} from "obsidian";
+import {MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE} from "./constants";
@@ -151,40 +151,42 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
-		this.addCommand({
-			id: COMMAND_LINK_RECORDING,
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			name: "Link MacWhisper recording",
-			checkCallback: (checking) => {
-				const file = this.app.workspace.getActiveFile();
-				if (!file) return false;
-				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["calendar_event_id"]) return false;
-				if (checking) return true;
-				void this.handleLinkRecording(file, fm);
-				return true;
-			},
-		});
+		if (Platform.isMacOS) {
+			this.addCommand({
+				id: COMMAND_LINK_RECORDING,
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				name: "Link MacWhisper recording",
+				checkCallback: (checking) => {
+					const file = this.app.workspace.getActiveFile();
+					if (!file) return false;
+					const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+					if (!fm?.["calendar_event_id"]) return false;
+					if (checking) return true;
+					void this.handleLinkRecording(file, fm);
+					return true;
+				},
+			});
 
-		this.registerEvent(
-			this.app.workspace.on("file-menu", (menu, file) => {
-				if (!(file instanceof TFile)) return;
-				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["calendar_event_id"]) return;
-				menu.addItem((item) => {
-					item
-						// eslint-disable-next-line obsidianmd/ui/sentence-case
-						.setTitle("Link MacWhisper recording")
-						.setIcon("mic")
-						.onClick(() => {
-							// Re-read frontmatter at click time to avoid stale values
-							const freshFm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-							if (!freshFm) return;
-							void this.handleLinkRecording(file, freshFm);
-						});
-				});
-			}),
-		);
+			this.registerEvent(
+				this.app.workspace.on("file-menu", (menu, file) => {
+					if (!(file instanceof TFile)) return;
+					const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+					if (!fm?.["calendar_event_id"]) return;
+					menu.addItem((item) => {
+						item
+							// eslint-disable-next-line obsidianmd/ui/sentence-case
+							.setTitle("Link MacWhisper recording")
+							.setIcon("mic")
+							.onClick(() => {
+								// Re-read frontmatter at click time to avoid stale values
+								const freshFm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+								if (!freshFm) return;
+								void this.handleLinkRecording(file, freshFm);
+							});
+					});
+				}),
+			);
+		}
 
 		this.addCommand({
 			id: COMMAND_TAG_SPEAKERS,
@@ -344,8 +346,12 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!this.settings.llmExtraFlags) {
 			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
 		}
+		// MacWhisper is macOS-only; coerce to Recording API on other platforms
+		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
+			this.settings.recordingSource = "api";
+		}
 		// Auto-populate microphoneUser from macOS account on first install
-		if (!this.settings.microphoneUser) {
+		if (Platform.isMacOS && !this.settings.microphoneUser) {
 			try {
 				const fullName = await new Promise<string>((resolve) => {
 					execFile("id", ["-F"], {encoding: "utf-8", timeout: 3000}, (err, stdout) => {

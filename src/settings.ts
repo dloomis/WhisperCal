@@ -1,4 +1,4 @@
-import {App, Modal, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, Platform, PluginSettingTab, Setting, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -450,15 +450,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		const sourceSetting = new Setting(containerEl)
 			.setName("Source")
 			.setDesc("Choose how meeting recordings are captured")
-			.addDropdown(dropdown => dropdown
-				.addOption("macwhisper", "MacWhisper")
-				.addOption("api", "Recording API")
-				.setValue(this.plugin.settings.recordingSource)
-				.onChange((value: string) => {
-					this.plugin.settings.recordingSource = value as "macwhisper" | "api";
-					this.debouncedSave();
-					updateRecordingVisibility();
-				}));
+			.addDropdown(dropdown => {
+				if (Platform.isMacOS) {
+					dropdown.addOption("macwhisper", "MacWhisper");
+				}
+				dropdown
+					.addOption("api", "Recording API")
+					.setValue(this.plugin.settings.recordingSource)
+					.onChange((value: string) => {
+						this.plugin.settings.recordingSource = value as "macwhisper" | "api";
+						this.debouncedSave();
+						updateRecordingVisibility();
+					});
+			});
 		// Move Source dropdown above the sub-setting containers
 		containerEl.insertBefore(sourceSetting.settingEl, macwhisperSettings);
 		/* eslint-enable obsidianmd/ui/sentence-case */
@@ -544,15 +548,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
-			.setName("Debug mode")
-			.setDesc("Open LLM commands in a Terminal window instead of running in the background")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.llmDebugMode)
-				.onChange(async (value) => {
-					this.plugin.settings.llmDebugMode = value;
-					await this.plugin.saveSettings();
-				}));
+		if (Platform.isMacOS) {
+			new Setting(containerEl)
+				.setName("Debug mode")
+				.setDesc("Open LLM commands in a Terminal window instead of running in the background")
+				.addToggle(toggle => toggle
+					.setValue(this.plugin.settings.llmDebugMode)
+					.onChange(async (value) => {
+						this.plugin.settings.llmDebugMode = value;
+						await this.plugin.saveSettings();
+					}));
+		}
 
 		new Setting(containerEl)
 			.setName("CLI command")
