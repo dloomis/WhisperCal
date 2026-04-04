@@ -384,6 +384,10 @@
 	color: var(--text-faint);
 }
 
+.whisper-cal-card-meta-item + .whisper-cal-card-meta-item[class*="whisper-cal-rsvp"]::before {
+	content: none;
+}
+
 .whisper-cal-card-meta-link {
 	color: var(--interactive-accent);
 	cursor: pointer;
@@ -496,7 +500,9 @@
 	background: color-mix(in srgb, var(--wc-conflict-color) 10%, var(--background-primary));
 	border-radius: var(--radius-s);
 	padding: 3px 10px;
-	margin-bottom: 8px;
+	margin-top: 1px;
+	margin-bottom: 9px;
+	border: 1px solid color-mix(in srgb, var(--wc-conflict-color) 50%, transparent);
 }
 
 .whisper-cal-conflict-banner-icon {
