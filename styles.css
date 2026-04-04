@@ -316,6 +316,14 @@
 	margin-bottom: 2px;
 }
 
+.whisper-cal-card-meta + .whisper-cal-card-meta {
+	margin-top: 1px;
+}
+
+.whisper-cal-card-meta:last-of-type {
+	margin-bottom: 0;
+}
+
 .whisper-cal-card-actions {
 	display: flex;
 	align-items: flex-start;
@@ -419,6 +427,7 @@
 .whisper-cal-rsvp-declined {
 	color: var(--text-error);
 }
+
 
 .whisper-cal-btn {
 	display: inline-flex;

@@ -251,8 +251,8 @@ Each calendar event is displayed as a two-column card:
 - **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
 - **Content** (right):
   - **Subject** — The meeting title.
-  - **Organizer row** — Organizer name with People note link (if matched).
-  - **Meta row** — Location (clickable for online meeting URLs), attendee count, and duration (e.g., "30m" or "1h 30m"), separated by middle dots.
+  - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
+  - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
   - **Workflow pills** — Note, Record/Transcript, Speakers, Summary, Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)).
 
 Cards can be [collapsed](#collapsible-cards) to hide their action pills. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
@@ -565,8 +565,29 @@ WhisperCal matches attendees by checking these frontmatter fields in People note
 
 **Name field** (matched against the attendee's display name, case-insensitive):
 - `full_name`
+- Note filename (e.g., `Alex Lillian.md` matches "Alex Lillian")
+- `nickname` + last name from `full_name` (e.g., nickname "Alex" + full_name "Francis Lillian" matches "Alex Lillian")
+
+Exchange/DoD display names in "LAST, FIRST RANK ORG" format are automatically normalized before matching. Email-derived names with trailing digits (e.g., "francis.lillian.2@example.com") are also handled.
 
 Email matching is tried first; if no email match is found, name matching is attempted. Matched attendees appear as `[[Note Name]]` wiki links in the template output. Unmatched attendees appear as plain text names.
+
+### Personnel Type Icons
+
+When a matched organizer is displayed on a meeting card, WhisperCal replaces the default person icon with one that reflects their `personnel_type` frontmatter field:
+
+| `personnel_type` | Icon | Description |
+|-------------------|------|-------------|
+| `Military` | Shield-half | Military personnel |
+| `Civilian` | Landmark | Government civilian |
+| `Contractor` | Briefcase | Contractor |
+| `FFRDC` | Flask | Federally funded research and development center |
+| `SETA` | Microscope | Systems engineering and technical assistance |
+| `Foreign National` | Globe | Foreign national / coalition partner |
+| `C-Suite` | Crown | Executive leadership |
+| *(empty or missing)* | User | Default person icon |
+
+The field is case-insensitive. If `personnel_type` is not present in the frontmatter, the default person icon is used — no configuration is required for vaults that don't use this field.
 
 ### Auto-Created People Notes
 
@@ -580,6 +601,7 @@ Auto-created notes include frontmatter with `full_name`, `nickname`, organizatio
 ---
 full_name: Jane Smith
 company_email: jane.smith@example.com
+personnel_type: Civilian
 ---
 
 # Jane Smith

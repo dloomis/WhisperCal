@@ -12,6 +12,19 @@ import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 
+function personnelTypeIcon(type: string): string | null {
+	switch (type.toLowerCase()) {
+		case "military": return "shield-half";
+		case "civilian": return "landmark";
+		case "contractor": return "briefcase";
+		case "ffrdc": return "flask-conical";
+		case "seta": return "microscope";
+		case "foreign national": return "globe";
+		case "c-suite": return "crown";
+		default: return null;
+	}
+}
+
 export interface MeetingCardOpts {
 	event: CalendarEvent;
 	timezone: string;
@@ -345,22 +358,24 @@ export function renderMeetingCard(
 	// Organizer row
 	if (event.organizerName) {
 		const orgRow = content.createDiv({cls: "whisper-cal-card-meta"});
-		const orgEl = orgRow.createSpan({cls: "whisper-cal-card-meta-item"});
-		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
-		setIcon(orgIcon, "user");
-
-		const peopleMatch = opts.peopleMatchService
-			? opts.peopleMatchService.matchOne(event.organizerName, event.organizerEmail)
+		const personInfo = opts.peopleMatchService
+			? opts.peopleMatchService.matchOneInfo(event.organizerName, event.organizerEmail)
 			: null;
 
-		if (peopleMatch) {
+		const orgEl = orgRow.createSpan({cls: "whisper-cal-card-meta-item"});
+		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
+		const typeIcon = personInfo ? personnelTypeIcon(personInfo.personnelType) : null;
+		setIcon(orgIcon, typeIcon ?? "user");
+
+		if (personInfo) {
+			const displayName = personInfo.notePath.split("/").pop() ?? event.organizerName;
 			const link = orgEl.createEl("a", {
 				cls: "whisper-cal-card-meta-link",
-				text: event.organizerName,
+				text: displayName,
 			});
 			link.addEventListener("click", (e) => {
 				e.preventDefault();
-				void app.workspace.openLinkText(peopleMatch, "", false);
+				void app.workspace.openLinkText(personInfo.notePath, "", false);
 			});
 		} else {
 			orgEl.createSpan({text: event.organizerName});
