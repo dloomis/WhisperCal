@@ -23,7 +23,7 @@ import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFac
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
-import {applyWordReplacements} from "./services/WordReplacer";
+import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
@@ -593,8 +593,11 @@ export default class WhisperCalPlugin extends Plugin {
 
 				// Apply word replacements to transcript now that speaker tags are in place
 				if (this.settings.replacementFilePath) {
-					const count = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
-					if (count > 0) console.debug(`[WhisperCal] Applied ${count} word replacement(s) to transcript`);
+					const result = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+					if (result.totalCount > 0) {
+						console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) to transcript`);
+						showReplacementNotice(result);
+					}
 				}
 
 				// Directly update meeting note pipeline_state rather than
@@ -697,12 +700,8 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!confirmed) return;
 
 		try {
-			const count = await applyWordReplacements(this.app, file.path, this.settings.replacementFilePath);
-			if (count > 0) {
-				new Notice(`Applied ${count} word replacement(s)`);
-			} else {
-				new Notice("No matches found — no changes made");
-			}
+			const result = await applyWordReplacements(this.app, file.path, this.settings.replacementFilePath);
+			showReplacementNotice(result);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			new Notice(`Word replacement failed: ${msg}`);
