@@ -692,12 +692,18 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Word replacement file not configured — set it in WhisperCal settings");
 			return;
 		}
-		const confirmed = await new WordReplacementModal(
-			this.app,
-			this.settings.replacementFilePath,
-			file.basename,
-		).prompt();
-		if (!confirmed) return;
+		if (!this.settings.skipWordReplacementConfirm) {
+			const result = await new WordReplacementModal(
+				this.app,
+				this.settings.replacementFilePath,
+				file.basename,
+			).prompt();
+			if (!result.confirmed) return;
+			if (result.doNotShowAgain) {
+				this.settings.skipWordReplacementConfirm = true;
+				await this.saveSettings();
+			}
+		}
 
 		try {
 			const result = await applyWordReplacements(this.app, file.path, this.settings.replacementFilePath);

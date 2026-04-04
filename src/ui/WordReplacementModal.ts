@@ -1,12 +1,19 @@
 import {Modal, type App} from "obsidian";
 
+export interface WordReplacementResult {
+	confirmed: boolean;
+	doNotShowAgain: boolean;
+}
+
 /**
  * Confirmation modal shown before running word replacements on a note.
  * Offers a link to review the replacement list, plus Run / Cancel.
+ * Includes a "Do not show again" checkbox so the user can bypass future prompts.
  */
 export class WordReplacementModal extends Modal {
-	private resolve: ((confirmed: boolean) => void) | null = null;
+	private resolve: ((result: WordReplacementResult) => void) | null = null;
 	private confirmed = false;
+	private doNotShowAgain = false;
 	private replacementFilePath: string;
 	private targetName: string;
 
@@ -16,7 +23,7 @@ export class WordReplacementModal extends Modal {
 		this.targetName = targetName;
 	}
 
-	prompt(): Promise<boolean> {
+	prompt(): Promise<WordReplacementResult> {
 		return new Promise((resolve) => {
 			this.resolve = resolve;
 			this.open();
@@ -40,6 +47,14 @@ export class WordReplacementModal extends Modal {
 			void this.app.workspace.openLinkText(this.replacementFilePath, "", "tab");
 		});
 
+		const checkboxRow = contentEl.createDiv({cls: "whisper-cal-word-replacement-checkbox"});
+		const label = checkboxRow.createEl("label");
+		const checkbox = label.createEl("input", {type: "checkbox"});
+		label.appendText(" Do not show again");
+		checkbox.addEventListener("change", () => {
+			this.doNotShowAgain = checkbox.checked;
+		});
+
 		const btnRow = contentEl.createDiv({cls: "whisper-cal-rerecord-buttons"});
 
 		const cancelBtn = btnRow.createEl("button", {text: "Cancel"});
@@ -59,7 +74,10 @@ export class WordReplacementModal extends Modal {
 		this.contentEl.empty();
 		setTimeout(() => {
 			if (this.resolve) {
-				this.resolve(this.confirmed);
+				this.resolve({
+					confirmed: this.confirmed,
+					doNotShowAgain: this.doNotShowAgain && this.confirmed,
+				});
 				this.resolve = null;
 			}
 		}, 0);

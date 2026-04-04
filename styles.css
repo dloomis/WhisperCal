@@ -1095,6 +1095,19 @@
 	gap: 8px;
 }
 
+.whisper-cal-word-replacement-checkbox {
+	margin: 12px 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-word-replacement-checkbox label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
 /* Speaker Tag Modal */
 .whisper-cal-speaker-tag-modal {
 	max-width: 520px;

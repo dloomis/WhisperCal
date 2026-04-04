@@ -57,6 +57,7 @@ export interface WhisperCalSettings {
 	peopleTemplatePath: string;
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
+	skipWordReplacementConfirm: boolean;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -100,6 +101,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleTemplatePath: "",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
+	skipWordReplacementConfirm: false,
 };
 
 class LlmConsentModal extends Modal {
