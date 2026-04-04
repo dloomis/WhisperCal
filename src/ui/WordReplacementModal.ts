@@ -37,7 +37,7 @@ export class WordReplacementModal extends Modal {
 		const reviewLink = reviewRow.createEl("a", {text: "Review replacement list"});
 		reviewLink.addEventListener("click", (e) => {
 			e.preventDefault();
-			void this.app.workspace.openLinkText(this.replacementFilePath, "", false);
+			void this.app.workspace.openLinkText(this.replacementFilePath, "", "tab");
 		});
 
 		const btnRow = contentEl.createDiv({cls: "whisper-cal-rerecord-buttons"});

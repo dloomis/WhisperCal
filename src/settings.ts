@@ -93,7 +93,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	cacheFutureDays: 5,
 	cacheRetentionDays: 30,
 	timeFormat: "auto",
-	replacementFilePath: "",
+	replacementFilePath: "Prompts/Word Replacements.md",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 };
@@ -661,9 +661,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Word replacement file")
-			.setDesc("Vault path to a CSV file of word replacements applied to transcripts before summarization (one per line: search,replacement)")
+			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
 			.addText(text => {
-				text.setPlaceholder("Prompts/Word Replacements.csv")
+				text.setPlaceholder("Prompts/Word Replacements.md")
 					.setValue(this.plugin.settings.replacementFilePath)
 					.onChange((value) => {
 						this.plugin.settings.replacementFilePath = value;
