@@ -132,6 +132,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	const {cmd, vaultPath} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
+	console.debug("[WhisperCal] LLM command:", cmd);
 
 	return new Promise((resolve) => {
 		// Windows: shell: true delegates to cmd.exe which inherits system PATH.
