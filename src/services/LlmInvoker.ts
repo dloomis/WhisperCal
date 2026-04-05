@@ -18,6 +18,8 @@ interface LlmInvokerOpts {
 	transcriptFolderPath?: string;  // folder name for transcript files
 	peopleFolderPath?: string;      // folder name for People notes
 	outputFormat?: string;          // appended to trigger to specify expected output format
+	calendarAttendees?: string;     // full invitee name list — skips prompt Step 4/5
+	peopleRoster?: string;          // pre-built enriched Markdown table — skips prompt Step 3/6
 	researchNotePaths?: string[];   // vault-relative paths to research context notes
 	additionalInstructions?: string; // free-text instructions appended to trigger
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
@@ -103,6 +105,8 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.microphoneUser) parts.push(`Microphone user: ${opts.microphoneUser}.`);
 	if (opts.transcriptFolderPath) parts.push(`Transcripts Folder: ${opts.transcriptFolderPath}.`);
 	if (opts.peopleFolderPath) parts.push(`People Folder: ${opts.peopleFolderPath}.`);
+	if (opts.calendarAttendees) parts.push(`Calendar Attendees: ${opts.calendarAttendees}.`);
+	if (opts.peopleRoster) parts.push(`People Roster:\n${opts.peopleRoster}`);
 	if (opts.researchNotePaths && opts.researchNotePaths.length > 0) parts.push(`Research notes: ${opts.researchNotePaths.join(", ")}.`);
 	if (opts.additionalInstructions) parts.push(`Additional instructions: ${opts.additionalInstructions}`);
 	if (opts.outputFormat) parts.push(opts.outputFormat);
