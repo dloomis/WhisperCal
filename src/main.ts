@@ -583,13 +583,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): Promise<void> {
 		// Clear the "Tagging speakers…" progress status now that the LLM is done.
 		// Success/error paths below will set their own status as needed.
-		const clearProgressStatus = () => {
-			const cs = cardStatus.get(notePath);
-			if (cs?.variant === "progress") {
-				cardStatus.delete(notePath);
-				this.refreshCalendarCards(notePath);
-			}
-		};
+		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
@@ -909,6 +903,7 @@ export default class WhisperCalPlugin extends Plugin {
 				if (this.settings.llmDebugMode) {
 					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					new Notice("LLM debug session opened in Terminal");
+					this.clearProgressStatus(statusNotePath);
 					return;
 				}
 
@@ -936,6 +931,14 @@ export default class WhisperCalPlugin extends Plugin {
 					this.refreshCalendarCards(notePath);
 				}
 			}, durationMs);
+		}
+	}
+
+	private clearProgressStatus(notePath: string): void {
+		const cs = cardStatus.get(notePath);
+		if (cs?.variant === "progress") {
+			cardStatus.delete(notePath);
+			this.refreshCalendarCards(notePath);
 		}
 	}
 
