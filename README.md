@@ -565,8 +565,8 @@ WhisperCal matches attendees by checking these frontmatter fields in People note
 
 **Name field** (matched against the attendee's display name, case-insensitive):
 - `full_name`
-- Note filename (e.g., `Alex Lillian.md` matches "Alex Lillian")
-- `nickname` + last name from `full_name` (e.g., nickname "Alex" + full_name "Francis Lillian" matches "Alex Lillian")
+- Note filename (e.g., `Alex Johnson.md` matches "Alex Johnson")
+- `nickname` + last name from `full_name` (e.g., nickname "Alex" + full_name "Alexander Johnson" matches "Alex Johnson")
 
 Exchange/DoD display names in "LAST, FIRST RANK ORG" format are automatically normalized before matching. Email-derived names with trailing digits (e.g., "francis.lillian.2@example.com") are also handled.
 
