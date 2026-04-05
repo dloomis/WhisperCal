@@ -88,10 +88,9 @@ export function resolvePromptPath(promptPath: string, vaultPath: string): string
 }
 
 /**
- * Build the shell command string and resolved trigger from LlmInvokerOpts.
+ * Build the trigger string (prompt) from LlmInvokerOpts.
  */
-function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string} {
-	// Build trigger string
+function buildTrigger(opts: LlmInvokerOpts): string {
 	const parts: string[] = [];
 	if (opts.inlinePrompt) {
 		parts.push(opts.inlinePrompt);
@@ -110,8 +109,13 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 	if (opts.researchNotePaths && opts.researchNotePaths.length > 0) parts.push(`Research notes: ${opts.researchNotePaths.join(", ")}.`);
 	if (opts.additionalInstructions) parts.push(`Additional instructions: ${opts.additionalInstructions}`);
 	if (opts.outputFormat) parts.push(opts.outputFormat);
-	const trigger = parts.join(" ");
+	return parts.join(" ");
+}
 
+/**
+ * Build the CLI + flags portion of the shell command (without the trigger).
+ */
+function buildCliCommand(opts: LlmInvokerOpts): string {
 	const flagParts: string[] = [];
 	if (opts.llmModel) flagParts.push(`--model ${platformQuote(opts.llmModel)}`);
 	if (opts.llmExtraFlags.trim()) {
@@ -121,8 +125,19 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 		}
 	}
 	const flags = flagParts.join(" ");
-	const cmd = `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""} ${platformQuote(trigger)}`;
-	return {cmd, vaultPath: opts.vaultPath};
+	return `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""}`;
+}
+
+/**
+ * Build the full shell command string from LlmInvokerOpts.
+ * Pipes the trigger via stdin to avoid OS argument length limits.
+ */
+function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; vaultPath: string} {
+	const trigger = buildTrigger(opts);
+	const cli = buildCliCommand(opts);
+	// Pipe trigger via stdin using a heredoc to avoid ENAMETOOLONG on long prompts.
+	const cmd = `${cli} <<'__WCAL_EOF__'\n${trigger}\n__WCAL_EOF__`;
+	return {cmd, trigger, vaultPath: opts.vaultPath};
 }
 
 /**
@@ -134,9 +149,10 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 		return spawnLlmPromptTerminal(opts);
 	}
 
-	const {cmd, vaultPath} = buildLlmCommand(opts);
+	const {cmd, trigger, vaultPath} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
 	console.debug("[WhisperCal] LLM command:", cmd);
+	console.debug("[WhisperCal] LLM trigger:", trigger);
 
 	return new Promise((resolve) => {
 		// Windows: shell: true delegates to cmd.exe which inherits system PATH.
@@ -228,9 +244,10 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
 	const {cmd} = buildLlmCommand(interactiveOpts);
 
-	// Build the terminal command: cd to vault, then run the LLM CLI interactively.
-	// Quoting for AppleScript: escape backslashes and double quotes.
+	// Build the terminal command: cd to vault, then run the LLM CLI.
+	// Uses heredoc to pipe the trigger via stdin (avoids ENAMETOOLONG).
 	const termCmd = `cd ${shellQuote(vaultPath)} && ${cmd}`;
+	// AppleScript: escape backslashes and double quotes for the do script string.
 	const asQuoted = `"${termCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 	const osascript = [
 		`tell application "Terminal"`,

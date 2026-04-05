@@ -529,8 +529,13 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		// Build People Roster and Calendar Attendees for the LLM
-		const inviteeNames = parseInviteeNames(transcriptFm);
+		// Build People Roster and Calendar Attendees for the LLM.
+		// Invitees are always in the parent meeting note frontmatter.
+		const noteFile = this.app.vault.getAbstractFileByPath(notePath.endsWith(".md") ? notePath : notePath + ".md");
+		const noteFm = noteFile instanceof TFile
+			? (this.app.metadataCache.getFileCache(noteFile)?.frontmatter as Record<string, unknown> | undefined) ?? {}
+			: {};
+		const inviteeNames = parseInviteeNames(noteFm);
 		let calendarAttendees: string | undefined;
 		let peopleRoster: string | undefined;
 		if (inviteeNames.length > 0) {
