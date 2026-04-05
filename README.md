@@ -568,7 +568,7 @@ WhisperCal matches attendees by checking these frontmatter fields in People note
 - Note filename (e.g., `Alex Johnson.md` matches "Alex Johnson")
 - `nickname` + last name from `full_name` (e.g., nickname "Alex" + full_name "Alexander Johnson" matches "Alex Johnson")
 
-Exchange/DoD display names in "LAST, FIRST RANK ORG" format are automatically normalized before matching. Email-derived names with trailing digits (e.g., "francis.lillian.2@example.com") are also handled.
+Exchange/DoD display names in "LAST, FIRST RANK ORG" format are automatically normalized before matching. Email-derived names with trailing digits (e.g., "alex.johnson.2@example.com") are also handled.
 
 Email matching is tried first; if no email match is found, name matching is attempted. Matched attendees appear as `[[Note Name]]` wiki links in the template output. Unmatched attendees appear as plain text names.
 
