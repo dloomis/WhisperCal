@@ -237,21 +237,17 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	}
 	const {vaultPath} = opts;
 
-	// Build the command WITHOUT --dangerously-skip-permissions so it's interactive.
-	// Strip that flag from llmExtraFlags if present.
-	const interactiveFlags = opts.llmExtraFlags
-		.replace(/--dangerously-skip-permissions/g, "")
-		.trim();
-	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
+	// Use -p (print mode) so output streams to stdout and stays in
+	// Terminal's scrollback instead of vanishing with the TUI's alternate
+	// screen buffer.  Keep --dangerously-skip-permissions for tool access.
+	const trigger = buildTrigger(opts);
+	const cli = buildCliCommand(opts);
+	const tmpTrigger = path.join(os.tmpdir(), `wcal-trigger-${Date.now()}.txt`);
+	fs.writeFileSync(tmpTrigger, trigger, "utf-8");
 
-	// Write a shell script that passes the trigger as a positional argument
-	// (not via heredoc/stdin redirect).  The claude CLI needs stdin to remain
-	// the TTY so its TUI can accept keyboard input.  The script file avoids
-	// AppleScript do script's character limit on the command string.
-	const trigger = buildTrigger(interactiveOpts);
-	const cli = buildCliCommand(interactiveOpts);
+	// Script: run CLI in print mode, feed trigger via stdin, then clean up.
 	const tmpScript = path.join(os.tmpdir(), `wcal-debug-${Date.now()}.sh`);
-	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} ${shellQuote(trigger)}\nrm -f ${shellQuote(tmpScript)}\n`;
+	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} -p < ${shellQuote(tmpTrigger)}\nrm -f ${shellQuote(tmpTrigger)} ${shellQuote(tmpScript)}\n`;
 	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
 
 	// Source the script in the Terminal's login shell so PATH is inherited.
@@ -268,7 +264,8 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	return new Promise((resolve) => {
 		execFile("osascript", ["-e", osascript], {timeout: 10000}, (err) => {
 			if (err) {
-				// Clean up temp script on failure
+				// Clean up temp files on failure
+				try { fs.unlinkSync(tmpTrigger); } catch { /* ignore */ }
 				try { fs.unlinkSync(tmpScript); } catch { /* ignore */ }
 				const msg = err.message;
 				resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
