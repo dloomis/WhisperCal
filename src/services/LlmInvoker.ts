@@ -26,6 +26,21 @@ interface LlmInvokerOpts {
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
 }
 
+/**
+ * If llmExtraFlags references a --mcp-config file, ensure it exists.
+ * Files in /tmp are wiped on reboot, so recreate with an empty config.
+ */
+function ensureMcpConfigFile(flags: string): void {
+	const match = /--mcp-config\s+(\S+)/.exec(flags);
+	if (!match) return;
+	const configPath = match[1]!;
+	if (!fs.existsSync(configPath)) {
+		try {
+			fs.writeFileSync(configPath, '{"mcpServers": {}}\n', "utf-8");
+		} catch { /* best-effort */ }
+	}
+}
+
 /** Active child processes tracked for cleanup on plugin unload. */
 export const activeProcesses = new Set<ChildProcess>();
 
@@ -146,6 +161,9 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
  * Returns the exit code and any stderr output when the process finishes.
  */
 export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
+	// Ensure any --mcp-config file referenced in flags exists (/tmp is wiped on reboot).
+	ensureMcpConfigFile(opts.llmExtraFlags);
+
 	if (opts.debugMode) {
 		return spawnLlmPromptTerminal(opts);
 	}
