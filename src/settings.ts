@@ -38,6 +38,7 @@ export interface WhisperCalSettings {
 	researchPromptPath: string;
 	microphoneUser: string;
 	llmEnabled: boolean;
+	anthropicApiKey: string;
 	llmCli: string;
 	llmExtraFlags: string;
 	speakerTagModel: string;
@@ -82,6 +83,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
 	llmEnabled: false,
+	anthropicApiKey: "",
 	llmCli: "claude",
 	llmExtraFlags: "--dangerously-skip-permissions",
 	speakerTagModel: "",
@@ -585,6 +587,22 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.debouncedSave();
 				}));
 
+		new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setName("Anthropic API key")
+			.setDesc("Used to populate model dropdowns. Not sent to the CLI — the CLI uses its own auth.")
+			.addText(text => {
+				text.inputEl.type = "password";
+				text.inputEl.style.width = "260px";
+				text.setPlaceholder("sk-ant-...")
+					.setValue(this.plugin.settings.anthropicApiKey)
+					.onChange((value) => {
+						this.plugin.settings.anthropicApiKey = value.trim();
+						this.debouncedSave();
+						void refreshModels();
+					});
+			});
+
 		// Per-prompt settings: each prompt has a file path + model selector
 		const modelSelects: HTMLSelectElement[] = [];
 
@@ -610,7 +628,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 			new Setting(containerEl)
 				.setName(`${name} model`)
-				.setDesc(`Claude model for ${name.toLowerCase()}. Set ANTHROPIC_API_KEY to load available models.`)
+				.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key above to load available models.`)
 				.addDropdown(dropdown => {
 					modelSelects.push(dropdown.selectEl);
 					dropdown.addOption("", "Default");
@@ -659,11 +677,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.debouncedSave();
 				}));
 
-		// Populate all model dropdowns once the API responds
-		void this.fetchAnthropicModels().then(models => {
-			if (models.length === 0) return;
-			const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
-				["speakerTagModel", "summarizerModel", "researchModel"];
+		// Populate all model dropdowns from the API
+		const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
+			["speakerTagModel", "summarizerModel", "researchModel"];
+		const refreshModels = async () => {
+			const models = await this.fetchAnthropicModels();
 			for (let i = 0; i < modelSelects.length; i++) {
 				const sel = modelSelects[i]!;
 				const current = this.plugin.settings[modelKeys[i]!];
@@ -674,7 +692,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}
 				sel.value = current;
 			}
-		});
+		};
+		void refreshModels();
 
 		/* eslint-enable obsidianmd/ui/sentence-case */
 
@@ -737,7 +756,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
 		try {
-			const apiKey = globalThis.process?.env?.["ANTHROPIC_API_KEY"];
+			const apiKey = this.plugin.settings.anthropicApiKey || globalThis.process?.env?.["ANTHROPIC_API_KEY"];
 			if (!apiKey) return [];
 
 			const response = await requestUrl({

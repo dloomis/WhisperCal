@@ -117,7 +117,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; vaultPath: string}
 		}
 	}
 	const flags = flagParts.join(" ");
-	const cmd = `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""} ${platformQuote(trigger)}`;
+	const cmd = `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""} -- ${platformQuote(trigger)}`;
 	return {cmd, vaultPath: opts.vaultPath};
 }
 
