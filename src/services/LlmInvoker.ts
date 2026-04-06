@@ -1,4 +1,5 @@
 import {spawn, execFile, type ChildProcess} from "child_process";
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {Platform} from "obsidian";
@@ -242,11 +243,16 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		.replace(/--dangerously-skip-permissions/g, "")
 		.trim();
 	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
-	const {cmd} = buildLlmCommand(interactiveOpts);
 
-	// Build the terminal command: cd to vault, then run the LLM CLI.
-	// Uses heredoc to pipe the trigger via stdin (avoids ENAMETOOLONG).
-	const termCmd = `cd ${shellQuote(vaultPath)} && ${cmd}`;
+	// Write trigger to a temp file instead of embedding in AppleScript —
+	// do script has a character limit that truncates long heredocs.
+	const trigger = buildTrigger(interactiveOpts);
+	const cli = buildCliCommand(interactiveOpts);
+	const tmpFile = path.join(os.tmpdir(), `wcal-trigger-${Date.now()}.txt`);
+	fs.writeFileSync(tmpFile, trigger, "utf-8");
+
+	// Terminal command reads trigger from temp file via stdin redirect, then cleans up.
+	const termCmd = `cd ${shellQuote(vaultPath)} && ${cli} < ${shellQuote(tmpFile)}; rm -f ${shellQuote(tmpFile)}`;
 	// AppleScript: escape backslashes and double quotes for the do script string.
 	const asQuoted = `"${termCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 	const osascript = [
@@ -259,6 +265,8 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	return new Promise((resolve) => {
 		execFile("osascript", ["-e", osascript], {timeout: 10000}, (err) => {
 			if (err) {
+				// Clean up temp file on failure
+				try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
 				const msg = err.message;
 				resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
 			} else {
