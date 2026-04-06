@@ -244,13 +244,14 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		.trim();
 	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
 
-	// Write a shell script containing the full heredoc command instead of
-	// embedding it in AppleScript — do script has a character limit that
-	// truncates long strings.  Sourcing the script preserves heredoc
-	// semantics (stdin stays TTY-backed) so the claude CLI starts its TUI.
-	const {cmd} = buildLlmCommand(interactiveOpts);
+	// Write a shell script that passes the trigger as a positional argument
+	// (not via heredoc/stdin redirect).  The claude CLI needs stdin to remain
+	// the TTY so its TUI can accept keyboard input.  The script file avoids
+	// AppleScript do script's character limit on the command string.
+	const trigger = buildTrigger(interactiveOpts);
+	const cli = buildCliCommand(interactiveOpts);
 	const tmpScript = path.join(os.tmpdir(), `wcal-debug-${Date.now()}.sh`);
-	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cmd}\nrm -f ${shellQuote(tmpScript)}\n`;
+	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} ${shellQuote(trigger)}\nrm -f ${shellQuote(tmpScript)}\n`;
 	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
 
 	// Source the script in the Terminal's login shell so PATH is inherited.
