@@ -244,15 +244,17 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		.trim();
 	const interactiveOpts = {...opts, llmExtraFlags: interactiveFlags};
 
-	// Write trigger to a temp file instead of embedding in AppleScript —
-	// do script has a character limit that truncates long heredocs.
-	const trigger = buildTrigger(interactiveOpts);
-	const cli = buildCliCommand(interactiveOpts);
-	const tmpFile = path.join(os.tmpdir(), `wcal-trigger-${Date.now()}.txt`);
-	fs.writeFileSync(tmpFile, trigger, "utf-8");
+	// Write a shell script containing the full heredoc command instead of
+	// embedding it in AppleScript — do script has a character limit that
+	// truncates long strings.  Sourcing the script preserves heredoc
+	// semantics (stdin stays TTY-backed) so the claude CLI starts its TUI.
+	const {cmd} = buildLlmCommand(interactiveOpts);
+	const tmpScript = path.join(os.tmpdir(), `wcal-debug-${Date.now()}.sh`);
+	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cmd}\nrm -f ${shellQuote(tmpScript)}\n`;
+	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
 
-	// Terminal command reads trigger from temp file via stdin redirect, then cleans up.
-	const termCmd = `cd ${shellQuote(vaultPath)} && ${cli} < ${shellQuote(tmpFile)}; rm -f ${shellQuote(tmpFile)}`;
+	// Source the script in the Terminal's login shell so PATH is inherited.
+	const termCmd = `. ${shellQuote(tmpScript)}`;
 	// AppleScript: escape backslashes and double quotes for the do script string.
 	const asQuoted = `"${termCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 	const osascript = [
@@ -265,8 +267,8 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	return new Promise((resolve) => {
 		execFile("osascript", ["-e", osascript], {timeout: 10000}, (err) => {
 			if (err) {
-				// Clean up temp file on failure
-				try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+				// Clean up temp script on failure
+				try { fs.unlinkSync(tmpScript); } catch { /* ignore */ }
 				const msg = err.message;
 				resolve({exitCode: 1, stdout: "", stderr: `Failed to open Terminal: ${msg}`});
 			} else {
