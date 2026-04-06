@@ -382,29 +382,6 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Top-level unscheduled placeholder — just a Note pill, no state lookup
-	if (event.id === "unscheduled") {
-		const actions = content.createDiv({cls: "whisper-cal-card-actions"});
-		const notePill = renderPill(actions, "file-plus-2", "Note", "incomplete");
-		notePill.addEventListener("click", () => {
-			notePill.disabled = true;
-			const handleClick = async () => {
-				try {
-					const name = await new NameInputModal(app, {
-						defaultValue: event.subject,
-					}).prompt();
-					if (!name) return;
-					await noteCreator.createNote({...event, subject: name});
-					if (onNoteCreated) onNoteCreated(event.id);
-				} finally {
-					notePill.disabled = false;
-				}
-			};
-			void handleClick();
-		});
-		return card;
-	}
-
 	// Collapse toggle — appended to the gutter icon row, pushed right
 	// Restore expand/collapse state across refreshes via module-level set
 	const isExpanded = expandedCards.has(opts.event.id);
@@ -424,6 +401,30 @@ export function renderMeetingCard(
 			expandedCards.add(opts.event.id);
 		}
 	});
+
+	// Top-level unscheduled placeholder — just a Note pill, no state lookup
+	if (event.id === "unscheduled") {
+		const actionsWrap = content.createDiv({cls: "whisper-cal-card-actions-wrap"});
+		const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
+		const notePill = renderPill(actions, "file-plus-2", "Note", "incomplete");
+		notePill.addEventListener("click", () => {
+			notePill.disabled = true;
+			const handleClick = async () => {
+				try {
+					const name = await new NameInputModal(app, {
+						defaultValue: event.subject,
+					}).prompt();
+					if (!name) return;
+					await noteCreator.createNote({...event, subject: name});
+					if (onNoteCreated) onNoteCreated(event.id);
+				} finally {
+					notePill.disabled = false;
+				}
+			};
+			void handleClick();
+		});
+		return card;
+	}
 
 	// Dynamic zone — rebuilt in-place on card updates without touching static content
 	const dynamicZone = content.createDiv({cls: "whisper-cal-card-dynamic"});

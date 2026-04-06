@@ -1,6 +1,6 @@
 import {App, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus} from "./RecordingApi";
-import {updateFrontmatter} from "../utils/frontmatter";
+import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {recordingState, type RecordingInfo} from "../state";
 import {formatDate, formatTime, sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
@@ -238,10 +238,14 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		onStatus?.("Enriching transcript\u2026");
 		await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
 
-		// Link transcript to meeting note + set pipeline state
+		// Link transcript to meeting note + set pipeline state.
+		// Batch into a single processFrontMatter call to avoid a race with the
+		// pipeline_state mirror handler that fires when the transcript is enriched.
 		const transcriptBasename = transcriptFile.basename;
-		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
-		await updateFrontmatter(app, notePath, "pipeline_state", "titled");
+		await batchUpdateFrontmatter(app, notePath, {
+			transcript: `[[${transcriptBasename}]]`,
+			pipeline_state: "titled",
+		});
 
 		onStatus?.("Transcript linked", "check", 4000, "done");
 	} catch (err) {

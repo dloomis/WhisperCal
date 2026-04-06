@@ -915,6 +915,7 @@ export default class WhisperCalPlugin extends Plugin {
 			} finally {
 				jobSet.delete(filePath);
 				this.activeLlmCount--;
+				this.clearProgressStatus(statusNotePath);
 				this.refreshCalendarCards(filePath);
 				opts.onCleanup?.();
 			}

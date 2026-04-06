@@ -85,8 +85,8 @@ export async function validateLlmCli(cliPath: string): Promise<boolean> {
 	}
 	const userShell = os.userInfo().shell || "/bin/zsh";
 	return new Promise((resolve) => {
-		// Use login shell so the user's PATH (Homebrew etc.) is available
-		const child = spawn(userShell, ["-l", "-c", `command -v ${shellQuote(cliPath)}`], {
+		// Use interactive login shell so PATH set in .zshrc/.bashrc is available
+		const child = spawn(userShell, ["-li", "-c", `command -v ${shellQuote(cliPath)}`], {
 			stdio: ["ignore", "ignore", "ignore"],
 		});
 		child.on("error", () => resolve(false));
@@ -181,7 +181,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	return new Promise((resolve) => {
 		// Windows: shell: true delegates to cmd.exe which inherits system PATH.
-		// macOS/Linux: login shell so the user's PATH (Homebrew etc.) is available.
+		// macOS/Linux: interactive login shell so PATH set in .zshrc/.bashrc is available.
 		let child: ChildProcess;
 		if (Platform.isWin) {
 			child = spawn(cmd, [], {
@@ -191,7 +191,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 			});
 		} else {
 			const userShell = os.userInfo().shell || "/bin/zsh";
-			child = spawn(userShell, ["-l", "-c", cmd], {
+			child = spawn(userShell, ["-li", "-c", cmd], {
 				cwd: vaultPath,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
