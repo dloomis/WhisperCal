@@ -133,6 +133,12 @@ function buildTrigger(opts: LlmInvokerOpts): string {
  */
 function buildCliCommand(opts: LlmInvokerOpts): string {
 	const flagParts: string[] = [];
+	// Print mode: process one prompt via stdin and exit (no interactive TUI).
+	flagParts.push("-p");
+	// Skip loading user skills — they inflate the system prompt with irrelevant context.
+	flagParts.push("--disable-slash-commands");
+	// Don't persist session data to disk — these are ephemeral worker runs.
+	flagParts.push("--no-session-persistence");
 	if (opts.llmModel) flagParts.push(`--model ${platformQuote(opts.llmModel)}`);
 	if (opts.llmExtraFlags.trim()) {
 		// Split extra flags on whitespace and quote each individually to prevent injection
@@ -255,17 +261,15 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	}
 	const {vaultPath} = opts;
 
-	// Use -p (print mode) so output streams to stdout and stays in
-	// Terminal's scrollback instead of vanishing with the TUI's alternate
-	// screen buffer.  Keep --dangerously-skip-permissions for tool access.
 	const trigger = buildTrigger(opts);
 	const cli = buildCliCommand(opts);
 	const tmpTrigger = path.join(os.tmpdir(), `wcal-trigger-${Date.now()}.txt`);
 	fs.writeFileSync(tmpTrigger, trigger, "utf-8");
 
 	// Script: run CLI in print mode, feed trigger via stdin, then clean up.
+	// buildCliCommand already includes -p for print mode.
 	const tmpScript = path.join(os.tmpdir(), `wcal-debug-${Date.now()}.sh`);
-	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} -p < ${shellQuote(tmpTrigger)}\nrm -f ${shellQuote(tmpTrigger)} ${shellQuote(tmpScript)}\n`;
+	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} < ${shellQuote(tmpTrigger)}\nrm -f ${shellQuote(tmpTrigger)} ${shellQuote(tmpScript)}\n`;
 	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
 
 	// Source the script in the Terminal's login shell so PATH is inherited.
