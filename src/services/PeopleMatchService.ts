@@ -25,6 +25,10 @@ const EMAIL_FIELDS = [
 export interface PersonInfo {
 	notePath: string;
 	personnelType: string;
+	fullName: string;
+	nickname: string;
+	roleTitle: string;
+	organization: string;
 }
 
 interface PeopleIndex {
@@ -72,6 +76,49 @@ export class PeopleMatchService {
 		return this.lookupOne(this.buildIndex(), email, name);
 	}
 
+	/**
+	 * Build a People Roster Markdown table for speaker tagging.
+	 * Mic user is always included; invitees are enriched up to maxEnriched rows.
+	 * Returns empty string if no names to include.
+	 */
+	buildRoster(microphoneUser: string, inviteeNames: string[], maxEnriched: number): string {
+		if (!this.peopleFolderPath && !microphoneUser && inviteeNames.length === 0) return "";
+
+		const index = this.buildIndex();
+		const rows: {fullName: string; nickname: string; context: string; noteFilename: string; source: string}[] = [];
+		const seen = new Set<string>();
+
+		const addRow = (name: string, source: string): boolean => {
+			if (!name) return false;
+			const key = name.toLowerCase();
+			if (seen.has(key)) return false;
+			if (rows.length >= maxEnriched) return false;
+			seen.add(key);
+
+			const info = this.lookupOne(index, "", name);
+			const fullName = info?.fullName || name;
+			const nickname = info?.nickname || "";
+			const role = info?.roleTitle || "";
+			const org = info?.organization || "";
+			const context = role && org ? `${role}, ${org}` : role || org;
+			const noteFilename = info ? info.notePath.split("/").pop() ?? "" : "";
+			rows.push({fullName, nickname, context, noteFilename, source});
+			return true;
+		};
+
+		if (microphoneUser) addRow(microphoneUser, "microphone_user");
+		for (const name of inviteeNames) addRow(name, "calendar");
+
+		if (rows.length === 0) return "";
+
+		const header = "| Full Name | Nickname | Context | People Note Filename | Source |";
+		const sep = "|-----------|----------|---------|---------------------|--------|";
+		const body = rows.map(r =>
+			`| ${r.fullName} | ${r.nickname} | ${r.context} | ${r.noteFilename} | ${r.source} |`
+		);
+		return [header, sep, ...body].join("\n");
+	}
+
 	private lookupOne(index: PeopleIndex, email: string, name: string): PersonInfo | null {
 		const emailLower = email.toLowerCase();
 		const nameLower = name.toLowerCase();
@@ -103,7 +150,18 @@ export class PeopleMatchService {
 			const notePath = file.path.replace(/\.md$/, "");
 			const rawType: unknown = fm["personnel_type"];
 			const personnelType = typeof rawType === "string" ? rawType : "";
-			const info: PersonInfo = {notePath, personnelType};
+			const fullName: unknown = fm["full_name"];
+			const nickname: unknown = fm["nickname"];
+			const rawRole: unknown = fm["role_title"];
+			const rawOrg: unknown = fm["organization"] ?? fm["company"];
+			const info: PersonInfo = {
+				notePath,
+				personnelType,
+				fullName: typeof fullName === "string" ? fullName : "",
+				nickname: typeof nickname === "string" ? nickname : "",
+				roleTitle: typeof rawRole === "string" ? rawRole : "",
+				organization: typeof rawOrg === "string" ? rawOrg : "",
+			};
 
 			for (const field of EMAIL_FIELDS) {
 				const value: unknown = fm[field];
@@ -112,7 +170,6 @@ export class PeopleMatchService {
 				}
 			}
 
-			const fullName: unknown = fm["full_name"];
 			if (typeof fullName === "string" && fullName) {
 				byName.set(fullName.toLowerCase(), info);
 			}
@@ -124,7 +181,6 @@ export class PeopleMatchService {
 			}
 
 			// Index nickname + last name if available
-			const nickname: unknown = fm["nickname"];
 			if (typeof nickname === "string" && nickname && typeof fullName === "string" && fullName) {
 				const lastWord = fullName.trim().split(/\s+/).pop();
 				if (lastWord) {

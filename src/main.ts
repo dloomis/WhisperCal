@@ -26,6 +26,7 @@ import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
+import {PeopleMatchService} from "./services/PeopleMatchService";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
 function formatModelName(modelId: string): string {
@@ -36,6 +37,22 @@ function formatModelName(modelId: string): string {
 		return `${family} ${match[2]}.${match[3]}`;
 	}
 	return modelId;
+}
+
+/** Extract invitee names from transcript frontmatter (meeting_invitees, calendar_attendees, or invitees). */
+function parseInviteeNames(fm: Record<string, unknown>): string[] {
+	const raw = fm["meeting_invitees"] ?? fm["calendar_attendees"] ?? fm["invitees"];
+	if (!Array.isArray(raw)) return [];
+	const names: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== "string") continue;
+		// Strip wiki-link wrappers: "[[People/Jane Smith]]" → "Jane Smith"
+		const stripped = entry.replace(/^\[\[/, "").replace(/\]\]$/, "");
+		// Take the last path segment if it's a path
+		const name = stripped.includes("/") ? stripped.split("/").pop()! : stripped;
+		if (name) names.push(name);
+	}
+	return names;
 }
 
 interface PluginData extends WhisperCalSettings {
@@ -512,6 +529,28 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
+		// Build People Roster and Calendar Attendees for the LLM.
+		// Invitees are always in the parent meeting note frontmatter.
+		const noteFile = this.app.vault.getAbstractFileByPath(notePath.endsWith(".md") ? notePath : notePath + ".md");
+		const noteFm = noteFile instanceof TFile
+			? (this.app.metadataCache.getFileCache(noteFile)?.frontmatter as Record<string, unknown> | undefined) ?? {}
+			: {};
+		const inviteeNames = parseInviteeNames(noteFm);
+		let calendarAttendees: string | undefined;
+		let peopleRoster: string | undefined;
+		if (inviteeNames.length > 0) {
+			calendarAttendees = inviteeNames.join(", ");
+		}
+		if (this.settings.peopleFolderPath) {
+			const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+			const roster = peopleSvc.buildRoster(
+				this.settings.microphoneUser,
+				inviteeNames,
+				this.settings.rosterMaxEnriched,
+			);
+			if (roster) peopleRoster = roster;
+		}
+
 		this.runLlmJob({
 			jobSet: speakerTagJobs,
 			filePath: transcriptPath,
@@ -531,6 +570,8 @@ export default class WhisperCalPlugin extends Plugin {
 				llmModel: this.settings.speakerTagModel || undefined,
 				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
+				calendarAttendees,
+				peopleRoster,
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
@@ -542,13 +583,7 @@ export default class WhisperCalPlugin extends Plugin {
 	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): Promise<void> {
 		// Clear the "Tagging speakers…" progress status now that the LLM is done.
 		// Success/error paths below will set their own status as needed.
-		const clearProgressStatus = () => {
-			const cs = cardStatus.get(notePath);
-			if (cs?.variant === "progress") {
-				cardStatus.delete(notePath);
-				this.refreshCalendarCards(notePath);
-			}
-		};
+		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
@@ -868,6 +903,7 @@ export default class WhisperCalPlugin extends Plugin {
 				if (this.settings.llmDebugMode) {
 					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					new Notice("LLM debug session opened in Terminal");
+					this.clearProgressStatus(statusNotePath);
 					return;
 				}
 
@@ -895,6 +931,14 @@ export default class WhisperCalPlugin extends Plugin {
 					this.refreshCalendarCards(notePath);
 				}
 			}, durationMs);
+		}
+	}
+
+	private clearProgressStatus(notePath: string): void {
+		const cs = cardStatus.get(notePath);
+		if (cs?.variant === "progress") {
+			cardStatus.delete(notePath);
+			this.refreshCalendarCards(notePath);
 		}
 	}
 

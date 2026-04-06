@@ -1,265 +1,287 @@
 # Speaker Auto-Tag Prompt
 
-Self-contained prompt for tagging unidentified speakers in a single transcript stub. Runs the full 6-rule speaker identification algorithm using vault data (People notes, calendar attendees) — no MacWhisper DB interaction.
+Self-contained prompt for tagging unidentified speakers in one transcript stub using vault data (People notes, calendar attendees). Returns proposed speaker mappings; the caller handles review and writes.
 
-**Design principle:** This prompt is a self-contained, single-transcript analysis unit. It analyzes one transcript and returns proposed speaker mappings. The calling plugin handles user review and writing changes.
+**CRITICAL:** Never read the full transcript in a single Read call. Transcripts exceed the 10k token file-read limit. Use chunked reads (limit=500 per chunk). See Step 2.
 
-**Invocation pattern:**
-```
-Follow the instructions in <path to this prompt file>.
-Transcript: Transcripts/2026-03-02 - Weekly Standup - Transcript.md.
-Microphone user: Jane Smith.
-Output format: <caller specifies expected output format>
-```
-
-**Optional parameters:**
-- `Calendar Attendees:` — pre-fetched attendee table (skips Step 5)
-- `People Roster:` — pre-built context table (skips Step 6 People resolution entirely)
-- `People Folder:` — folder name for People notes (default: `People`)
+**OPTIMIZATION FOCUS:** Read People notes deterministically from the parent meeting invitees list (no broad name-based glob), batch all invitee reads in parallel, build a comprehensive context table before analysis, and use role/context matching for confidence refinement.
 
 ---
 
-## Step 0: Pre-load Tools
+## Step 1: Setup
 
-If Read, Glob, and Grep are already available (e.g., loaded earlier in the conversation), **skip this step**.
-
-Otherwise, load all required tools in a single call:
-
-```
-ToolSearch("select:Read,Glob,Grep")
-```
-
----
-
-## Step 1: Parse Invocation Parameters
+If Read, Glob, Grep, and Bash are not already available, load them: ToolSearch("select:Read,Glob,Grep,Bash")
 
 Extract from the calling message:
-- `Transcript:` → path to the transcript stub file
-- `Microphone user:` → full name of the person speaking into the microphone
-- `Calendar Attendees:` → pre-fetched attendee context table (optional — skips Step 5 if provided)
-- `People Roster:` → pre-built People context table (optional — skips Step 6 People resolution entirely)
-- `People Folder:` → folder name for People notes (optional — defaults to `People`)
-- `Output format:` → the expected output format for the proposed mapping (provided by the caller)
+- Transcript — path to the transcript stub file
+- Microphone user — full name of the person at the microphone
+- Calendar Attendees — full invitee name list provided by the plugin at runtime (skips Step 4)
+- People Roster — pre-built People context table provided by the plugin at runtime (skips Step 3 — use as the People context table directly)
+- People Folder — folder name for People notes (default: People)
+- Output format — expected output format for the mapping
 
-**Path resolution:** Try the `Transcript:` path as-is first. If not found, error with: "Transcript file not found: [path]. Check the path and try again."
+Path resolution: try the Transcript path as-is. If not found, error with the path.
 
-**Vault root derivation:** Extract the vault root from the transcript path by removing the transcript folder suffix. Use this derived root combined with `{People Folder}/` for all subsequent lookups.
+Vault root derivation: extract vault root from the transcript path by removing the transcript folder suffix. Use this root combined with People Folder for all lookups.
 
-**Derived values (from filename — no file read needed):**
-- `MEETING_TITLE` — strip date prefix (first 13 chars for `YYYY-MM-DD - ` or first 11 chars for `YYYY-MM-DD `) and ` - Transcript` suffix from the filename
-- `SANITIZED_SUBJECT` — take `MEETING_TITLE`, replace filesystem-unsafe characters (`/`, `\`, `:`) with hyphens. Used for cache Glob in Step 2.
-
----
-
-## Step 2: Read Transcript Stub + Glob Roster Cache
-
-**Parallelization opportunity:** The `SANITIZED_SUBJECT` was derived from the filename in Step 1 (no file read needed). Issue the transcript Read and the roster cache Glob in the **same parallel tool-call batch**:
-
-```
-Read(transcript_path)                                                    // Step 2
-Glob("Caches/Speaker Rosters/{SANITIZED_SUBJECT}.md")                   // Step 6 cache early
-```
-
-Use the **Read tool** to open the transcript file. Extract from frontmatter:
-
-| Field | Notes |
-|-------|-------|
-| `session_id` | Standard pipeline stubs |
-| `macwhisper_session_id` | WhisperCal stubs — use when `session_id` is absent |
-| `speakers` | Array with name, id, stub flag, line_count per speaker |
-| `calendar_event` | String (event title), `"none"`, or absent |
-| `calendar_attendees` | Array of plain string names — if present |
-| `invitees` | WhisperCal variant of `calendar_attendees` |
-| `meeting_invitees` | Wiki-link attendee list (e.g. `- "[[Name]]"`) — check this field too |
-| `meeting_subject` | Meeting title — used to validate cache match |
-| `is_recurring` | Boolean — enables roster cache path |
-| `pipeline_state` | Current state in pipeline |
-| `tags` | Detect WhisperCal stubs (`tags: [transcript]`) |
-
-**Also extract:** The full transcript body (everything below the frontmatter closing `---`). This is the primary input for speaker analysis in Step 7.
-
-**Error conditions:**
-- File has no frontmatter (no `---` delimiters) → error: "File has no YAML frontmatter. Is this a transcript stub?"
-- No `session_id` or `macwhisper_session_id` field → warning: "No session ID found. Proceeding — session ID is metadata only."
+Derived values (from filename, no read needed):
+- MEETING_TITLE — strip date prefix (first 13 chars for "YYYY-MM-DD - " or first 11 chars for "YYYY-MM-DD ") and " - Transcript" suffix
+- SANITIZED_SUBJECT — take MEETING_TITLE, replace /, \, : with hyphens. Used for cache Glob in Step 2.
 
 ---
 
-## Step 3: Pipeline State Check
+## Step 2: Read Transcript + Glob Roster Cache + Glob People Notes
 
-Read `pipeline_state` from stub frontmatter:
+**Round 1 — issue in a single parallel batch:**
+- Read(transcript_path, limit=60) — frontmatter only
+- Bash: wc -l transcript_path — total line count
+- Glob("Caches/Speaker Rosters/SANITIZED_SUBJECT.md") — roster cache for Step 5
 
-- `pipeline_state: tagged` or `extracted` or `summarized` → proceed (re-running with updated confidence)
-- `pipeline_state: titled` or absent → proceed
+Extract from frontmatter:
+- session_id (or macwhisper_session_id for WhisperCal stubs)
+- speakers — array with name, id, stub flag, line_count per speaker
+- meeting_note — wiki-link to parent meeting note (used in Step 3a)
+- calendar_event — event title, "none", or absent
+- calendar_attendees — array of plain string names (or invitees for WhisperCal, or meeting_invitees for wiki-link format like "- [[Name]]")
+- meeting_subject — used to validate cache match
+- is_recurring — enables roster cache path
+- pipeline_state — current pipeline state
+- tags — detect WhisperCal stubs (tags: [transcript])
 
----
+Pipeline state: any value (tagged, extracted, summarized, titled) or absent means proceed.
 
-## Step 5: Calendar Attendees
+**Round 2 — transcript body chunks in a single parallel batch.** Use the line count from Round 1. Read in chunks of 500 lines, starting after the frontmatter:
+- Read(transcript_path, offset=61, limit=500) — chunk 1
+- Read(transcript_path, offset=561, limit=500) — chunk 2
+- Read(transcript_path, offset=1061, limit=500) — chunk 3 if needed
+- Continue until total lines are covered.
 
-**Skip this step entirely if** `Calendar Attendees:` was provided in the invocation parameters (pre-fetched by orchestrator). Use the provided table directly.
-
-**Also skip if** `People Roster:` was provided — calendar attendees are already incorporated into the roster.
-
-Determine the calendar attendee source:
-
-- **`calendar_event: none`** → skip calendar lookups (ad-hoc meeting), proceed to Step 6
-- **`calendar_attendees`, `invitees`, or `meeting_invitees` populated** → use directly (strip `[[` / `]]` wiki-link wrappers if present)
-- **No calendar data from any source** → proceed without; calendar context improves confidence but is not required
-
----
-
-## Step 6: Speaker Candidate Roster
-
-**Skip this entire step if** `People Roster:` was provided in the invocation parameters. Use the provided roster as the People context table directly and proceed to Step 7.
-
-Build the speaker candidate roster from vault-native sources. This is the primary enrichment step — all data comes from the vault.
-
-### 6a. People Context Table
-
-Collect all unique names from: stub speakers (frontmatter) and calendar attendees (Step 5).
-
-**Completeness check:** After collection, verify every calendar invitee produced at least one candidate name. If any invitee was not resolved to a name (e.g., unparseable email format), log a warning: `"Could not extract name from invitee: {raw_value}"` and skip that entry rather than silently dropping it.
-
-#### Roster Cache Check
-
-**Priority order:** `People Roster:` parameter (highest — skips Step 6 entirely) > cache hit (skips Phase 1+2 Globs/Reads below) > full rebuild.
-
-The cache Glob was already issued in Step 2 (parallel with the transcript Read). Use those results here.
-
-1. **Eligibility:** Transcript has `meeting_subject` AND `is_recurring: true`.
-2. **Lookup:** Use the cache Glob result from Step 2.
-3. **If found, Read it.** Check the `generated` frontmatter field:
-   - **Fresh (< 14 days old):** Compare current candidate names (from stubs + calendar collected above) against the cached roster's `Full Name` column.
-     - **All present** → use the cached table as the People context table. **Skip Phase 1 + Phase 2 entirely.** Proceed to Step 7.
-     - **New names found** → run Phase 1 + Phase 2 below for **only the new names** (delta resolution). Merge results into the cached table. Use the merged table as the People context table.
-   - **Stale (≥ 14 days old)** → treat as cache miss; fall through to full Phase 1 + Phase 2 below.
-4. **If not found** → fall through to full Phase 1 + Phase 2 below.
-5. **Not eligible (non-recurring)** → skip cache entirely; fall through.
-
-#### Phase 1+2: Full People Note Resolution
-
-For each unique name, resolve the People note using **last-name-first Glob patterns** (`{People Folder}` from invocation parameters):
-- **Full name known:** Use `{People Folder}/*[LastName]*.md` — this catches nickname-based filenames (e.g., "Kep Brown.md" for Kenneth Brown). If multiple results, disambiguate by first name.
-- **Single name only:** Use `{People Folder}/*[Name]*.md`
-
-**Two-phase execution (MANDATORY — do not interleave):**
-
-1. **Phase 1 — Glob all:** Issue ALL People note Glob calls in a single parallel tool-call batch. Do not read any People note until all Glob results are collected.
-2. **Phase 2 — Read all:** Issue ALL resulting Read calls in a single parallel tool-call batch. Extract `full_name`, `nickname`, `role_title`, and `company/org` from each. Build a `Context` value per person: `{role_title}, {company/org}` (omit the comma if one field is empty; leave blank if both are empty).
-
-Build the People context table (the `People Note Filename` column is reused in Step 8 — no re-Globbing):
-
-```
-| Full Name | Nickname | Context | People Note Filename | Source |
-|-----------|----------|---------|---------------------|--------|
-| Michael Chen | Mike | Platform Engineer, Acme Corp | Michael Chen | calendar |
-| Jane Smith | Jane | Frontend Lead, Project Alpha | Jane Smith | microphone_user |
-```
+Most transcripts need 1 to 3 chunks. The full body across all chunks is the primary input for Step 6.
 
 ---
 
-## Step 7: Speaker Identification Analysis
+## Step 3: Read Invitees from Parent Meeting Note (FALLBACK)
 
-Run the inline LLM analysis using all data gathered in Steps 2-6.
+**Default behavior:** The plugin provides `People Roster` at runtime. Use it as the People context table directly and skip to Step 4.
 
-### Input Data
+**Fallback (no People Roster provided):** Read invitees from the parent meeting note. Complete this before Step 4 to maximize cache hits and build context early.
 
-| Source | Data |
-|--------|------|
-| Transcript body | Full text from Step 2 (speaker labels + timestamps + utterances) |
-| Speaker stubs | `speakers` array from frontmatter (name, stub flag, line_count) |
-| Calendar attendees | From Step 5 (names, emails, People note matches) |
-| People context | From Step 6a (full_name, nickname, context, People Note filename for all candidates) |
+### 3a. Read Parent Meeting Note
 
-### 6 Priority Rules
+The transcript frontmatter contains `meeting_note` field with a wiki-link to the parent meeting note (e.g., `[[2026-04-04 - Test Transcript]]`).
 
-Apply these rules in order. Higher-priority rules override lower ones. Each rule can assign a speaker name with a confidence level.
+- Extract the meeting note path from the wiki-link
+- Read the meeting note (limit=100 to capture frontmatter + invitees section)
+- Extract the `meeting_invitees` field — this contains an array of People note wiki-links or plain attendee names
 
-#### Rule 1: Microphone Speaker (CERTAIN)
-
-The `Microphone user:` from invocation parameters. Look up in the People context table — always present as a candidate. Assign to the "Microphone" label in the transcript; if absent, assign to the speaker with the most lines. **Confidence:** CERTAIN. **Evidence:** "microphone". Hard rule — never overridden by subsequent rules.
-
-#### Rule 2: Calendar Attendees (CERTAIN or HIGH)
-
-Use calendar attendees from Step 5.
-
-- **Calendar + vocative match** = CERTAIN confidence. (Attendee name appears in calendar AND a vocative for that person is detected in transcript — see Rule 3.)
-- **Calendar + single transcript signal** = HIGH confidence. (Attendee in calendar AND one other signal: speaking style, topic expertise, response to vocative.)
-- **Calendar alone** without any transcript evidence = **do not assign**. People may be on the invite but not present.
-
-#### Rule 3: Vocative Scanning
-
-Parse the transcript body for vocative patterns — instances where a speaker name is used in direct address:
-
-- `"[Name], go ahead"`
-- `"Thanks, [Name]"`
-- `"[Name], I think..."`
-- `"[Name], what do you think?"`
-- `"Good point, [Name]"`
-- `"[Name], can you..."`
-- `"Over to you, [Name]"`
-- `"[Name]?" (calling on someone)`
-
-Match detected vocatives against the People context table:
-- **First names** derived from `Full Name` column (first word of full name)
-- **Nicknames** from the `Nickname` column
-
-Each vocative detection is a signal. Multiple vocative detections for the same name = stronger signal.
-
-**Unmatched vocative recovery:** If any vocative names do not match candidates in the People context table (first name, nickname, or full name), collect ALL unmatched names first, then issue all recovery Globs in a **single parallel batch**:
-
+Example invitees field:
 ```
-Glob("{People Folder}/*{name1}*.md")    // all in one batch
-Glob("{People Folder}/*{name2}*.md")
+meeting_invitees:
+  - "[[People/Joe Jackson]]"
+  - "[[People/Tanner Bragg]]"
+  - "[[People/Gregory Porter]]"
+  - "[[People/Andrew Davis]]"
 ```
 
-For each hit, add the person to the candidate pool and apply vocative-response mapping (Rule 4) normally. For misses, flag in evidence as `unmatched_vocative: "{name}"` — may indicate an uninvited attendee or transcription error.
+Or plain names:
+```
+meeting_invitees:
+  - Joe Jackson
+  - Tanner Bragg
+  - Gregory Porter
+```
 
-#### Rule 4: Vocative-to-Response Mapping
+### 3b. Parse Invitees & Build File Paths (DETERMINISTIC)
 
-When a vocative is detected (Rule 3), the speaker who talks **immediately after** being called by name is likely that person.
+For each invitee:
+- If wiki-link format `[[People/Name]]`: extract the path as `People/Name.md`
+- If plain name: construct path as `People/{name}.md`
 
-**Logic:** If Speaker A says "Tom, go ahead" and the next utterance is from Speaker 3, then Speaker 3 is likely Tom.
+Issue **ALL** Read calls in a single parallel batch. This is deterministic — no glob phase.
 
-- Single vocative-response → HIGH confidence (with corroboration from calendar)
-- Multiple vocative-responses pointing to the same mapping → CERTAIN confidence
-- Conflicting vocative-responses → flag as ambiguous, LOW confidence
+Example (if 4 invitees):
+```
+Read(People/Joe Jackson.md, limit=60)
+Read(People/Tanner Bragg.md, limit=60)
+Read(People/Gregory Porter.md, limit=60)
+Read(People/Andrew Davis.md, limit=60)
+```
 
-#### Rule 5: First Name to Full Name Resolution
+### 3c. Build People Context Table (Phase 2)
 
-When a first name is identified (from vocative or other evidence), resolve to full name:
+From each People note read in Phase 3b, extract:
+- full_name
+- nickname (if present)
+- role_title
+- company/org
 
-1. Check calendar attendees first — if exactly one attendee has that first name, use them (calendar context takes precedence for this session)
-2. Check People context table (Step 6a) — `Full Name` and `Nickname` columns
+Build a Context value per person as:
+- `"role_title, company/org"` (both present)
+- `"role_title"` (org empty)
+- `"company/org"` (role empty)
+- `""` (both empty)
 
-**Ambiguity — first-name collision:** When multiple candidates share a first name, attempt disambiguation in order:
+Build a People context table with these fields per person:
+| Full Name | Nickname | Role/Context | People Note Filename | Source |
 
-1. **Context match:** Check the `Context` column for each candidate. If the transcript discusses a program, team, or organization that matches exactly one candidate's context → resolve to that candidate at **HIGH** confidence (not CERTAIN — circumstantial evidence). **Evidence:** `context_match: "{context value}" aligns with transcript topic "{topic}"`
-2. **Calendar attendee preference:** If exactly one candidate is a calendar attendee for this session → resolve to that candidate (existing Rule 2 logic applies).
-3. **Neither resolves:** Flag as LOW confidence with all candidates **and their Context values** listed for faster manual resolution. Example: `"John" — candidates: John Keith (Frontend Lead, Project Alpha), John Washburn (Network Engineer, Acme Corp)`
+Source values: "meeting_invitee", "calendar", "microphone_user", "vocative_recovery"
 
-#### Rule 6: Alias / Transcription Error Handling
+**This table is the foundation for Step 6 confidence refinement. Do not skip to Step 4 until this is complete.**
 
-For each unresolved stub, check `Nickname` column from the People context table for phonetically similar matches to words spoken near that speaker's utterances. **Confidence:** LOW unless corroborated by another signal.
+### 3d. Roster Cache Merge (If Cache Hit)
 
-### Confidence Classification
+If a cache was found in Step 2:
+- Compare table from Phase 3c against cached roster
+- If all invitees are present in cache: use cached full context
+- If new names found: merge Phase 3c results into cache, update cache generated date
 
-| Level | Criteria |
-|-------|----------|
-| **CERTAIN** | Microphone user, OR calendar + vocative, OR multiple independent signals all agreeing |
-| **HIGH** | Calendar + single signal, OR multiple vocative-responses |
-| **LOW** | Single weak signal, phonetic guess, or ambiguous match |
+---
+
+## Step 4: Calendar Attendees
+
+**Default behavior:** The plugin provides `Calendar Attendees` at runtime. Use the provided list directly.
+
+**Fallback (no Calendar Attendees provided):**
+
+- calendar_event is "none" — skip calendar lookups entirely (ad-hoc meeting)
+- calendar_attendees, invitees, or meeting_invitees populated — use directly (strip [[ ]] wrappers if present)
+- No calendar data — proceed without. Calendar context improves confidence but is not required.
+
+Add all calendar attendees to the People context table from Step 3c with Source="calendar".
+
+---
+
+## Step 5: Vocative-to-Speaker Mapping
+
+### 5a. Vocative Scanning (Pre-Step 6)
+
+Scan the full transcript body (from Step 2) for direct address patterns:
+- "[Name], go ahead"
+- "Thanks, [Name]"
+- "[Name], what do you think?"
+- "[Name], can you..."
+- "Over to you, [Name]"
+- "[Name]?" (standalone calling)
+
+### 5b. Match Against People Context
+
+For each vocative detected, check the People context table (Step 3c):
+- Match against Full Name (exact or first word)
+- Match against Nickname
+- Multiple detections for the same name strengthen signal
+
+### 5c. Unmatched Vocative Recovery Batch (OPTIMIZED)
+
+If any vocative names do not match People context:
+
+Collect all unmatched names (e.g., "Kev", "Chew", "Alex", "Joe").
+
+Issue recovery Globs in a single parallel batch:
+```
+Glob(People Folder/*Kev*.md)
+Glob(People Folder/*Chew*.md)
+Glob(People Folder/*Alex*.md)
+Glob(People Folder/*Joe*.md)
+```
+
+For each glob hit:
+- Issue a Read in a single parallel batch (Phase 2 repeat)
+- Extract full_name, nickname, role_title, company/org
+- Add to People context table with Source="vocative_recovery"
+
+For misses: flag the unmatched_vocative in the final evidence field for that speaker.
+
+---
+
+## Step 6: Speaker Identification Analysis
+
+Analyze the full transcript body (from Step 2), speaker stubs (frontmatter), and **complete** People context table (from Step 3c + 5c) using the rules below. Higher-priority rules override lower ones.
+
+### Rule 1: Microphone Speaker — CERTAIN
+
+Assign the Microphone user to the "Microphone" label. If no "Microphone" label exists, assign to the speaker with the most lines. Evidence: "microphone". Never overridden.
+
+### Rule 2: Calendar Attendees — CERTAIN or HIGH
+
+- Calendar + vocative match (see Rule 3) = CERTAIN
+- Calendar + one other transcript signal (style, topic expertise, vocative response) = HIGH
+- Calendar alone with no transcript evidence = do not assign. Invitees may be absent.
+
+### Rule 3: Vocative Scanning & Matching
+
+Vocatives matched in Step 5 now resolve to full names via the People context table.
+
+- Vocative directly matches a single People note = CERTAIN or HIGH
+- Multiple independent vocatives resolve to same person = CERTAIN
+- Unmatched vocative (recovery failed) = flag but do not assign
+
+### Rule 4: Vocative-to-Response Mapping
+
+The speaker who talks immediately after being called by name is likely that person. If Speaker A says "Tom, go ahead" and Speaker 3 speaks next, Speaker 3 is likely Tom.
+
+- Multiple vocative-responses for the same mapping = CERTAIN
+- Single vocative-response = HIGH
+- Conflicting mappings = LOW
+
+### Rule 5: First Name to Full Name Resolution + Context Matching (OPTIMIZED)
+
+Resolve first names to full names:
+
+1. Check calendar attendees — if exactly one has that first name, use them.
+2. Check People context Full Name and Nickname columns.
+
+**First-name collision (multiple candidates share first name): try disambiguation in order:**
+
+1. **Context match** (NEW) — if transcript topic/discussion matches one candidate's Role/Context value, resolve at HIGH confidence with evidence "role/context match: [Context]"
+   - Example: Speaker discusses "VMware patching" and context table has "Gregory Kanis - VMware Administrator, Platform Team" → HIGH match
+   - Example: Speaker discusses "observability deployment" and context table has "Tanner Bragg - SRE, Platform Team" and "Tanner Smith - Finance" → HIGH match to Bragg
+
+2. Calendar preference — if exactly one candidate is a calendar attendee, use them.
+3. Neither resolves — flag as LOW with all candidates and their Context values listed.
+
+### Rule 6: Alias / Transcription Error Handling
+
+For unresolved stubs, check Nicknames for phonetically similar matches to words spoken near that speaker. Confidence: LOW unless corroborated by Role/Context.
+
+### Confidence Levels (REFINED)
+
+- **CERTAIN:** microphone user, calendar + vocative, multiple vocative-responses, or multiple independent signals agreeing
+- **HIGH:** calendar + single signal, single vocative-response, vocative + context match, or calendar + role/context alignment
+- **LOW:** single weak signal, phonetic guess, ambiguous match, or unresolved collision
+- **null:** no evidence found
 
 ### Build Proposed Mapping
 
-After applying all 6 rules, build the proposed mapping. For each speaker, record:
-- `index` — `0` = Microphone, `N` = Speaker N (aligned with stub labels)
-- `original_name` — the stub label from the transcript
-- `proposed_name` — the resolved full name, or null if unresolved
-- `confidence` — CERTAIN, HIGH, or LOW (null if unresolved)
-- `evidence` — brief description of the signals used
+For each speaker, record:
+- index — 0 for Microphone, N for Speaker N
+- original_name — stub label from transcript
+- proposed_name — resolved full name, or null
+- confidence — CERTAIN, HIGH, LOW, or null if unresolved
+- evidence — brief signal description (include "role/context match: [matching field]" if used)
 
 ---
 
-## Step 8: Return Results
+## Step 7: Return Results
 
-Return the proposed mapping in the output format specified by the caller's `Output format:` invocation parameter. Do not write any changes to the transcript — the calling plugin handles user review and file updates.
+Return the mapping in the output format specified by the caller. Do not write changes to the transcript.
+
+---
+
+## Caching & Performance Notes
+
+**Roster Cache Strategy:**
+- Cache is eligible if meeting_subject exists AND is_recurring is true
+- Cached People context remains valid for 14 days
+- On cache hit: skip Step 3 Phase 2 reads entirely (major time savings)
+- On cache miss or new names: merge results into cache for future runs
+
+**Tool Call Batching Summary:**
+- Step 2: 3 parallel calls (Read transcript frontmatter, wc, Glob roster cache) + transcript body chunks in parallel
+- Step 3: Read parent meeting note → Parse invitees → Read all invitee People notes in parallel (deterministic, no glob)
+- Step 5c: Recovery Glob batch (vocative recovery only) → Wait → Recovery Read batch (if needed)
+- Total batches: ~4-5 (vs ~10+ in non-optimized version; eliminates broad name-based glob phase)
+
+**Expected Impact:**
+- With fresh People context build: 1-2 minute baseline
+- With roster cache hit: 30-40% faster (skips Phase 2 reads)
+- With context matching: 15-20% fewer unresolved speakers vs. non-optimized

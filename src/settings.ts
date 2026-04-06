@@ -37,6 +37,7 @@ export interface WhisperCalSettings {
 	summarizerPromptPath: string;
 	researchPromptPath: string;
 	microphoneUser: string;
+	rosterMaxEnriched: number;
 	llmEnabled: boolean;
 	anthropicApiKey: string;
 	llmCli: string;
@@ -82,6 +83,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	summarizerPromptPath: "Prompts/Meeting Transcript Summarizer Prompt.md",
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
+	rosterMaxEnriched: 20,
 	llmEnabled: false,
 	anthropicApiKey: "",
 	llmCli: "claude",
@@ -675,6 +677,19 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.onChange((value) => {
 					this.plugin.settings.microphoneUser = value;
 					this.debouncedSave();
+				}));
+
+		new Setting(containerEl)
+			.setName("Roster enrichment cap")
+			.setDesc("Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.")
+			.addText(text => text
+				.setValue(String(this.plugin.settings.rosterMaxEnriched))
+				.onChange((value) => {
+					const n = parseInt(value, 10);
+					if (!isNaN(n) && n >= 1) {
+						this.plugin.settings.rosterMaxEnriched = n;
+						this.debouncedSave();
+					}
 				}));
 
 		// Populate all model dropdowns from the API
