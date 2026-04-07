@@ -14,7 +14,7 @@ claude --dangerously-skip-permissions 'Follow the instructions in /abs/path/Meet
 Extract from the calling message:
 - `Meeting note:` → vault-relative path to the meeting note file
 
-**Vault root:** Determine from the absolute path of this prompt file by stripping the filename and any `Prompts/` suffix. For example, if the prompt is at `/vault/Prompts/Meeting Transcript Summarizer Prompt.md`, the vault root is `/vault`.
+**Vault root:** The current working directory is the vault root. All vault-relative paths in the calling message resolve from there.
 
 **Path resolution:** Try the path as-is first. If not found, prepend vault root and try again. If still not found, error with: "Meeting note not found: [path]. Check the path and try again."
 

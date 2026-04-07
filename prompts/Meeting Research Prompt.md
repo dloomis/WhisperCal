@@ -21,7 +21,7 @@ Extract from the calling message:
 - `People Folder:` → folder for People notes (optional)
 - `Additional instructions:` → free-text guidance from the user (optional)
 
-**Vault root:** Determine from the absolute path of this prompt file by stripping the filename and any `Prompts/` suffix. For example, if the prompt is at `/vault/Prompts/Meeting Research Prompt.md`, the vault root is `/vault`.
+**Vault root:** The current working directory is the vault root. All vault-relative paths in the calling message resolve from there.
 
 **Path resolution:** Try each path as-is first. If not found, prepend vault root and try again. If a research note is not found, skip it with a warning rather than failing — the user may have renamed or moved it.
 
