@@ -7,6 +7,7 @@ import type {CacheStatus} from "../services/CalendarCache";
 import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/UnlinkedRecordingProvider";
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
+import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -805,6 +806,12 @@ export class CalendarView extends ItemView {
 				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
 			});
 		}
+
+		const deleteBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small whisper-cal-btn-danger", text: "Delete"});
+		deleteBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.handleDeleteUnlinked(recording);
+		});
 	}
 
 	private async handleLinkUnlinked(recording: UnlinkedRecording, card: HTMLElement): Promise<void> {
@@ -906,6 +913,25 @@ export class CalendarView extends ItemView {
 		} catch (e) {
 			console.error("[WhisperCal] Link unlinked recording error:", e);
 			new Notice(`Failed to link recording: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	private async handleDeleteUnlinked(recording: UnlinkedRecording): Promise<void> {
+		const title = recording.title || "Untitled recording";
+		const confirmed = await new DeleteTranscriptModal(this.app, title).prompt();
+		if (!confirmed) return;
+
+		try {
+			if (recording.transcriptPath) {
+				const file = this.app.vault.getAbstractFileByPath(recording.transcriptPath);
+				if (file instanceof TFile) {
+					await this.app.vault.trash(file, true);
+				}
+			}
+			void this.loadAndRenderUnlinkedSection();
+		} catch (e) {
+			console.error("[WhisperCal] Delete unlinked transcript error:", e);
+			new Notice(`Failed to delete transcript: ${e instanceof Error ? e.message : String(e)}`);
 		}
 	}
 

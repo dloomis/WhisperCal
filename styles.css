@@ -1082,6 +1082,17 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.whisper-cal-btn-danger {
+	color: var(--text-error);
+	border-color: var(--background-modifier-error);
+}
+
+.whisper-cal-btn-danger:hover {
+	background-color: var(--background-modifier-error);
+	color: var(--text-on-accent);
+	border-color: var(--background-modifier-error);
+}
+
 .whisper-cal-unlinked-btns {
 	display: flex;
 	gap: 4px;
@@ -1115,6 +1126,18 @@
 }
 
 .whisper-cal-rerecord-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* DeleteTranscriptModal */
+.whisper-cal-delete-warning {
+	color: var(--text-muted);
+	margin-bottom: 16px;
+}
+
+.whisper-cal-delete-buttons {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
