@@ -481,7 +481,10 @@ function renderCardDynamic(
 		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
 		: {};
 
-	// Update data-transcriptPath on the card element
+	// Keep dataset paths in sync with actual note/transcript paths so that
+	// rerenderCardByPath lookups succeed even when the calendar event subject
+	// diverges from the note filename (e.g. organizer renamed the meeting).
+	cardEl.dataset.notePath = notePath;
 	if (states.transcriptPath) {
 		cardEl.dataset.transcriptPath = states.transcriptPath;
 	} else {
