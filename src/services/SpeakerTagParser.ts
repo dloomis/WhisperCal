@@ -23,6 +23,7 @@ export interface FrontmatterSpeaker {
 	line_count?: number;
 	stub?: boolean;
 	original_name?: string;
+	proposed_name?: string;
 	confidence?: string;
 	evidence?: string;
 }
@@ -245,6 +246,91 @@ export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], con
 			mapping.lineCount = counts.get(mapping.originalName) ?? 0;
 		}
 	}
+}
+
+/** Returns true if any speaker in the transcript frontmatter has a cached `proposed_name`. */
+export function hasCachedProposals(app: App, transcriptPath: string): boolean {
+	const speakers = getFrontmatterSpeakers(app, transcriptPath);
+	return speakers.some(s => "proposed_name" in s);
+}
+
+/** Reconstruct ProposedSpeakerMapping[] from cached proposals on the speakers array. */
+export function buildMappingsFromCache(app: App, transcriptPath: string): ProposedSpeakerMapping[] {
+	const speakers = getFrontmatterSpeakers(app, transcriptPath);
+	return speakers.map((s, i) => ({
+		index: i,
+		originalName: s.name ?? `Speaker ${i}`,
+		proposedName: s.proposed_name ?? "",
+		confidence: s.confidence ?? "",
+		evidence: s.evidence ?? "",
+		speakerId: s.id ?? "",
+		lineCount: s.line_count ?? 0,
+	}));
+}
+
+/**
+ * Write LLM proposals onto the transcript's frontmatter speakers array.
+ * If the speakers array exists, enriches entries by matching speakerId to speaker.id.
+ * If the speakers array is missing (e.g. Tome transcripts), creates it from the mappings.
+ */
+export async function writeSpeakerProposals(
+	app: App,
+	transcriptPath: string,
+	mappings: ProposedSpeakerMapping[],
+): Promise<void> {
+	const file = app.vault.getAbstractFileByPath(transcriptPath);
+	if (!(file instanceof TFile)) return;
+
+	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+		const existing = frontmatter["speakers"];
+		if (Array.isArray(existing) && existing.length > 0) {
+			// Enrich existing speakers by matching on id
+			const proposalById = new Map<string, ProposedSpeakerMapping>();
+			for (const m of mappings) {
+				if (m.speakerId) proposalById.set(m.speakerId, m);
+			}
+			for (const speaker of existing as FrontmatterSpeaker[]) {
+				const proposal = speaker.id ? proposalById.get(speaker.id) : undefined;
+				if (proposal) {
+					speaker.proposed_name = proposal.proposedName;
+					speaker.confidence = proposal.confidence;
+					speaker.evidence = proposal.evidence;
+				}
+			}
+		} else {
+			// Create speakers array from LLM mappings
+			frontmatter["speakers"] = mappings.map(m => ({
+				name: m.originalName,
+				id: m.speakerId,
+				stub: true,
+				line_count: m.lineCount,
+				proposed_name: m.proposedName,
+				confidence: m.confidence,
+				evidence: m.evidence,
+			}));
+		}
+	});
+}
+
+/**
+ * Strip cached proposal fields from all stub speakers.
+ * Leaves name, id, stub, line_count intact for the next LLM run.
+ */
+export async function clearSpeakerProposals(app: App, transcriptPath: string): Promise<void> {
+	const file = app.vault.getAbstractFileByPath(transcriptPath);
+	if (!(file instanceof TFile)) return;
+
+	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+		const speakers = frontmatter["speakers"];
+		if (!Array.isArray(speakers)) return;
+		for (const speaker of speakers as FrontmatterSpeaker[]) {
+			delete speaker.proposed_name;
+			if (speaker.stub) {
+				delete speaker.confidence;
+				delete speaker.evidence;
+			}
+		}
+	});
 }
 
 function getFrontmatterSpeakers(app: App, transcriptPath: string): FrontmatterSpeaker[] {

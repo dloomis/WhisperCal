@@ -6,9 +6,10 @@ import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
 import {summarizeJobs, speakerTagJobs, researchJobs, cardStatus, type CardStatusVariant} from "./state";
-import {parseSpeakerTagOutput, enrichLineCountsFromBody} from "./services/SpeakerTagParser";
+import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
+import {CachedProposalModal} from "./ui/CachedProposalModal";
 import {ResearchModal} from "./ui/ResearchModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime, setTimeFormat} from "./utils/time";
@@ -117,7 +118,7 @@ export default class WhisperCalPlugin extends Plugin {
 			getCacheStatus: () => this.cachedProvider?.getLastStatus() ?? null,
 			getUserEmail: () => this.upstream.getUserEmail(),
 			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => {
-				this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
+				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
 			},
 			onSummarize: (notePath: string) => {
 				this.doSummarize(notePath);
@@ -223,7 +224,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// If active file is the meeting note (has calendar_event_id), use its path;
 				// otherwise (transcript is active) use the transcript path as fallback.
 				const notePath = fm?.["calendar_event_id"] ? file.path : transcriptFile.path;
-				this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>, notePath);
+				void this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>, notePath);
 				return true;
 			},
 		});
@@ -510,11 +511,11 @@ export default class WhisperCalPlugin extends Plugin {
 	/** Count of currently running LLM processes (speaker tagging + summarization). */
 	private activeLlmCount = 0;
 
-	private doTagSpeakers(
+	private async doTagSpeakers(
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
 		notePath: string,
-	): void {
+	): Promise<void> {
 		const transcriptPath = transcriptFile.path;
 		const state = transcriptFm["pipeline_state"] as string | undefined;
 		if (state && state !== "titled") {
@@ -523,6 +524,22 @@ export default class WhisperCalPlugin extends Plugin {
 			void updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
 			return;
 		}
+
+		// Check for cached LLM proposals from a previous run (e.g. modal was dismissed)
+		if (hasCachedProposals(this.app, transcriptPath)) {
+			const choice = await new CachedProposalModal(this.app).prompt();
+			if (choice === "view") {
+				const mappings = buildMappingsFromCache(this.app, transcriptPath);
+				void this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
+				return;
+			}
+			if (choice === "rerun") {
+				await clearSpeakerProposals(this.app, transcriptPath);
+				// Fall through to normal LLM path below
+			}
+			if (!choice) return; // Cancelled
+		}
+
 		if (!this.settings.speakerTaggingPromptPath) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
@@ -604,6 +621,25 @@ export default class WhisperCalPlugin extends Plugin {
 		if (warning) {
 			new Notice(warning);
 		}
+
+		// Cache proposals in transcript frontmatter so they survive modal dismissal
+		await writeSpeakerProposals(this.app, transcriptPath, mappings);
+
+		await this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
+	}
+
+	/**
+	 * Show the SpeakerTagModal for a set of proposed mappings (from LLM or cache).
+	 * Handles line-count enrichment, modal queuing, apply/dismiss, word replacements,
+	 * and auto-summarize.
+	 */
+	private async presentSpeakerTagModal(
+		mappings: ProposedSpeakerMapping[],
+		transcriptFile: TFile,
+		transcriptPath: string,
+		notePath: string,
+	): Promise<void> {
+		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
 		// Always read transcript content — needed for line-count enrichment and excerpt panel
 		const transcriptContent = await this.app.vault.cachedRead(transcriptFile);

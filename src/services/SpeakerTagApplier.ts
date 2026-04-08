@@ -31,6 +31,7 @@ export async function applySpeakerTags(
 		const speakers = frontmatter["speakers"];
 		if (Array.isArray(speakers)) {
 			for (const speaker of speakers as FrontmatterSpeaker[]) {
+				delete speaker.proposed_name;
 				const decision = speaker.id ? decisionMap.get(speaker.id) : undefined;
 				if (!decision || !decision.confirmedName) continue;
 				speaker.original_name = speaker.name;
