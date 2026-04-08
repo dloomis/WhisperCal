@@ -28,9 +28,9 @@ export async function applySpeakerTags(
 
 	// 1. Update frontmatter
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-		const speakers = frontmatter["speakers"];
-		if (Array.isArray(speakers)) {
-			for (const speaker of speakers as FrontmatterSpeaker[]) {
+		const attendees = frontmatter["attendees"] ?? frontmatter["speakers"];
+		if (Array.isArray(attendees)) {
+			for (const speaker of attendees as FrontmatterSpeaker[]) {
 				delete speaker.proposed_name;
 				const decision = speaker.id ? decisionMap.get(speaker.id) : undefined;
 				if (!decision || !decision.confirmedName) continue;

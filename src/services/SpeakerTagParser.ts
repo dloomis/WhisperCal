@@ -254,7 +254,7 @@ export function hasCachedProposals(app: App, transcriptPath: string): boolean {
 	return speakers.some(s => "proposed_name" in s);
 }
 
-/** Reconstruct ProposedSpeakerMapping[] from cached proposals on the speakers array. */
+/** Reconstruct ProposedSpeakerMapping[] from cached proposals on the attendees array. */
 export function buildMappingsFromCache(app: App, transcriptPath: string): ProposedSpeakerMapping[] {
 	const speakers = getFrontmatterSpeakers(app, transcriptPath);
 	return speakers.map((s, i) => ({
@@ -269,9 +269,9 @@ export function buildMappingsFromCache(app: App, transcriptPath: string): Propos
 }
 
 /**
- * Write LLM proposals onto the transcript's frontmatter speakers array.
- * If the speakers array exists, enriches entries by matching speakerId to speaker.id.
- * If the speakers array is missing (e.g. Tome transcripts), creates it from the mappings.
+ * Write LLM proposals onto the transcript's frontmatter attendees array.
+ * If the attendees array exists, enriches entries (converting flat strings to objects).
+ * If the attendees array is missing, creates it from the LLM mappings.
  */
 export async function writeSpeakerProposals(
 	app: App,
@@ -282,57 +282,48 @@ export async function writeSpeakerProposals(
 	if (!(file instanceof TFile)) return;
 
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-		const existing = frontmatter["speakers"];
-		if (Array.isArray(existing) && existing.length > 0 && typeof existing[0] === "object") {
-			// Enrich existing speakers objects by matching on id
-			const proposalById = new Map<string, ProposedSpeakerMapping>();
-			for (const m of mappings) {
-				if (m.speakerId) proposalById.set(m.speakerId, m);
-			}
-			for (const speaker of existing as FrontmatterSpeaker[]) {
-				const proposal = speaker.id ? proposalById.get(speaker.id) : undefined;
-				if (proposal) {
-					speaker.proposed_name = proposal.proposedName;
-					speaker.confidence = proposal.confidence;
-					speaker.evidence = proposal.evidence;
-				}
-			}
-		} else {
-			// Convert flat attendees array or create from LLM mappings.
-			// Third-party apps (e.g. Tome) write an "attendees" flat string array
-			// instead of the "speakers" object array that MacWhisper/TranscriptWriter uses.
-			const attendees = frontmatter["attendees"];
-			const proposalByName = new Map<string, ProposedSpeakerMapping>();
-			for (const m of mappings) {
-				proposalByName.set(m.originalName.toLowerCase(), m);
-			}
+		const existing = frontmatter["attendees"];
+		const proposalByName = new Map<string, ProposedSpeakerMapping>();
+		for (const m of mappings) {
+			proposalByName.set(m.originalName.toLowerCase(), m);
+		}
 
-			if (Array.isArray(attendees) && attendees.length > 0) {
-				frontmatter["speakers"] = attendees.map((entry: unknown, i: number) => {
-					const name = typeof entry === "string" ? entry : `Speaker ${i}`;
-					const proposal = proposalByName.get(name.toLowerCase());
-					return {
-						name,
-						id: proposal?.speakerId ?? "",
-						stub: true,
-						line_count: proposal?.lineCount ?? 0,
-						proposed_name: proposal?.proposedName ?? "",
-						confidence: proposal?.confidence ?? "",
-						evidence: proposal?.evidence ?? "",
-					};
-				});
-			} else {
-				// No speakers or attendees — create from LLM mappings
-				frontmatter["speakers"] = mappings.map(m => ({
-					name: m.originalName,
-					id: m.speakerId,
+		if (Array.isArray(existing) && existing.length > 0) {
+			// Enrich existing attendees — convert flat strings to objects if needed
+			frontmatter["attendees"] = existing.map((entry: unknown, i: number) => {
+				const isObj = entry !== null && typeof entry === "object";
+				const name = isObj ? (entry as FrontmatterSpeaker).name ?? `Speaker ${i}` : typeof entry === "string" ? entry : `Speaker ${i}`;
+				const proposal = proposalByName.get(name.toLowerCase());
+				if (isObj) {
+					const speaker = entry as FrontmatterSpeaker;
+					if (proposal) {
+						speaker.proposed_name = proposal.proposedName;
+						speaker.confidence = proposal.confidence;
+						speaker.evidence = proposal.evidence;
+					}
+					return speaker;
+				}
+				return {
+					name,
+					id: proposal?.speakerId ?? "",
 					stub: true,
-					line_count: m.lineCount,
-					proposed_name: m.proposedName,
-					confidence: m.confidence,
-					evidence: m.evidence,
-				}));
-			}
+					line_count: proposal?.lineCount ?? 0,
+					proposed_name: proposal?.proposedName ?? "",
+					confidence: proposal?.confidence ?? "",
+					evidence: proposal?.evidence ?? "",
+				};
+			});
+		} else {
+			// No attendees — create from LLM mappings
+			frontmatter["attendees"] = mappings.map(m => ({
+				name: m.originalName,
+				id: m.speakerId,
+				stub: true,
+				line_count: m.lineCount,
+				proposed_name: m.proposedName,
+				confidence: m.confidence,
+				evidence: m.evidence,
+			}));
 		}
 	});
 }
@@ -346,9 +337,11 @@ export async function clearSpeakerProposals(app: App, transcriptPath: string): P
 	if (!(file instanceof TFile)) return;
 
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-		const speakers = frontmatter["speakers"];
-		if (!Array.isArray(speakers)) return;
-		for (const speaker of speakers as FrontmatterSpeaker[]) {
+		const attendees = frontmatter["attendees"];
+		if (!Array.isArray(attendees)) return;
+		for (const entry of attendees) {
+			if (entry === null || typeof entry !== "object") continue;
+			const speaker = entry as FrontmatterSpeaker;
 			delete speaker.proposed_name;
 			if (speaker.stub) {
 				delete speaker.confidence;
@@ -363,10 +356,11 @@ function getFrontmatterSpeakers(app: App, transcriptPath: string): FrontmatterSp
 	if (!(file instanceof TFile)) return [];
 	const fm = app.metadataCache.getFileCache(file)?.frontmatter;
 	if (!fm) return [];
-	const speakers: unknown = fm["speakers"];
-	if (!Array.isArray(speakers)) return [];
-	// Filter to objects only — hand-edited frontmatter could contain primitives
-	return speakers.filter((s): s is FrontmatterSpeaker =>
+	// Check attendees first (primary), then speakers (MacWhisper/TranscriptWriter)
+	const arr: unknown = Array.isArray(fm["attendees"]) ? fm["attendees"] : fm["speakers"];
+	if (!Array.isArray(arr)) return [];
+	// Filter to objects only — flat strings and primitives are skipped
+	return arr.filter((s): s is FrontmatterSpeaker =>
 		s !== null && typeof s === "object" && !Array.isArray(s)
 	);
 }
