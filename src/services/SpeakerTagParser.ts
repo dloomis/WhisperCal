@@ -283,8 +283,8 @@ export async function writeSpeakerProposals(
 
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 		const existing = frontmatter["speakers"];
-		if (Array.isArray(existing) && existing.length > 0) {
-			// Enrich existing speakers by matching on id
+		if (Array.isArray(existing) && existing.length > 0 && typeof existing[0] === "object") {
+			// Enrich existing speakers objects by matching on id
 			const proposalById = new Map<string, ProposedSpeakerMapping>();
 			for (const m of mappings) {
 				if (m.speakerId) proposalById.set(m.speakerId, m);
@@ -298,16 +298,41 @@ export async function writeSpeakerProposals(
 				}
 			}
 		} else {
-			// Create speakers array from LLM mappings
-			frontmatter["speakers"] = mappings.map(m => ({
-				name: m.originalName,
-				id: m.speakerId,
-				stub: true,
-				line_count: m.lineCount,
-				proposed_name: m.proposedName,
-				confidence: m.confidence,
-				evidence: m.evidence,
-			}));
+			// Convert flat attendees array or create from LLM mappings.
+			// Third-party apps (e.g. Tome) write an "attendees" flat string array
+			// instead of the "speakers" object array that MacWhisper/TranscriptWriter uses.
+			const attendees = frontmatter["attendees"];
+			const proposalByName = new Map<string, ProposedSpeakerMapping>();
+			for (const m of mappings) {
+				proposalByName.set(m.originalName.toLowerCase(), m);
+			}
+
+			if (Array.isArray(attendees) && attendees.length > 0) {
+				frontmatter["speakers"] = attendees.map((entry: unknown, i: number) => {
+					const name = typeof entry === "string" ? entry : `Speaker ${i}`;
+					const proposal = proposalByName.get(name.toLowerCase());
+					return {
+						name,
+						id: proposal?.speakerId ?? "",
+						stub: true,
+						line_count: proposal?.lineCount ?? 0,
+						proposed_name: proposal?.proposedName ?? "",
+						confidence: proposal?.confidence ?? "",
+						evidence: proposal?.evidence ?? "",
+					};
+				});
+			} else {
+				// No speakers or attendees — create from LLM mappings
+				frontmatter["speakers"] = mappings.map(m => ({
+					name: m.originalName,
+					id: m.speakerId,
+					stub: true,
+					line_count: m.lineCount,
+					proposed_name: m.proposedName,
+					confidence: m.confidence,
+					evidence: m.evidence,
+				}));
+			}
 		}
 	});
 }
