@@ -202,13 +202,15 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 			el.createSpan({text: `${accepted}`});
 		}
 		if (tentative > 0) {
-			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-tentative"});
+			const names = event.attendees.filter(a => a.responseStatus === "tentativelyAccepted").map(a => a.name || a.email);
+			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-tentative", attr: {"aria-label": `Tentative: ${names.join(", ")}`}});
 			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
 			setIcon(icon, "user-round-minus");
 			el.createSpan({text: `${tentative}`});
 		}
 		if (declined > 0) {
-			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-declined"});
+			const names = event.attendees.filter(a => a.responseStatus === "declined").map(a => a.name || a.email);
+			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-declined", attr: {"aria-label": `Declined: ${names.join(", ")}`}});
 			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
 			setIcon(icon, "user-round-x");
 			el.createSpan({text: `${declined}`});

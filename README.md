@@ -522,13 +522,13 @@ If multiple recordings match, a picker modal lets you choose. The picker shows t
 
 ### Recording API
 
-An alternative source that records meetings directly via a REST API (compatible with apps like [Tome](https://tome.app)). The Record pill on meeting cards starts and stops recordings without leaving Obsidian.
+An alternative source that records meetings directly via a REST API. The Record pill on meeting cards starts and stops recordings without leaving Obsidian. Any app that implements the required endpoints on localhost will work (e.g., [Tome fork with REST API support](https://github.com/dloomis/Tome) — upstream Tome does not support REST API as of this writing).
 
 **Requirements:**
 - A recording application running a compatible REST API on localhost.
 - The API must implement: `GET /health`, `POST /start`, `POST /stop`, `GET /status`.
 
-**API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for the Tome port file at `~/Library/Application Support/Tome/api-port` and constructs the URL automatically.
+**API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for a port file at `~/Library/Application Support/Tome/api-port` and constructs the URL automatically. Apps that write a port number to this path will be detected without any configuration.
 
 **Recording flow:**
 1. Click the Record pill — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
@@ -883,7 +883,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Database path** | *(read-only)* | Shows the MacWhisper database location (MacWhisper source only). |
 | **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker (MacWhisper source only). |
 | **Unlinked lookback** | `30` days | How far back to check for unlinked recordings (MacWhisper source only). |
-| **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from Tome's port file (Recording API source only). |
+| **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from the port file at `~/Library/Application Support/Tome/api-port` (Recording API source only). |
 
 ### LLM
 
