@@ -257,15 +257,21 @@ export function hasCachedProposals(app: App, transcriptPath: string): boolean {
 /** Reconstruct ProposedSpeakerMapping[] from cached proposals on the attendees array. */
 export function buildMappingsFromCache(app: App, transcriptPath: string): ProposedSpeakerMapping[] {
 	const speakers = getFrontmatterSpeakers(app, transcriptPath);
-	return speakers.map((s, i) => ({
-		index: i,
-		originalName: s.name ?? `Speaker ${i}`,
-		proposedName: s.proposed_name ?? "",
-		confidence: s.confidence ?? "",
-		evidence: s.evidence ?? "",
-		speakerId: s.id ?? "",
-		lineCount: s.line_count ?? 0,
-	}));
+	return speakers.map((s, i) => {
+		const name = s.name ?? `Speaker ${i}`;
+		// Extract speaker number from name for ordering (e.g. "Speaker 1" → 1)
+		const numMatch = name.match(/^Speaker\s+(\d+)$/i);
+		const index = numMatch ? parseInt(numMatch[1]!, 10) : i;
+		return {
+			index,
+			originalName: name,
+			proposedName: s.proposed_name ?? "",
+			confidence: s.confidence ?? "",
+			evidence: s.evidence ?? "",
+			speakerId: s.id ?? "",
+			lineCount: s.line_count ?? 0,
+		};
+	});
 }
 
 /**

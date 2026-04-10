@@ -993,8 +993,8 @@
 	height: 14px;
 }
 
-/* Summarize-in-progress banner inside meeting note */
-.whisper-cal-summarize-banner {
+/* LLM-in-progress banner inside meeting/transcript note */
+.whisper-cal-llm-banner {
 	display: flex;
 	align-items: center;
 	gap: 6px;

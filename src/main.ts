@@ -287,9 +287,9 @@ export default class WhisperCalPlugin extends Plugin {
 			}),
 		);
 
-		// Show/hide summarize banner when switching between notes
+		// Show/hide LLM banners when switching between notes
 		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => this.updateAllSummarizeBanners()),
+			this.app.workspace.on("active-leaf-change", () => this.updateAllBanners()),
 		);
 
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
@@ -576,6 +576,8 @@ export default class WhisperCalPlugin extends Plugin {
 			cardIcon: "users-round",
 			cardModel: this.settings.speakerTagModel || undefined,
 			cardNotePath: notePath,
+			onRegister: () => this.updateBanners(transcriptPath),
+			onCleanup: () => this.updateBanners(transcriptPath),
 			spawnOpts: (vaultPath) => ({
 				targetPath: transcriptPath,
 				targetLabel: "Transcript",
@@ -739,8 +741,8 @@ export default class WhisperCalPlugin extends Plugin {
 			promptPath: this.settings.summarizerPromptPath,
 			cardIcon: "sparkles",
 			cardModel: this.settings.summarizerModel || undefined,
-			onRegister: () => this.updateSummarizeBanners(notePath),
-			onCleanup: () => this.updateSummarizeBanners(notePath),
+			onRegister: () => this.updateBanners(notePath),
+			onCleanup: () => this.updateBanners(notePath),
 			spawnOpts: (vaultPath) => ({
 				targetPath: notePath,
 				targetLabel: "Meeting note",
@@ -832,6 +834,8 @@ export default class WhisperCalPlugin extends Plugin {
 				promptPath: result.bypassPrompt ? undefined : this.settings.researchPromptPath,
 				cardIcon: "book-open",
 				cardModel: this.settings.researchModel || undefined,
+				onRegister: () => this.updateBanners(notePath),
+				onCleanup: () => this.updateBanners(notePath),
 				spawnOpts: (vaultPath) => ({
 					targetPath: notePath,
 					targetLabel: "Meeting note",
@@ -992,50 +996,59 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	private static readonly BANNER_CLS = "whisper-cal-summarize-banner";
+	private static readonly BANNER_CLS = "whisper-cal-llm-banner";
 
-	/** Add or remove the summarize banner for all leaves showing the given note. */
-	private updateSummarizeBanners(notePath: string): void {
-		const running = summarizeJobs.has(notePath);
+	private static readonly BANNER_OPS: {jobSet: Set<string>; op: string; label: string}[] = [
+		{jobSet: summarizeJobs, op: "summarize", label: "Summarizing\u2026"},
+		{jobSet: speakerTagJobs, op: "speakers", label: "Tagging speakers\u2026"},
+		{jobSet: researchJobs, op: "research", label: "Researching\u2026"},
+	];
+
+	/** Add or remove LLM banners for all leaves showing the given file. */
+	private updateBanners(filePath: string): void {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
-			if (view instanceof MarkdownView && view.file?.path === notePath) {
-				if (running) {
-					this.ensureBanner(view);
-				} else {
-					this.removeBanner(view);
+			if (view instanceof MarkdownView && view.file?.path === filePath) {
+				for (const {jobSet, op, label} of WhisperCalPlugin.BANNER_OPS) {
+					if (jobSet.has(filePath)) {
+						this.ensureBanner(view, op, label);
+					} else {
+						this.removeBanner(view, op);
+					}
 				}
 			}
 		}
 	}
 
 	/** Refresh banners for all open markdown leaves (e.g. on tab switch). */
-	private updateAllSummarizeBanners(): void {
+	private updateAllBanners(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (view instanceof MarkdownView && view.file) {
-				if (summarizeJobs.has(view.file.path)) {
-					this.ensureBanner(view);
-				} else {
-					this.removeBanner(view);
+				for (const {jobSet, op, label} of WhisperCalPlugin.BANNER_OPS) {
+					if (jobSet.has(view.file.path)) {
+						this.ensureBanner(view, op, label);
+					} else {
+						this.removeBanner(view, op);
+					}
 				}
 			}
 		}
 	}
 
-	private ensureBanner(view: MarkdownView): void {
+	private ensureBanner(view: MarkdownView, op: string, label: string): void {
 		const container = view.contentEl;
-		if (container.querySelector(`.${WhisperCalPlugin.BANNER_CLS}`)) return;
+		if (container.querySelector(`.${WhisperCalPlugin.BANNER_CLS}[data-op="${op}"]`)) return;
 		const banner = container.createDiv({cls: WhisperCalPlugin.BANNER_CLS});
+		banner.dataset["op"] = op;
 		banner.createSpan({cls: "whisper-cal-card-status-dot"});
-		banner.createSpan({text: "Summarizing\u2026"});
-		// Move to top of container
+		banner.createSpan({text: label});
 		container.prepend(banner);
 	}
 
-	private removeBanner(view: MarkdownView): void {
+	private removeBanner(view: MarkdownView, op: string): void {
 		view.contentEl
-			.querySelectorAll(`.${WhisperCalPlugin.BANNER_CLS}`)
+			.querySelectorAll(`.${WhisperCalPlugin.BANNER_CLS}[data-op="${op}"]`)
 			.forEach(el => el.remove());
 	}
 
