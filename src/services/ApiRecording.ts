@@ -8,6 +8,9 @@ import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import type {OnStatus} from "./LinkRecording";
 
+/** Prevents duplicate waitAndLink calls when stopApiRecording and watchApiRecording race. */
+const linkingInProgress = new Set<string>();
+
 function getTranscriptFilename(notePath: string): string {
 	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
 	return `${basename} - Transcript`;
@@ -104,6 +107,9 @@ export function watchApiRecording(opts: {
 			if (!recordingState.has(notePath)) return; // stopped via WhisperCal
 			try {
 				const health = await recordingHealth(baseUrl);
+				// Re-check after async call — stopApiRecording may have
+				// deleted the state while we were awaiting the health check.
+				if (!recordingState.has(notePath)) return;
 				if (!health.isRecording) {
 					const info = recordingState.get(notePath) ?? null;
 					recordingState.delete(notePath);
@@ -191,6 +197,11 @@ async function enrichTranscriptFrontmatter(
 }
 
 async function waitAndLink(app: App, notePath: string, transcriptFolderPath: string, info: RecordingInfo | null, baseUrl: string, onStatus?: OnStatus): Promise<void> {
+	// Guard: only one linking flow per note at a time.
+	// stopApiRecording and watchApiRecording can race each other to this point.
+	if (linkingInProgress.has(notePath)) return;
+	linkingInProgress.add(notePath);
+
 	const beforeStop = Date.now();
 	onStatus?.("Waiting for transcript\u2026");
 	try {
@@ -234,9 +245,14 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			return;
 		}
 
-		// Enrich transcript with WhisperCal pipeline frontmatter
+		// Enrich transcript with WhisperCal pipeline frontmatter.
+		// Non-fatal: if enrichment fails, still link the transcript to the meeting note.
 		onStatus?.("Enriching transcript\u2026");
-		await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
+		try {
+			await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
+		} catch (err) {
+			console.error("[WhisperCal] Transcript enrichment failed (continuing to link):", err);
+		}
 
 		// Link transcript to meeting note + set pipeline state.
 		// Batch into a single processFrontMatter call to avoid a race with the
@@ -251,6 +267,8 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 	} catch (err) {
 		console.error("[WhisperCal] Transcript linking failed:", err);
 		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning");
+	} finally {
+		linkingInProgress.delete(notePath);
 	}
 }
 
