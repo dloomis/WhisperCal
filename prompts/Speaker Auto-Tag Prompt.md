@@ -1,4 +1,6 @@
-# Speaker Auto-Tag Prompt
+
+
+Performance-optimized version of Speaker Auto-Tag Prompt with batched People note resolution and context-based confidence refinement.
 
 Self-contained prompt for tagging unidentified speakers in one transcript stub using vault data (People notes, calendar attendees). Returns proposed speaker mappings; the caller handles review and writes.
 
@@ -15,8 +17,8 @@ If Read, Glob, Grep, and Bash are not already available, load them: ToolSearch("
 Extract from the calling message:
 - Transcript — path to the transcript stub file
 - Microphone user — full name of the person at the microphone
-- Calendar Attendees — full invitee name list provided by the plugin at runtime (skips Step 4)
-- People Roster — pre-built People context table provided by the plugin at runtime (skips Step 3 — use as the People context table directly)
+- Calendar Attendees — pre-fetched attendee context (optional; skips Step 4 if provided)
+- People Roster — pre-built People context table (optional; skips Step 3 if provided — use as the People context table directly)
 - People Folder — folder name for People notes (default: People)
 - Output format — expected output format for the mapping
 
@@ -60,11 +62,11 @@ Most transcripts need 1 to 3 chunks. The full body across all chunks is the prim
 
 ---
 
-## Step 3: Read Invitees from Parent Meeting Note (FALLBACK)
+## Step 3: Read Invitees from Parent Meeting Note (OPTIMIZED)
 
-**Default behavior:** The plugin provides `People Roster` at runtime. Use it as the People context table directly and skip to Step 4.
+**Skip this entire step if** `People Roster` was provided in the invocation parameters. Use the provided roster as the People context table directly and proceed to Step 4.
 
-**Fallback (no People Roster provided):** Read invitees from the parent meeting note. Complete this before Step 4 to maximize cache hits and build context early.
+**CRITICAL:** If not skipped, do NOT skip this step. Complete it before Step 4 to maximize cache hits and build context early.
 
 ### 3a. Read Parent Meeting Note
 
@@ -139,9 +141,7 @@ If a cache was found in Step 2:
 
 ## Step 4: Calendar Attendees
 
-**Default behavior:** The plugin provides `Calendar Attendees` at runtime. Use the provided list directly.
-
-**Fallback (no Calendar Attendees provided):**
+Skip if Calendar Attendees was provided in invocation (use it directly). Also skip if People Roster was provided.
 
 - calendar_event is "none" — skip calendar lookups entirely (ad-hoc meeting)
 - calendar_attendees, invitees, or meeting_invitees populated — use directly (strip [[ ]] wrappers if present)
@@ -196,6 +196,8 @@ For misses: flag the unmatched_vocative in the final evidence field for that spe
 ## Step 6: Speaker Identification Analysis
 
 Analyze the full transcript body (from Step 2), speaker stubs (frontmatter), and **complete** People context table (from Step 3c + 5c) using the rules below. Higher-priority rules override lower ones.
+
+**CRITICAL — duplicate assignments are expected and correct.** Transcription engines frequently split one real person across multiple speaker tags (e.g., Speaker 1 and Speaker 3 are both the same person). Propose the best match for each tag independently. Do NOT enforce a one-to-one constraint between people and tags. If the evidence says Speaker 1 is "Jane Doe" and Speaker 3 is also "Jane Doe", propose "Jane Doe" for both.
 
 ### Rule 1: Microphone Speaker — CERTAIN
 
@@ -255,9 +257,11 @@ For unresolved stubs, check Nicknames for phonetically similar matches to words 
 For each speaker, record:
 - index — 0 for Microphone, N for Speaker N
 - original_name — stub label from transcript
-- proposed_name — resolved full name, or null
+- proposed_name — resolved full name, or null (the same person may appear for multiple tags — this is correct)
 - confidence — CERTAIN, HIGH, LOW, or null if unresolved
 - evidence — brief signal description (include "role/context match: [matching field]" if used)
+
+Do not downgrade confidence or skip a match because the same person was already proposed for a different tag. Evaluate each tag on its own evidence.
 
 ---
 

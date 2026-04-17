@@ -25,6 +25,7 @@ import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
+import {getLinkedTranscriptFile} from "./services/ApiRecording";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
@@ -705,7 +706,7 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 	}
 
-	private doSummarize(notePath: string, skipPipelineCheck = false): void {
+	private async doSummarize(notePath: string, skipPipelineCheck = false): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
@@ -733,8 +734,18 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		// Apply word replacements to transcript before LLM processing, then start job
-		const startJob = () => this.runLlmJob({
+		// Apply word replacements to transcript before LLM processing
+		if (this.settings.replacementFilePath) {
+			const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+			if (transcriptFile) {
+				const result = await applyWordReplacements(this.app, transcriptFile.path, this.settings.replacementFilePath);
+				if (result.totalCount > 0) {
+					console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) before summarization`);
+				}
+			}
+		}
+
+		this.runLlmJob({
 			jobSet: summarizeJobs,
 			filePath: notePath,
 			label: "Summarizing",
@@ -767,8 +778,6 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 			},
 		});
-
-		startJob();
 	}
 
 	private async doWordReplacements(file: TFile): Promise<void> {
