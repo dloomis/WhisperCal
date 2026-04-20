@@ -121,8 +121,12 @@ export default class WhisperCalPlugin extends Plugin {
 			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => {
 				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
 			},
-			onSummarize: (notePath: string) => {
-				this.doSummarize(notePath);
+			onSummarize: (notePath: string, force?: boolean) => {
+				if (force) {
+					void this.regenerateSummary(notePath);
+				} else {
+					this.doSummarize(notePath);
+				}
 			},
 			onResearch: (notePath: string) => {
 				this.doResearch(notePath);
@@ -704,6 +708,29 @@ export default class WhisperCalPlugin extends Plugin {
 				clearProgressStatus();
 			}
 		});
+	}
+
+	/**
+	 * Reset pipeline_state to "tagged" on the meeting note and its linked
+	 * transcript so the summarizer prompt's literal `tagged` → `summarized`
+	 * find-replace succeeds on re-runs, then re-invoke summarization.
+	 */
+	private async regenerateSummary(notePath: string): Promise<void> {
+		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
+		if (!(noteFile instanceof TFile)) {
+			new Notice("Meeting note not found");
+			return;
+		}
+		if (summarizeJobs.has(notePath)) {
+			new Notice("Summarization already in progress");
+			return;
+		}
+		await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
+		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+		if (transcriptFile) {
+			await updateFrontmatter(this.app, transcriptFile.path, "pipeline_state", "tagged");
+		}
+		await this.doSummarize(notePath, true);
 	}
 
 	private async doSummarize(notePath: string, skipPipelineCheck = false): Promise<void> {

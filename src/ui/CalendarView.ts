@@ -21,7 +21,7 @@ export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
 	getUserEmail: () => string;
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
-	onSummarize: (notePath: string) => void;
+	onSummarize: (notePath: string, force?: boolean) => void;
 	onResearch: (notePath: string) => void;
 	getAuthState: () => AuthState;
 	onSignIn: () => Promise<void>;

@@ -8,6 +8,7 @@ import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, expandedCards, recordingStartTime, type CardStatusVariant} from "../state";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
+import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
 import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
@@ -36,7 +37,7 @@ export interface MeetingCardOpts {
 	importantOrganizerEmails?: readonly string[];
 	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
-	onSummarize?: (notePath: string) => void;
+	onSummarize?: (notePath: string, force?: boolean) => void;
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
@@ -728,7 +729,14 @@ function renderCardDynamic(
 			});
 		} else if (states.summary === "complete") {
 			summaryPill.addEventListener("click", () => {
-				void app.workspace.openLinkText(notePath, "", false);
+				void (async () => {
+					const choice = await new RegenerateSummaryModal(app).prompt();
+					if (choice === "open") {
+						void app.workspace.openLinkText(notePath, "", false);
+					} else if (choice === "regenerate" && onSummarize) {
+						onSummarize(notePath, true);
+					}
+				})();
 			});
 		}
 	}
