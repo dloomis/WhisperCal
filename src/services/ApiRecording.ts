@@ -45,7 +45,16 @@ export async function startApiRecording(opts: {
 		attendees: event.attendees.map(a => a.name || a.email),
 	});
 
+	// Capture a live TFile reference so a rename during recording doesn't
+	// orphan the linking step (TFile.path is auto-updated on rename).
+	const resolved = opts.app.vault.getAbstractFileByPath(notePath);
+	const noteFile = resolved instanceof TFile ? resolved : null;
+	if (!noteFile) {
+		console.warn(`[WhisperCal] startApiRecording: no TFile at "${notePath}" — linking will rely on path fallback`);
+	}
+
 	recordingState.set(notePath, {
+		noteFile,
 		suggestedFilename,
 		subject: event.subject,
 		attendees: event.attendees.map(a => parseDisplayName(a.name, a.email)),
@@ -157,6 +166,11 @@ async function enrichTranscriptFrontmatter(
 	info: RecordingInfo | null,
 ): Promise<void> {
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+	if (!noteBasename) {
+		// Writing `[[]]` here would produce a broken backlink that's hard to
+		// notice later; log and skip so the absence is explicit in the logs.
+		console.error(`[WhisperCal] enrichTranscriptFrontmatter: empty noteBasename from "${notePath}" — meeting_note will NOT be set on ${transcriptFile.path}`);
+	}
 
 	// Read meeting note for wiki-link invitees (PeopleMatchService already ran there)
 	const noteFile = app.vault.getAbstractFileByPath(notePath);
@@ -174,7 +188,7 @@ async function enrichTranscriptFrontmatter(
 			fm["tags"] = [...existing, "transcript"];
 		}
 
-		fm["meeting_note"] = `[[${noteBasename}]]`;
+		if (noteBasename) fm["meeting_note"] = `[[${noteBasename}]]`;
 		fm["pipeline_state"] = "titled";
 
 		if (info) {
@@ -224,7 +238,9 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			}
 		}
 
-		// Look for the transcript file in the vault
+		// Look for the transcript file in the vault. The recording service named
+		// it from the suggestedFilename captured at record-start, so the expected
+		// path derives from the ORIGINAL notePath even if the note was renamed.
 		const expectedPath = getTranscriptPath(notePath, transcriptFolderPath);
 		let transcriptFile: TFile | null = null;
 
@@ -245,25 +261,62 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			return;
 		}
 
+		// Resolve the meeting note's CURRENT path. Prefer the live TFile captured
+		// at record-start — its .path is auto-updated by Obsidian on rename — and
+		// fall back to the original notePath string for older recordings (or if
+		// the TFile couldn't be resolved at start-time).
+		const liveNoteFile = info?.noteFile ?? null;
+		let noteFile: TFile | null = null;
+		if (liveNoteFile && app.vault.getAbstractFileByPath(liveNoteFile.path) === liveNoteFile) {
+			noteFile = liveNoteFile;
+		} else {
+			const fallback = app.vault.getAbstractFileByPath(notePath);
+			if (fallback instanceof TFile) noteFile = fallback;
+		}
+
+		if (!noteFile) {
+			console.error(`[WhisperCal] Cannot link transcript: meeting note missing (original path "${notePath}", live path "${liveNoteFile?.path ?? "n/a"}")`);
+			onStatus?.("Meeting note missing \u2014 transcript not linked", "alert-circle", 6000, "warning");
+			return;
+		}
+		const currentNotePath = noteFile.path;
+
 		// Enrich transcript with WhisperCal pipeline frontmatter.
 		// Non-fatal: if enrichment fails, still link the transcript to the meeting note.
 		onStatus?.("Enriching transcript\u2026");
+		let enrichmentFailed = false;
 		try {
-			await enrichTranscriptFrontmatter(app, transcriptFile, notePath, info);
+			await enrichTranscriptFrontmatter(app, transcriptFile, currentNotePath, info);
 		} catch (err) {
-			console.error("[WhisperCal] Transcript enrichment failed (continuing to link):", err);
+			enrichmentFailed = true;
+			console.error(`[WhisperCal] Transcript enrichment failed for ${transcriptFile.path} (continuing to link):`, err);
 		}
 
 		// Link transcript to meeting note + set pipeline state.
 		// Batch into a single processFrontMatter call to avoid a race with the
 		// pipeline_state mirror handler that fires when the transcript is enriched.
 		const transcriptBasename = transcriptFile.basename;
-		await batchUpdateFrontmatter(app, notePath, {
+		await batchUpdateFrontmatter(app, currentNotePath, {
 			transcript: `[[${transcriptBasename}]]`,
 			pipeline_state: "titled",
 		});
 
-		onStatus?.("Transcript linked", "check", 4000, "done");
+		// Verify the enrichment actually wrote meeting_note. metadataCache is
+		// eventually consistent, so give it a moment; if still missing, warn loudly.
+		if (!enrichmentFailed) {
+			await sleep(500);
+			const transcriptFm = app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
+			if (!transcriptFm?.["meeting_note"]) {
+				enrichmentFailed = true;
+				console.error(`[WhisperCal] Transcript ${transcriptFile.path} linked but missing meeting_note — enrichment silently dropped the write`);
+			}
+		}
+
+		if (enrichmentFailed) {
+			onStatus?.("Transcript linked \u2014 enrichment incomplete", "alert-circle", 6000, "warning");
+		} else {
+			onStatus?.("Transcript linked", "check", 4000, "done");
+		}
 	} catch (err) {
 		console.error("[WhisperCal] Transcript linking failed:", err);
 		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning");

@@ -70,6 +70,10 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		if (!(freshFile instanceof TFile)) return false;
 
 		const noteBasename = opts.notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+		if (!noteBasename) {
+			console.error(`[WhisperCal] ApiUnlinkedProvider.linkToNote: empty noteBasename from "${opts.notePath}" — cannot link ${freshFile.path}`);
+			return false;
+		}
 
 		// Read meeting note frontmatter for wiki-link invitees + calendar context
 		const noteFile = opts.app.vault.getAbstractFileByPath(opts.notePath);
@@ -78,37 +82,42 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			: undefined;
 
 		// 1. Enrich transcript frontmatter with full meeting context
-		await this.app.fileManager.processFrontMatter(
-			freshFile,
-			(fm: Record<string, unknown>) => {
-				const existing = Array.isArray(fm["tags"])
-					? fm["tags"] as string[] : [];
-				if (!existing.includes("transcript")) {
-					fm["tags"] = [...existing, "transcript"];
-				}
-				fm["meeting_note"] = `[[${noteBasename}]]`;
-				fm["pipeline_state"] = "titled";
-				fm["meeting_subject"] = opts.subject;
-				fm["is_recurring"] = opts.isRecurring ?? false;
-				// Prefer wiki-link invitees from meeting note, fall back to plain names
-				const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
-					? noteFm["meeting_invitees"] as string[]
-					: null;
-				if (wikiInvitees && wikiInvitees.length > 0) {
-					fm["meeting_invitees"] = wikiInvitees;
-				} else if (opts.attendees && opts.attendees.length > 0) {
-					fm["meeting_invitees"] = opts.attendees.map(
-						a => parseDisplayName(a.name, a.email),
-					);
-				}
-				// Calendar event context — makes transcript self-contained for LLM use
-				if (opts.meetingDate) fm["meeting_date"] = opts.meetingDate;
-				if (opts.meetingStart) fm["meeting_start"] = opts.meetingStart;
-				if (opts.meetingEnd) fm["meeting_end"] = opts.meetingEnd;
-				if (opts.organizer) fm["meeting_organizer"] = opts.organizer;
-				if (opts.location) fm["meeting_location"] = opts.location;
-			},
-		);
+		try {
+			await this.app.fileManager.processFrontMatter(
+				freshFile,
+				(fm: Record<string, unknown>) => {
+					const existing = Array.isArray(fm["tags"])
+						? fm["tags"] as string[] : [];
+					if (!existing.includes("transcript")) {
+						fm["tags"] = [...existing, "transcript"];
+					}
+					fm["meeting_note"] = `[[${noteBasename}]]`;
+					fm["pipeline_state"] = "titled";
+					fm["meeting_subject"] = opts.subject;
+					fm["is_recurring"] = opts.isRecurring ?? false;
+					// Prefer wiki-link invitees from meeting note, fall back to plain names
+					const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
+						? noteFm["meeting_invitees"] as string[]
+						: null;
+					if (wikiInvitees && wikiInvitees.length > 0) {
+						fm["meeting_invitees"] = wikiInvitees;
+					} else if (opts.attendees && opts.attendees.length > 0) {
+						fm["meeting_invitees"] = opts.attendees.map(
+							a => parseDisplayName(a.name, a.email),
+						);
+					}
+					// Calendar event context — makes transcript self-contained for LLM use
+					if (opts.meetingDate) fm["meeting_date"] = opts.meetingDate;
+					if (opts.meetingStart) fm["meeting_start"] = opts.meetingStart;
+					if (opts.meetingEnd) fm["meeting_end"] = opts.meetingEnd;
+					if (opts.organizer) fm["meeting_organizer"] = opts.organizer;
+					if (opts.location) fm["meeting_location"] = opts.location;
+				},
+			);
+		} catch (err) {
+			console.error(`[WhisperCal] ApiUnlinkedProvider: failed to enrich ${freshFile.path} with meeting_note/context — aborting link:`, err);
+			return false;
+		}
 
 		// 2. Rename transcript to match linked naming convention: "{noteBasename} - Transcript.md"
 		const expectedName = `${noteBasename} - Transcript.md`;

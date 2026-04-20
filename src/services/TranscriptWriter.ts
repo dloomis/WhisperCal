@@ -70,6 +70,11 @@ function buildFrontmatter(opts: {
 	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
 	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+	if (!noteBasename) {
+		// Writing `[[]]` produces a broken backlink the user won't notice until
+		// the speaker/summary stage fails; make the absence explicit.
+		console.error(`[WhisperCal] TranscriptWriter.buildFrontmatter: empty noteBasename from "${notePath}" — meeting_note will NOT be written`);
+	}
 	const dateStr = formatDateTimeWithOffset(recordingStart, timezone);
 	const duration = metadata.durationSec ? Math.round(metadata.durationSec) : 0;
 
@@ -79,9 +84,11 @@ function buildFrontmatter(opts: {
 		"tags: [transcript]",
 		`macwhisper_session_id: "${yamlEscape(sessionId)}"`,
 		`duration: ${duration}`,
-		`meeting_note: "[[${yamlEscape(noteBasename)}]]"`,
-		`speaker_count: ${speakers.length}`,
 	];
+	if (noteBasename) {
+		lines.push(`meeting_note: "[[${yamlEscape(noteBasename)}]]"`);
+	}
+	lines.push(`speaker_count: ${speakers.length}`);
 
 	if (speakers.length > 0) {
 		lines.push("speakers:");
@@ -190,8 +197,27 @@ export async function createTranscriptFile(opts: {
 	const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
 
 	// If transcript file already exists, ensure backlinks are set and return
-	if (app.vault.getAbstractFileByPath(transcriptPath) instanceof TFile) {
+	const existingTranscript = app.vault.getAbstractFileByPath(transcriptPath);
+	if (existingTranscript instanceof TFile) {
 		const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+		const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+
+		// Heal an existing transcript that's missing the backlink. Previously
+		// we silently skipped this, which left transcripts orphaned in the
+		// meeting_note → note direction even though the note → transcript
+		// link got written.
+		const existingFm = app.metadataCache.getFileCache(existingTranscript)?.frontmatter;
+		if (!existingFm?.["meeting_note"]) {
+			if (!noteBasename) {
+				console.error(`[WhisperCal] Cannot repair missing meeting_note on ${transcriptPath}: empty noteBasename from "${notePath}"`);
+			} else {
+				console.error(`[WhisperCal] Existing transcript missing meeting_note — repairing: ${transcriptPath}`);
+				await app.fileManager.processFrontMatter(existingTranscript, (fm: Record<string, unknown>) => {
+					fm["meeting_note"] = `[[${noteBasename}]]`;
+				});
+			}
+		}
+
 		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
 		return transcriptPath;
 	}

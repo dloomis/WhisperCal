@@ -27,7 +27,10 @@ export async function updateFrontmatter(
 ): Promise<void> {
 	await enqueue(filePath, async () => {
 		const file = app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return;
+		if (!(file instanceof TFile)) {
+			console.error(`[WhisperCal] updateFrontmatter: no file at "${filePath}" — skipping {${key}}`);
+			return;
+		}
 
 		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 			frontmatter[key] = value;
@@ -42,7 +45,10 @@ export async function batchUpdateFrontmatter(
 ): Promise<void> {
 	await enqueue(filePath, async () => {
 		const file = app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return;
+		if (!(file instanceof TFile)) {
+			console.error(`[WhisperCal] batchUpdateFrontmatter: no file at "${filePath}" — skipping {${Object.keys(updates).join(", ")}}`);
+			return;
+		}
 
 		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 			for (const [key, value] of Object.entries(updates)) {
@@ -59,7 +65,10 @@ export async function removeFrontmatterKeys(
 ): Promise<void> {
 	await enqueue(filePath, async () => {
 		const file = app.vault.getAbstractFileByPath(filePath);
-		if (!(file instanceof TFile)) return;
+		if (!(file instanceof TFile)) {
+			console.error(`[WhisperCal] removeFrontmatterKeys: no file at "${filePath}" — skipping {${keys.join(", ")}}`);
+			return;
+		}
 
 		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 			for (const key of keys) {

@@ -1,5 +1,7 @@
 /** Module-level shared state readable by any component. */
 
+import type {TFile} from "obsidian";
+
 /** Note paths currently being summarized. */
 export const summarizeJobs = new Set<string>();
 
@@ -10,6 +12,12 @@ export const speakerTagJobs = new Set<string>();
 export const researchJobs = new Set<string>();
 
 export interface RecordingInfo {
+	/**
+	 * Live reference to the meeting note. Obsidian updates TFile.path on rename,
+	 * so this stays valid across renames during a long recording window — unlike
+	 * the bare notePath string that keys recordingState.
+	 */
+	noteFile: TFile | null;
 	suggestedFilename: string;
 	subject: string;
 	attendees: string[];
