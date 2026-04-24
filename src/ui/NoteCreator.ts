@@ -48,8 +48,12 @@ export class NoteCreator {
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
 
-			// Exact match on calendar_event_id (set by WhisperCal on creation)
-			if (fm["calendar_event_id"] === event.id) return child;
+			// Match on calendar_event_id AND meeting_date. MS Graph occasionally
+			// returns the same `id` for different occurrences of a recurring
+			// series, so event_id alone would collapse sibling occurrences onto
+			// one note (causing e.g. an LLM job on Thursday's note to appear as
+			// running on Tuesday's card).
+			if (fm["calendar_event_id"] === event.id && fm["meeting_date"] === date) return child;
 
 			// Match on meeting_subject + meeting_date
 			if (fm["meeting_subject"] === event.subject && fm["meeting_date"] === date) {
