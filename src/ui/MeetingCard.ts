@@ -1,4 +1,4 @@
-import {App, Notice, TFile, setIcon} from "obsidian";
+import {App, Notice, TFile, normalizePath, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
@@ -640,6 +640,37 @@ function renderCardDynamic(
 				recordPill.disabled = true;
 				const handleRecord = async () => {
 					try {
+						// Detect an orphaned transcript file on disk that the note's
+						// frontmatter doesn't link to (e.g. a prior recording where the
+						// link write silently dropped). Without this, re-recording would
+						// overwrite the file with no warning.
+						const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+						const expectedTranscriptPath = normalizePath(
+							`${transcriptFolderPath}/${noteBasename} - Transcript.md`,
+						);
+						const orphanedTranscript = noteBasename
+							? app.vault.getAbstractFileByPath(expectedTranscriptPath)
+							: null;
+						if (orphanedTranscript instanceof TFile) {
+							const choice = await new ReRecordConfirmModal(app, {
+								pipelineState: states.pipelineState,
+								linked: false,
+							}).prompt();
+							if (choice === "view") {
+								recordPill.disabled = false;
+								void app.workspace.openLinkText(orphanedTranscript.path, "", false);
+								return;
+							}
+							if (choice !== "re-record") {
+								recordPill.disabled = false;
+								return;
+							}
+							// Defensive: clear any stale pipeline frontmatter that may
+							// have been partially written before the link step failed.
+							await removeFrontmatterKeys(app, notePath, [
+								"transcript", "pipeline_state", "macwhisper_session_id",
+							]);
+						}
 						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 							await noteCreator.createNote(event);
 						}
