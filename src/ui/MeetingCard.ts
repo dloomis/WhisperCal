@@ -5,7 +5,7 @@ import {NameInputModal} from "./NameInputModal";
 import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
-import {updateFrontmatter} from "../utils/frontmatter";
+import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, expandedCards, recordingStartTime, type CardStatusVariant} from "../state";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
@@ -658,6 +658,19 @@ function renderCardDynamic(
 							}).prompt();
 							if (choice === "view") {
 								recordPill.disabled = false;
+								// Heal the broken linkage so the note's pipeline state
+								// reflects reality before we navigate away. Mirrors what
+								// waitAndLink would have written had it not silently failed.
+								try {
+									await batchUpdateFrontmatter(app, notePath, {
+										transcript: `[[${orphanedTranscript.basename}]]`,
+										pipeline_state: "titled",
+									});
+									new Notice("Restored transcript link in meeting note");
+								} catch (err) {
+									console.error("[WhisperCal] Failed to heal transcript link:", err);
+									new Notice("Couldn't restore transcript link — see console");
+								}
 								void app.workspace.openLinkText(orphanedTranscript.path, "", false);
 								return;
 							}
