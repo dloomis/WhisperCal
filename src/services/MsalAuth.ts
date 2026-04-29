@@ -22,6 +22,7 @@ export class MsalAuth extends BaseCalendarAuth {
 	private config: MsalAuthConfig;
 	private server: Server | null = null;
 	private loopbackTimer: ReturnType<typeof setTimeout> | null = null;
+	private signInTimedOut = false;
 
 	constructor(config: MsalAuthConfig, callbacks: AuthCallbacks) {
 		super(callbacks);
@@ -53,6 +54,7 @@ export class MsalAuth extends BaseCalendarAuth {
 			this.setState({status: "error", message: "Client ID is required."});
 			return;
 		}
+		this.signInTimedOut = false;
 
 		// Generate PKCE challenge and CSRF state
 		const codeVerifier = randomBytes(32).toString("base64url");
@@ -94,8 +96,16 @@ export class MsalAuth extends BaseCalendarAuth {
 			// Wait for the auth code from the redirect
 			const authCode = await codePromise;
 			if (!authCode) {
-				// Cancelled or timed out
-				this.setState({status: "signed-out"});
+				if (this.signInTimedOut) {
+					const mins = Math.round(LOOPBACK_TIMEOUT_MS / 60000);
+					this.setState({
+						status: "error",
+						message: `Sign-in timed out after ${mins} minutes — please try again.`,
+					});
+				} else {
+					// Cancelled
+					this.setState({status: "signed-out"});
+				}
 				return;
 			}
 
@@ -227,6 +237,7 @@ export class MsalAuth extends BaseCalendarAuth {
 				this.server = server;
 				// Time out after 5 minutes if the user doesn't complete the flow
 				this.loopbackTimer = setTimeout(() => {
+					this.signInTimedOut = true;
 					resolveCode(null);
 					this.stopLoopbackServer();
 				}, LOOPBACK_TIMEOUT_MS);
