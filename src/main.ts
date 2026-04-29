@@ -25,6 +25,7 @@ import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
+import {appendLlmErrorSection} from "./utils/llmErrorLog";
 import {getLinkedTranscriptFile} from "./services/ApiRecording";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
@@ -945,8 +946,11 @@ export default class WhisperCalPlugin extends Plugin {
 		jobSet.add(filePath);
 		this.activeLlmCount++;
 
-		// Set in-progress card status
+		// Set in-progress card status. The same path is used for routing
+		// LLM error logs — for speaker tagging that's the parent meeting note,
+		// for summarize/research it's the meeting note (== filePath).
 		const statusNotePath = opts.cardNotePath ?? filePath;
+		const errorNotePath = statusNotePath;
 		if (opts.cardIcon) {
 			const modelSuffix = opts.cardModel ? ` (${formatModelName(opts.cardModel)})` : "";
 			this.setCardStatus(statusNotePath, `${label}${modelSuffix}\u2026`, opts.cardIcon, 0, "progress");
@@ -983,11 +987,29 @@ export default class WhisperCalPlugin extends Plugin {
 					return;
 				}
 
+				if (result.exitCode !== 0) {
+					await appendLlmErrorSection(this.app, errorNotePath, {
+						label,
+						exitCode: result.exitCode,
+						stderr: result.stderr,
+						stdout: result.stdout,
+						cli: this.settings.llmCli,
+						model: opts.cardModel,
+					});
+				}
+
 				opts.onSuccess(result);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				new Notice(`${label} encountered an unexpected error: ${msg}`);
 				console.error(`[WhisperCal] ${label} error:`, e);
+				await appendLlmErrorSection(this.app, errorNotePath, {
+					label: `${label} (unexpected error)`,
+					exitCode: -1,
+					stderr: e instanceof Error ? (e.stack || e.message) : String(e),
+					cli: this.settings.llmCli,
+					model: opts.cardModel,
+				});
 			} finally {
 				jobSet.delete(filePath);
 				this.activeLlmCount--;
