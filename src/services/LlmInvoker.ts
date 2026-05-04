@@ -8,6 +8,7 @@ interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on
 	targetLabel?: string;     // label for the target in the trigger string (default: "Transcript")
 	vaultPath: string;        // absolute path to vault root
+	configDir: string;        // vault-relative config dir (e.g. ".obsidian"); supplied by Vault#configDir
 	promptPath?: string;      // absolute or vault-relative path to the prompt file (omit when using inlinePrompt)
 	inlinePrompt?: string;    // direct prompt text — replaces the prompt file reference when set
 	llmCli: string;
@@ -45,8 +46,8 @@ function ensureMcpConfigFile(flags: string): void {
  * Return a plugin-local temp directory inside the vault.
  * Using the vault avoids OS-specific temp paths and works cross-platform.
  */
-function getPluginTmpDir(vaultPath: string): string {
-	const dir = path.join(vaultPath, ".obsidian", "plugins", "whisper-cal", "tmp");
+function getPluginTmpDir(vaultPath: string, configDir: string): string {
+	const dir = path.join(vaultPath, configDir, "plugins", "whisper-cal", "tmp");
 	if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
 	return dir;
 }
@@ -191,7 +192,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 		const resolved = resolvePromptPath(opts.promptPath, opts.vaultPath);
 		try {
 			const content = fs.readFileSync(resolved, "utf-8");
-			const tmpFile = path.join(getPluginTmpDir(opts.vaultPath), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+			const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 			fs.writeFileSync(tmpFile, content, "utf-8");
 			tmpFiles.push(tmpFile);
 			systemPromptFile = tmpFile;
@@ -323,7 +324,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		const resolved = resolvePromptPath(opts.promptPath, opts.vaultPath);
 		try {
 			const content = fs.readFileSync(resolved, "utf-8");
-			const tmpDir = getPluginTmpDir(opts.vaultPath);
+			const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
 			const tmpFile = path.join(tmpDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 			fs.writeFileSync(tmpFile, content, "utf-8");
 			tmpFiles.push(tmpFile);
@@ -333,7 +334,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 
 	const trigger = buildTrigger(opts, !!systemPromptFile);
 	const cli = buildCliCommand(opts, systemPromptFile);
-	const tmpDir = getPluginTmpDir(opts.vaultPath);
+	const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
 	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
 	fs.writeFileSync(tmpTrigger, trigger, "utf-8");
 	tmpFiles.push(tmpTrigger);

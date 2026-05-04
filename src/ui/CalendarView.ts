@@ -925,7 +925,7 @@ export class CalendarView extends ItemView {
 			if (recording.transcriptPath) {
 				const file = this.app.vault.getAbstractFileByPath(recording.transcriptPath);
 				if (file instanceof TFile) {
-					await this.app.vault.trash(file, true);
+					await this.app.fileManager.trashFile(file);
 				}
 			}
 			void this.loadAndRenderUnlinkedSection();

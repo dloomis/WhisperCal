@@ -126,7 +126,7 @@ export default class WhisperCalPlugin extends Plugin {
 				if (force) {
 					void this.regenerateSummary(notePath);
 				} else {
-					this.doSummarize(notePath);
+					void this.doSummarize(notePath);
 				}
 			},
 			onResearch: (notePath: string) => {
@@ -246,7 +246,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const pipelineState = fm["pipeline_state"] as string | undefined;
 				if (pipelineState !== "tagged") return false;
 				if (checking) return true;
-				this.doSummarize(file.path);
+				void this.doSummarize(file.path);
 				return true;
 			},
 		});
@@ -698,7 +698,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 				// Auto-summarize if enabled
 				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
-					this.doSummarize(notePath, true);
+					void this.doSummarize(notePath, true);
 				}
 
 				this.refreshCalendarCards(transcriptPath);
@@ -914,7 +914,7 @@ export default class WhisperCalPlugin extends Plugin {
 		filePath: string;
 		label: string;
 		promptPath?: string;
-		spawnOpts: (vaultPath: string) => Parameters<typeof spawnLlmPrompt>[0];
+		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "configDir">;
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void;
 		onRegister?: () => void;
 		onCleanup?: () => void;
@@ -978,7 +978,10 @@ export default class WhisperCalPlugin extends Plugin {
 					}
 				}
 
-				const result = await spawnLlmPrompt(opts.spawnOpts(vaultPath));
+				const result = await spawnLlmPrompt({
+					...opts.spawnOpts(vaultPath),
+					configDir: this.app.vault.configDir,
+				});
 
 				if (this.settings.llmDebugMode) {
 					// eslint-disable-next-line obsidianmd/ui/sentence-case

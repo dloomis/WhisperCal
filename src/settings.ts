@@ -590,12 +590,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setName("Anthropic API key")
 			.setDesc("Used to populate model dropdowns. Not sent to the CLI — the CLI uses its own auth.")
 			.addText(text => {
 				text.inputEl.type = "password";
-				text.inputEl.style.width = "260px";
 				text.setPlaceholder("sk-ant-...")
 					.setValue(this.plugin.settings.anthropicApiKey)
 					.onChange((value) => {
