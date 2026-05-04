@@ -221,7 +221,9 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	const {cmd, trigger, vaultPath, tmpFiles} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
+	// eslint-disable-next-line no-console
 	console.log("[WhisperCal] LLM command:", cmd);
+	// eslint-disable-next-line no-console
 	console.log("[WhisperCal] LLM trigger:", trigger);
 
 	const cleanupTmpFiles = () => {
