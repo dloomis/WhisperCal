@@ -121,9 +121,11 @@ export function resolvePromptPath(promptPath: string, vaultPath: string): string
  */
 function buildTrigger(opts: LlmInvokerOpts, promptInSystem = false): string {
 	const parts: string[] = [];
-	if (opts.inlinePrompt) {
+	if (promptInSystem) {
+		// Static instructions live in the system prompt — omit from user message.
+	} else if (opts.inlinePrompt) {
 		parts.push(opts.inlinePrompt);
-	} else if (opts.promptPath && !promptInSystem) {
+	} else if (opts.promptPath) {
 		// Use the original path (vault-relative or user-configured) rather than
 		// resolving to absolute — avoids leaking filesystem paths to the LLM.
 		// The CLI runs with cwd=vaultPath so vault-relative paths resolve correctly.
@@ -188,16 +190,35 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 	const tmpFiles: string[] = [];
 	let systemPromptFile: string | undefined;
 
-	if (opts.promptPath && !opts.inlinePrompt && !Platform.isWin) {
-		const resolved = resolvePromptPath(opts.promptPath, opts.vaultPath);
-		try {
-			const content = fs.readFileSync(resolved, "utf-8");
-			const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-			fs.writeFileSync(tmpFile, content, "utf-8");
-			tmpFiles.push(tmpFile);
-			systemPromptFile = tmpFile;
-		} catch {
-			// Prompt file unreadable — fall back to old behavior (LLM reads the file itself).
+	// Inject the static instructions (prompt file or inline prompt) into the
+	// system prefix via --append-system-prompt. Two reasons:
+	//   1. Cache: tools → system → messages is the cacheable prefix; keeping
+	//      variables in the user message preserves cache hits across runs.
+	//   2. Authority: the model treats system-prompt rules ("use the Edit tool",
+	//      etc.) as contracts. The same rules in the user message read like a
+	//      request, and Claude in print mode tends to answer in text instead.
+	// inlinePrompt wins when both are set (bypass mode).
+	if (!Platform.isWin) {
+		let content: string | undefined;
+		if (opts.inlinePrompt) {
+			content = opts.inlinePrompt;
+		} else if (opts.promptPath) {
+			const resolved = resolvePromptPath(opts.promptPath, opts.vaultPath);
+			try {
+				content = fs.readFileSync(resolved, "utf-8");
+			} catch {
+				// Prompt file unreadable — fall back to user-message delivery.
+			}
+		}
+		if (content !== undefined) {
+			try {
+				const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+				fs.writeFileSync(tmpFile, content, "utf-8");
+				tmpFiles.push(tmpFile);
+				systemPromptFile = tmpFile;
+			} catch {
+				// Temp write failed — fall back to user-message delivery.
+			}
 		}
 	}
 
@@ -318,18 +339,25 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	const {vaultPath} = opts;
 	const tmpFiles: string[] = [];
 
-	// Cache optimization: read prompt file for system prompt injection
+	// Inject prompt file or inline prompt into the system prefix (see buildLlmCommand).
 	let systemPromptFile: string | undefined;
-	if (opts.promptPath && !opts.inlinePrompt) {
+	let systemPromptContent: string | undefined;
+	if (opts.inlinePrompt) {
+		systemPromptContent = opts.inlinePrompt;
+	} else if (opts.promptPath) {
 		const resolved = resolvePromptPath(opts.promptPath, opts.vaultPath);
 		try {
-			const content = fs.readFileSync(resolved, "utf-8");
-			const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
-			const tmpFile = path.join(tmpDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-			fs.writeFileSync(tmpFile, content, "utf-8");
+			systemPromptContent = fs.readFileSync(resolved, "utf-8");
+		} catch { /* fall back to user-message delivery */ }
+	}
+	if (systemPromptContent !== undefined) {
+		try {
+			const sysDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
+			const tmpFile = path.join(sysDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+			fs.writeFileSync(tmpFile, systemPromptContent, "utf-8");
 			tmpFiles.push(tmpFile);
 			systemPromptFile = tmpFile;
-		} catch { /* fall back to old behavior */ }
+		} catch { /* fall back */ }
 	}
 
 	const trigger = buildTrigger(opts, !!systemPromptFile);
