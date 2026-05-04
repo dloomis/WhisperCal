@@ -221,8 +221,8 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	const {cmd, trigger, vaultPath, tmpFiles} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
-	console.debug("[WhisperCal] LLM command:", cmd);
-	console.debug("[WhisperCal] LLM trigger:", trigger);
+	console.log("[WhisperCal] LLM command:", cmd);
+	console.log("[WhisperCal] LLM trigger:", trigger);
 
 	const cleanupTmpFiles = () => {
 		for (const f of tmpFiles) {

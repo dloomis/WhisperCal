@@ -878,7 +878,7 @@ export default class WhisperCalPlugin extends Plugin {
 					targetLabel: "Meeting note",
 					vaultPath,
 					...(result.bypassPrompt
-						? {inlinePrompt: `Read the meeting note and follow these instructions. Write your results back into the meeting note under a ## Research section (replace it if one already exists). Instructions: ${result.instructions}`}
+						? {inlinePrompt: `Use the Edit tool to add a "## Research" section to the meeting note (replace the existing ## Research section if one is present). Do your research first, then make a single Edit call to write the section. Do not just print the results — they must be written into the file. Instructions: ${result.instructions}`}
 						: {promptPath: this.settings.researchPromptPath}),
 					llmCli: this.settings.llmCli,
 					llmExtraFlags: this.settings.llmExtraFlags,
