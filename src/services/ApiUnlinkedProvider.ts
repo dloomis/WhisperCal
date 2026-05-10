@@ -5,6 +5,7 @@ import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink} from "../utils/vault";
 import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
+import {FM} from "../constants";
 
 /** Parse duration from number (seconds) or string ("MM:SS" / "HH:MM:SS"). */
 function parseDuration(raw: unknown): number {
@@ -47,12 +48,12 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			if (!fm) continue;
 
 			// Skip MacWhisper-owned transcripts — they belong to that provider
-			if (fm["macwhisper_session_id"]) continue;
+			if (fm[FM.MACWHISPER_SESSION_ID]) continue;
 
 			// Linked if meeting_note resolves to an existing file
 			const meetingFile = resolveWikiLink(
 				this.app, fm as Record<string, unknown>,
-				"meeting_note", child.path,
+				FM.MEETING_NOTE, child.path,
 			);
 			if (meetingFile) continue;
 
@@ -91,18 +92,18 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 					if (!existing.includes("transcript")) {
 						fm["tags"] = [...existing, "transcript"];
 					}
-					fm["meeting_note"] = `[[${noteBasename}]]`;
-					fm["pipeline_state"] = "titled";
+					fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
+					fm[FM.PIPELINE_STATE] = "titled";
 					fm["meeting_subject"] = opts.subject;
 					fm["is_recurring"] = opts.isRecurring ?? false;
 					// Prefer wiki-link invitees from meeting note, fall back to plain names
-					const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
-						? noteFm["meeting_invitees"] as string[]
+					const wikiInvitees = Array.isArray(noteFm?.[FM.MEETING_INVITEES])
+						? noteFm[FM.MEETING_INVITEES] as string[]
 						: null;
 					if (wikiInvitees && wikiInvitees.length > 0) {
-						fm["meeting_invitees"] = wikiInvitees;
+						fm[FM.MEETING_INVITEES] = wikiInvitees;
 					} else if (opts.attendees && opts.attendees.length > 0) {
-						fm["meeting_invitees"] = opts.attendees.map(
+						fm[FM.MEETING_INVITEES] = opts.attendees.map(
 							a => parseDisplayName(a.name, a.email),
 						);
 					}
@@ -131,15 +132,15 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 
 		// 3. Link transcript on the meeting note side
 		await batchUpdateFrontmatter(opts.app, opts.notePath, {
-			transcript: `[[${transcriptFile.basename}]]`,
-			pipeline_state: "titled",
+			[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
+			[FM.PIPELINE_STATE]: "titled",
 		});
 
 		return true;
 	}
 
 	isNoteLinked(fm: Record<string, unknown>): boolean {
-		return !!fm["transcript"];
+		return !!fm[FM.TRANSCRIPT];
 	}
 
 	private toUnlinked(file: TFile, fm: Record<string, unknown>): UnlinkedRecording {

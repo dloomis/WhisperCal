@@ -3,6 +3,7 @@ import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} fro
 import {findRecentSessions, type MacWhisperRecording} from "./MacWhisperDb";
 import {linkKnownRecording} from "./LinkRecording";
 import {getLinkedSessionIds} from "../utils/vault";
+import {FM} from "../constants";
 
 export class MacWhisperUnlinkedProvider implements UnlinkedRecordingProvider {
 	readonly displayName = "MacWhisper";
@@ -32,7 +33,7 @@ export class MacWhisperUnlinkedProvider implements UnlinkedRecordingProvider {
 	}
 
 	isNoteLinked(fm: Record<string, unknown>): boolean {
-		return !!fm["macwhisper_session_id"];
+		return !!fm[FM.MACWHISPER_SESSION_ID];
 	}
 
 	private toUnlinked(s: MacWhisperRecording): UnlinkedRecording {

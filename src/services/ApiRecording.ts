@@ -1,12 +1,13 @@
 import {App, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus} from "./RecordingApi";
 import {batchUpdateFrontmatter} from "../utils/frontmatter";
-import {recordingState, type RecordingInfo} from "../state";
+import type {CardUiState, RecordingInfo} from "./CardUiState";
 import {formatDate, formatTime, sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
 import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import type {OnStatus} from "./LinkRecording";
+import {FM} from "../constants";
 
 /** Prevents duplicate waitAndLink calls when stopApiRecording and watchApiRecording race. */
 const linkingInProgress = new Set<string>();
@@ -27,8 +28,9 @@ export async function startApiRecording(opts: {
 	transcriptFolderPath: string;
 	timezone: string;
 	baseUrl: string;
+	cardUi: CardUiState;
 }): Promise<void> {
-	const {notePath, event, transcriptFolderPath, timezone, baseUrl} = opts;
+	const {notePath, event, transcriptFolderPath, timezone, baseUrl, cardUi} = opts;
 
 	const health = await recordingHealth(baseUrl);
 	if (!health.modelsReady) {
@@ -53,7 +55,7 @@ export async function startApiRecording(opts: {
 		console.warn(`[WhisperCal] startApiRecording: no TFile at "${notePath}" — linking will rely on path fallback`);
 	}
 
-	recordingState.set(notePath, {
+	cardUi.setRecording(notePath, {
 		noteFile,
 		suggestedFilename,
 		subject: event.subject,
@@ -75,14 +77,15 @@ export async function stopApiRecording(opts: {
 	notePath: string;
 	transcriptFolderPath: string;
 	baseUrl: string;
+	cardUi: CardUiState;
 	onStatus?: OnStatus;
 }): Promise<void> {
-	const {app, notePath, transcriptFolderPath, baseUrl, onStatus} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl, cardUi, onStatus} = opts;
 
-	const info = recordingState.get(notePath) ?? null;
+	const info = cardUi.getRecording(notePath) ?? null;
 	// Delete state BEFORE the async API call so the watch loop's guard
-	// (recordingState.has) exits immediately and doesn't race us to waitAndLink.
-	recordingState.delete(notePath);
+	// exits immediately and doesn't race us to waitAndLink.
+	cardUi.deleteRecording(notePath);
 	try {
 		await recordingStop(baseUrl);
 	} catch {
@@ -104,24 +107,25 @@ export function watchApiRecording(opts: {
 	notePath: string;
 	transcriptFolderPath: string;
 	baseUrl: string;
+	cardUi: CardUiState;
 	onStopped: () => void;
 	onStatus?: OnStatus;
 }): void {
-	const {app, notePath, transcriptFolderPath, baseUrl, onStopped, onStatus} = opts;
+	const {app, notePath, transcriptFolderPath, baseUrl, cardUi, onStopped, onStatus} = opts;
 	const WATCH_INTERVAL_MS = 2000;
 
 	void (async () => {
 		for (;;) {
 			await sleep(WATCH_INTERVAL_MS);
-			if (!recordingState.has(notePath)) return; // stopped via WhisperCal
+			if (!cardUi.hasRecording(notePath)) return; // stopped via WhisperCal
 			try {
 				const health = await recordingHealth(baseUrl);
 				// Re-check after async call — stopApiRecording may have
 				// deleted the state while we were awaiting the health check.
-				if (!recordingState.has(notePath)) return;
+				if (!cardUi.hasRecording(notePath)) return;
 				if (!health.isRecording) {
-					const info = recordingState.get(notePath) ?? null;
-					recordingState.delete(notePath);
+					const info = cardUi.getRecording(notePath) ?? null;
+					cardUi.deleteRecording(notePath);
 					console.debug(`[WhisperCal] API recording stopped externally for ${notePath}`);
 					onStopped();
 					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl, onStatus);
@@ -129,7 +133,7 @@ export function watchApiRecording(opts: {
 				}
 			} catch {
 				// API unreachable — treat as stopped
-				recordingState.delete(notePath);
+				cardUi.deleteRecording(notePath);
 				onStopped();
 				return;
 			}
@@ -177,8 +181,8 @@ async function enrichTranscriptFrontmatter(
 	const noteFm = (noteFile instanceof TFile)
 		? app.metadataCache.getFileCache(noteFile)?.frontmatter
 		: undefined;
-	const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
-		? noteFm["meeting_invitees"] as string[]
+	const wikiInvitees = Array.isArray(noteFm?.[FM.MEETING_INVITEES])
+		? noteFm[FM.MEETING_INVITEES] as string[]
 		: null;
 
 	await app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
@@ -188,17 +192,17 @@ async function enrichTranscriptFrontmatter(
 			fm["tags"] = [...existing, "transcript"];
 		}
 
-		if (noteBasename) fm["meeting_note"] = `[[${noteBasename}]]`;
-		fm["pipeline_state"] = "titled";
+		if (noteBasename) fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
+		fm[FM.PIPELINE_STATE] = "titled";
 
 		if (info) {
 			fm["meeting_subject"] = info.subject;
 			fm["is_recurring"] = info.isRecurring;
 			// Prefer wiki-link invitees from meeting note, fall back to plain names
 			if (wikiInvitees && wikiInvitees.length > 0) {
-				fm["meeting_invitees"] = wikiInvitees;
+				fm[FM.MEETING_INVITEES] = wikiInvitees;
 			} else if (info.attendees.length > 0) {
-				fm["meeting_invitees"] = info.attendees;
+				fm[FM.MEETING_INVITEES] = info.attendees;
 			}
 			// Calendar event context — makes transcript self-contained for LLM use
 			if (info.meetingDate) fm["meeting_date"] = info.meetingDate;
@@ -297,8 +301,8 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		// pipeline_state mirror handler that fires when the transcript is enriched.
 		const transcriptBasename = transcriptFile.basename;
 		await batchUpdateFrontmatter(app, currentNotePath, {
-			transcript: `[[${transcriptBasename}]]`,
-			pipeline_state: "titled",
+			[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,
+			[FM.PIPELINE_STATE]: "titled",
 		});
 
 		// Verify the enrichment actually wrote meeting_note. metadataCache is
@@ -306,7 +310,7 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		if (!enrichmentFailed) {
 			await sleep(500);
 			const transcriptFm = app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
-			if (!transcriptFm?.["meeting_note"]) {
+			if (!transcriptFm?.[FM.MEETING_NOTE]) {
 				enrichmentFailed = true;
 				console.error(`[WhisperCal] Transcript ${transcriptFile.path} linked but missing meeting_note — enrichment silently dropped the write`);
 			}
@@ -330,7 +334,7 @@ export function hasLinkedTranscript(app: App, notePath: string): boolean {
 	const file = app.vault.getAbstractFileByPath(notePath);
 	if (!(file instanceof TFile)) return false;
 	const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-	return !!fm?.["transcript"];
+	return !!fm?.[FM.TRANSCRIPT];
 }
 
 /** Resolve and return the linked transcript TFile, if any. */

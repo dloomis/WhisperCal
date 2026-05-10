@@ -1,6 +1,6 @@
 import {ItemView, Notice, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
 import {getMarkdownFilesRecursive} from "../utils/vault";
-import {VIEW_TYPE_CALENDAR} from "../constants";
+import {VIEW_TYPE_CALENDAR, FM} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
@@ -10,6 +10,8 @@ import {NameInputModal} from "./NameInputModal";
 import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import type {JobTracker} from "../services/JobTracker";
+import type {CardUiState} from "../services/CardUiState";
 import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
@@ -20,6 +22,8 @@ import {resolveRecordingApiBaseUrl} from "../services/RecordingApi";
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
 	getUserEmail: () => string;
+	jobs: JobTracker;
+	cardUi: CardUiState;
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
 	onSummarize: (notePath: string, force?: boolean) => void;
 	onResearch: (notePath: string) => void;
@@ -532,6 +536,8 @@ export class CalendarView extends ItemView {
 			timezone: this.settings.timezone,
 			noteCreator: this.noteCreator,
 			app: this.app,
+			jobs: this.callbacks.jobs,
+			cardUi: this.callbacks.cardUi,
 			transcriptFolderPath: this.settings.transcriptFolderPath,
 			recordingWindowMinutes: this.settings.recordingWindowMinutes,
 			importantOrganizerEmails: this.settings.importantOrganizers.map(o => o.email),
@@ -600,7 +606,7 @@ export class CalendarView extends ItemView {
 			const fm = cache?.frontmatter;
 			if (!fm) continue;
 
-			const eventId = fm["calendar_event_id"] as string | undefined;
+			const eventId = fm[FM.CALENDAR_EVENT_ID] as string | undefined;
 			if (!eventId || calendarEventIds.has(eventId)) continue;
 
 			// Skip notes from a different provider (or legacy notes without the field)
@@ -937,7 +943,7 @@ export class CalendarView extends ItemView {
 
 	/** Keys from frontmatter that affect card rendering. */
 	private static readonly FM_KEYS = [
-		"macwhisper_session_id", "transcript", "pipeline_state", "calendar_event_id", "research_notes",
+		FM.MACWHISPER_SESSION_ID, FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.CALENDAR_EVENT_ID, "research_notes",
 	] as const;
 
 	/** Build a stable string from card-relevant frontmatter values. */

@@ -568,6 +568,17 @@
 }
 
 /* Auth settings UI */
+.whisper-cal-settings-warning {
+	background: var(--background-modifier-error-hover);
+	border-left: 3px solid var(--background-modifier-error);
+	color: var(--text-normal);
+	padding: 10px 14px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+	margin: 12px 0;
+	line-height: 1.45;
+}
+
 .whisper-cal-auth-status {
 	margin-top: 8px;
 }

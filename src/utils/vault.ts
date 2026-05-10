@@ -1,4 +1,5 @@
 import {App, TFile, TFolder} from "obsidian";
+import {FM} from "../constants";
 
 /**
  * Strip wiki-link brackets and optional display-text alias from a string.
@@ -63,7 +64,7 @@ export function getLinkedSessionIds(app: App): Set<string> {
 		// Skip transcript files — the owning meeting note holds the canonical link
 		const tags: unknown = fm["tags"];
 		if (Array.isArray(tags) && (tags as string[]).includes("transcript")) continue;
-		const sid = fm["macwhisper_session_id"] as string | undefined;
+		const sid = fm[FM.MACWHISPER_SESSION_ID] as string | undefined;
 		if (sid) linked.add(sid);
 	}
 	return linked;

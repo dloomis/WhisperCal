@@ -25,6 +25,7 @@ interface LlmInvokerOpts {
 	researchNotePaths?: string[];   // vault-relative paths to research context notes
 	additionalInstructions?: string; // free-text instructions appended to trigger
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
+	debugLogging?: boolean;         // when true, logs LLM command/trigger/stdout to developer console
 }
 
 /**
@@ -243,10 +244,12 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 
 	const {cmd, trigger, vaultPath, tmpFiles} = buildLlmCommand(opts);
 	const timeoutMs = opts.timeoutMs ?? 0;
-	// eslint-disable-next-line no-console
-	console.log("[WhisperCal] LLM command:", cmd);
-	// eslint-disable-next-line no-console
-	console.log("[WhisperCal] LLM trigger:", trigger);
+	if (opts.debugLogging) {
+		// eslint-disable-next-line no-console
+		console.log("[WhisperCal] LLM command:", cmd);
+		// eslint-disable-next-line no-console
+		console.log("[WhisperCal] LLM trigger:", trigger);
+	}
 
 	const cleanupTmpFiles = () => {
 		for (const f of tmpFiles) {
@@ -280,7 +283,7 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 		child.stdout!.on("data", (data: {toString(): string}) => {
 			const text = data.toString();
 			stdoutChunks.push(text);
-			console.debug("[WhisperCal] LLM stdout:", text);
+			if (opts.debugLogging) console.debug("[WhisperCal] LLM stdout:", text);
 		});
 
 		child.stderr!.on("data", (data: {toString(): string}) => {

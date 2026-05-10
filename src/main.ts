@@ -1,11 +1,12 @@
-import {MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
+import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
-import {summarizeJobs, speakerTagJobs, researchJobs, cardStatus, type CardStatusVariant} from "./state";
+import {JobTracker, type JobKind} from "./services/JobTracker";
+import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
@@ -13,7 +14,7 @@ import {CachedProposalModal} from "./ui/CachedProposalModal";
 import {ResearchModal} from "./ui/ResearchModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {parseDateTime, setTimeFormat} from "./utils/time";
-import {updateFrontmatter} from "./utils/frontmatter";
+import {updateFrontmatter, readFmString} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
 import type {AuthState, TokenCache} from "./services/AuthTypes";
@@ -44,7 +45,7 @@ function formatModelName(modelId: string): string {
 
 /** Extract invitee names from transcript frontmatter (meeting_invitees, calendar_attendees, or invitees). */
 function parseInviteeNames(fm: Record<string, unknown>): string[] {
-	const raw = fm["meeting_invitees"] ?? fm["calendar_attendees"] ?? fm["invitees"];
+	const raw = fm[FM.MEETING_INVITEES] ?? fm[FM.CALENDAR_ATTENDEES] ?? fm[FM.INVITEES];
 	if (!Array.isArray(raw)) return [];
 	const names: string[] = [];
 	for (const entry of raw) {
@@ -70,6 +71,8 @@ export default class WhisperCalPlugin extends Plugin {
 	settings!: WhisperCalSettings;
 	auth!: CalendarAuth;
 	peopleSearch!: PeopleSearchProvider;
+	readonly jobs = new JobTracker();
+	readonly cardUi = new CardUiState();
 	private upstream!: CalendarProvider;
 	private provider!: CalendarProvider;
 	private cachedProvider: CachedCalendarProvider | null = null;
@@ -119,6 +122,8 @@ export default class WhisperCalPlugin extends Plugin {
 		this.viewCallbacks = {
 			getCacheStatus: () => this.cachedProvider?.getLastStatus() ?? null,
 			getUserEmail: () => this.upstream.getUserEmail(),
+			jobs: this.jobs,
+			cardUi: this.cardUi,
 			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => {
 				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
 			},
@@ -153,17 +158,16 @@ export default class WhisperCalPlugin extends Plugin {
 			this.app.metadataCache.on("changed", (file: TFile) => {
 				if (!file.path.startsWith(this.settings.transcriptFolderPath + "/")) return;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm) return;
-				const pipelineState = (fm as Record<string, unknown>)["pipeline_state"];
-				if (typeof pipelineState !== "string" || !pipelineState) return;
+				const pipelineState = readFmString(fm, FM.PIPELINE_STATE);
+				if (!pipelineState) return;
 				// Resolve meeting note from transcript's meeting_note backlink
-				const meetingFile = resolveWikiLink(this.app, fm as Record<string, unknown>, "meeting_note", file.path);
+				const meetingFile = resolveWikiLink(this.app, fm as Record<string, unknown>, FM.MEETING_NOTE, file.path);
 				if (!meetingFile) return;
 				// Check if meeting note already has this pipeline_state
 				const meetingFm = this.app.metadataCache.getFileCache(meetingFile)?.frontmatter;
-				if (meetingFm?.["pipeline_state"] === pipelineState) return;
+				if (readFmString(meetingFm, FM.PIPELINE_STATE) === pipelineState) return;
 				// Mirror it
-				void updateFrontmatter(this.app, meetingFile.path, "pipeline_state", pipelineState);
+				void updateFrontmatter(this.app, meetingFile.path, FM.PIPELINE_STATE, pipelineState);
 			}),
 		);
 
@@ -188,7 +192,7 @@ export default class WhisperCalPlugin extends Plugin {
 					const file = this.app.workspace.getActiveFile();
 					if (!file) return false;
 					const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-					if (!fm?.["calendar_event_id"]) return false;
+					if (!fm?.[FM.CALENDAR_EVENT_ID]) return false;
 					if (checking) return true;
 					void this.handleLinkRecording(file, fm);
 					return true;
@@ -199,7 +203,7 @@ export default class WhisperCalPlugin extends Plugin {
 				this.app.workspace.on("file-menu", (menu, file) => {
 					if (!(file instanceof TFile)) return;
 					const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-					if (!fm?.["calendar_event_id"]) return;
+					if (!fm?.[FM.CALENDAR_EVENT_ID]) return;
 					menu.addItem((item) => {
 						item
 							// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -229,7 +233,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
 				// If active file is the meeting note (has calendar_event_id), use its path;
 				// otherwise (transcript is active) use the transcript path as fallback.
-				const notePath = fm?.["calendar_event_id"] ? file.path : transcriptFile.path;
+				const notePath = fm?.[FM.CALENDAR_EVENT_ID] ? file.path : transcriptFile.path;
 				void this.doTagSpeakers(transcriptFile, transcriptFm as Record<string, unknown>, notePath);
 				return true;
 			},
@@ -242,8 +246,8 @@ export default class WhisperCalPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (!file) return false;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["calendar_event_id"]) return false;
-				const pipelineState = fm["pipeline_state"] as string | undefined;
+				if (!fm?.[FM.CALENDAR_EVENT_ID]) return false;
+				const pipelineState = readFmString(fm, FM.PIPELINE_STATE);
 				if (pipelineState !== "tagged") return false;
 				if (checking) return true;
 				void this.doSummarize(file.path);
@@ -258,7 +262,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const file = this.app.workspace.getActiveFile();
 				if (!file) return false;
 				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-				if (!fm?.["calendar_event_id"]) return false;
+				if (!fm?.[FM.CALENDAR_EVENT_ID]) return false;
 				if (checking) return true;
 				this.doResearch(file.path);
 				return true;
@@ -301,17 +305,25 @@ export default class WhisperCalPlugin extends Plugin {
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
-	onunload() {
+	onunload(): void {
 		this.auth.cancelSignIn();
+		// Stop UI timers and clear job/card state up front so handlers that fire
+		// during teardown don't see stale entries.
+		this.cardUi.clear();
+		this.jobs.clear();
+		// Kick the cache flush as fire-and-forget — Obsidian's onunload is sync,
+		// but the SQLite-backed flush is async; missing this leaves a partial write.
 		void this.cachedProvider?.flush();
-		// Kill any running LLM processes and clean up job tracking
+		// Kill any running LLM processes; force-kill stragglers after a grace period.
 		for (const proc of activeProcesses) {
 			proc.kill("SIGTERM");
 		}
-		activeProcesses.clear();
-		speakerTagJobs.clear();
-		summarizeJobs.clear();
-		researchJobs.clear();
+		setTimeout(() => {
+			for (const proc of activeProcesses) {
+				if (!proc.killed) proc.kill("SIGKILL");
+			}
+			activeProcesses.clear();
+		}, 2000);
 	}
 
 	async onExternalSettingsChange(): Promise<void> {
@@ -333,14 +345,13 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	/** Get the vault's absolute filesystem path (undocumented but stable on desktop). */
+	/** Get the vault's absolute filesystem path. Requires a desktop vault on the local filesystem. */
 	private getVaultPath(): string {
-		const adapter = this.app.vault.adapter as unknown as Record<string, unknown>;
-		const basePath = adapter["basePath"];
-		if (typeof basePath !== "string") {
-			throw new Error("Cannot determine vault path — unsupported platform");
+		const adapter = this.app.vault.adapter;
+		if (!(adapter instanceof FileSystemAdapter)) {
+			throw new Error("WhisperCal requires a desktop vault on the local filesystem.");
 		}
-		return basePath;
+		return adapter.getBasePath();
 	}
 
 	async loadSettings() {
@@ -499,12 +510,12 @@ export default class WhisperCalPlugin extends Plugin {
 		const hasTranscriptTag = Array.isArray(tags)
 			? tags.includes("transcript")
 			: tags === "transcript";
-		if (hasTranscriptTag && fm["macwhisper_session_id"]) {
+		if (hasTranscriptTag && fm[FM.MACWHISPER_SESSION_ID]) {
 			return file;
 		}
 
 		// Context A: meeting note with a linked transcript
-		if (fm["calendar_event_id"] && fm["macwhisper_session_id"] && fm["transcript"]) {
+		if (fm[FM.CALENDAR_EVENT_ID] && fm[FM.MACWHISPER_SESSION_ID] && fm[FM.TRANSCRIPT]) {
 			return resolveWikiLink(this.app, fm, "transcript", file.path);
 		}
 
@@ -523,11 +534,11 @@ export default class WhisperCalPlugin extends Plugin {
 		notePath: string,
 	): Promise<void> {
 		const transcriptPath = transcriptFile.path;
-		const state = transcriptFm["pipeline_state"] as string | undefined;
+		const state = readFmString(transcriptFm, FM.PIPELINE_STATE);
 		if (state && state !== "titled") {
 			new Notice("Speakers already tagged for this transcript");
 			// Heal: ensure the meeting note also reflects at least "tagged"
-			void updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
+			void updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
 			return;
 		}
 
@@ -575,7 +586,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		this.runLlmJob({
-			jobSet: speakerTagJobs,
+			jobKind: "speakerTag",
 			filePath: transcriptPath,
 			label: "Tagging speakers",
 			promptPath: this.settings.speakerTaggingPromptPath,
@@ -600,6 +611,7 @@ export default class WhisperCalPlugin extends Plugin {
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
+				debugLogging: this.settings.llmDebugLogging,
 			}),
 			onSuccess: (result) => void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath),
 		});
@@ -693,7 +705,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 				// Directly update meeting note pipeline_state rather than
 				// waiting for the async metadataCache mirror event.
-				await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
+				await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
 				this.setCardStatus(notePath, "Speakers tagged", "check", 4000, "done");
 
 				// Auto-summarize if enabled
@@ -722,14 +734,14 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("Meeting note not found");
 			return;
 		}
-		if (summarizeJobs.has(notePath)) {
+		if (this.jobs.has("summarize", notePath)) {
 			new Notice("Summarization already in progress");
 			return;
 		}
-		await updateFrontmatter(this.app, notePath, "pipeline_state", "tagged");
+		await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
 		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
 		if (transcriptFile) {
-			await updateFrontmatter(this.app, transcriptFile.path, "pipeline_state", "tagged");
+			await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "tagged");
 		}
 		await this.doSummarize(notePath, true);
 	}
@@ -746,7 +758,7 @@ export default class WhisperCalPlugin extends Plugin {
 				new Notice("Meeting note has no frontmatter");
 				return;
 			}
-			const pipelineState = fm["pipeline_state"] as string | undefined;
+			const pipelineState = readFmString(fm, FM.PIPELINE_STATE);
 			if (pipelineState === "summarized") {
 				new Notice("This meeting has already been summarized");
 				return;
@@ -774,7 +786,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		this.runLlmJob({
-			jobSet: summarizeJobs,
+			jobKind: "summarize",
 			filePath: notePath,
 			label: "Summarizing",
 			promptPath: this.settings.summarizerPromptPath,
@@ -792,6 +804,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmModel: this.settings.summarizerModel || undefined,
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
+				debugLogging: this.settings.llmDebugLogging,
 			}),
 			onSuccess: ({exitCode, stderr}) => {
 				if (exitCode === 0) {
@@ -865,7 +878,7 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 
 			this.runLlmJob({
-				jobSet: researchJobs,
+				jobKind: "research",
 				filePath: notePath,
 				label: "Researching",
 				promptPath: result.bypassPrompt ? undefined : this.settings.researchPromptPath,
@@ -888,6 +901,7 @@ export default class WhisperCalPlugin extends Plugin {
 					peopleFolderPath: this.settings.peopleFolderPath || undefined,
 					timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 					debugMode: this.settings.llmDebugMode,
+					debugLogging: this.settings.llmDebugLogging,
 				}),
 				onSuccess: ({exitCode, stderr}) => {
 					if (exitCode === 0) {
@@ -910,7 +924,7 @@ export default class WhisperCalPlugin extends Plugin {
 	 * process spawning, debug mode, error handling, and cleanup.
 	 */
 	private runLlmJob(opts: {
-		jobSet: Set<string>;
+		jobKind: JobKind;
 		filePath: string;
 		label: string;
 		promptPath?: string;
@@ -925,14 +939,14 @@ export default class WhisperCalPlugin extends Plugin {
 		/** Note path for card status (defaults to filePath) */
 		cardNotePath?: string;
 	}): void {
-		const {jobSet, filePath, label, promptPath} = opts;
+		const {jobKind, filePath, label, promptPath} = opts;
 
 		if (!this.settings.llmEnabled) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("LLM features are disabled — enable them in WhisperCal settings");
 			return;
 		}
-		if (jobSet.has(filePath)) {
+		if (this.jobs.has(jobKind, filePath)) {
 			new Notice(`${label} already in progress`);
 			return;
 		}
@@ -943,7 +957,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		// Register job synchronously before any async work
-		jobSet.add(filePath);
+		this.jobs.add(jobKind, filePath);
 		this.activeLlmCount++;
 
 		// Set in-progress card status. The same path is used for routing
@@ -1014,7 +1028,7 @@ export default class WhisperCalPlugin extends Plugin {
 					model: opts.cardModel,
 				});
 			} finally {
-				jobSet.delete(filePath);
+				this.jobs.remove(jobKind, filePath);
 				this.activeLlmCount--;
 				this.clearProgressStatus(statusNotePath);
 				this.refreshCalendarCards(filePath);
@@ -1024,12 +1038,12 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private setCardStatus(notePath: string, message: string, icon?: string, durationMs = 4000, variant?: CardStatusVariant): void {
-		cardStatus.set(notePath, {message, icon, variant});
+		this.cardUi.setStatus(notePath, {message, icon, variant});
 		this.refreshCalendarCards(notePath);
 		if (durationMs > 0) {
 			setTimeout(() => {
-				if (cardStatus.get(notePath)?.message === message) {
-					cardStatus.delete(notePath);
+				if (this.cardUi.getStatus(notePath)?.message === message) {
+					this.cardUi.deleteStatus(notePath);
 					this.refreshCalendarCards(notePath);
 				}
 			}, durationMs);
@@ -1037,9 +1051,9 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	private clearProgressStatus(notePath: string): void {
-		const cs = cardStatus.get(notePath);
+		const cs = this.cardUi.getStatus(notePath);
 		if (cs?.variant === "progress") {
-			cardStatus.delete(notePath);
+			this.cardUi.deleteStatus(notePath);
 			this.refreshCalendarCards(notePath);
 		}
 	}
@@ -1059,10 +1073,10 @@ export default class WhisperCalPlugin extends Plugin {
 
 	private static readonly BANNER_CLS = "whisper-cal-llm-banner";
 
-	private static readonly BANNER_OPS: {jobSet: Set<string>; op: string; label: string}[] = [
-		{jobSet: summarizeJobs, op: "summarize", label: "Summarizing\u2026"},
-		{jobSet: speakerTagJobs, op: "speakers", label: "Tagging speakers\u2026"},
-		{jobSet: researchJobs, op: "research", label: "Researching\u2026"},
+	private static readonly BANNER_OPS: {kind: JobKind; op: string; label: string}[] = [
+		{kind: "summarize", op: "summarize", label: "Summarizing\u2026"},
+		{kind: "speakerTag", op: "speakers", label: "Tagging speakers\u2026"},
+		{kind: "research", op: "research", label: "Researching\u2026"},
 	];
 
 	/** Add or remove LLM banners for all leaves showing the given file. */
@@ -1070,8 +1084,8 @@ export default class WhisperCalPlugin extends Plugin {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (view instanceof MarkdownView && view.file?.path === filePath) {
-				for (const {jobSet, op, label} of WhisperCalPlugin.BANNER_OPS) {
-					if (jobSet.has(filePath)) {
+				for (const {kind, op, label} of WhisperCalPlugin.BANNER_OPS) {
+					if (this.jobs.has(kind, filePath)) {
 						this.ensureBanner(view, op, label);
 					} else {
 						this.removeBanner(view, op);
@@ -1086,8 +1100,8 @@ export default class WhisperCalPlugin extends Plugin {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (view instanceof MarkdownView && view.file) {
-				for (const {jobSet, op, label} of WhisperCalPlugin.BANNER_OPS) {
-					if (jobSet.has(view.file.path)) {
+				for (const {kind, op, label} of WhisperCalPlugin.BANNER_OPS) {
+					if (this.jobs.has(kind, view.file.path)) {
 						this.ensureBanner(view, op, label);
 					} else {
 						this.removeBanner(view, op);
@@ -1117,7 +1131,7 @@ export default class WhisperCalPlugin extends Plugin {
 		file: TFile,
 		fm: Record<string, unknown>,
 	): Promise<void> {
-		if (fm["macwhisper_session_id"]) {
+		if (fm[FM.MACWHISPER_SESSION_ID]) {
 			new Notice("Recording already linked to this note");
 			return;
 		}
@@ -1148,10 +1162,10 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		const subject = (fm["meeting_subject"] as string) || file.basename;
-		const isUnscheduled = fm["calendar_event_id"] === "unscheduled";
+		const isUnscheduled = fm[FM.CALENDAR_EVENT_ID] === "unscheduled";
 
 		// Extract attendee names from frontmatter (stored as wiki links or plain strings)
-		const rawAttendees = Array.isArray(fm["meeting_invitees"]) ? fm["meeting_invitees"] as string[] : [];
+		const rawAttendees = Array.isArray(fm[FM.MEETING_INVITEES]) ? fm[FM.MEETING_INVITEES] as string[] : [];
 		const attendees = rawAttendees.map(s => {
 			const name = stripWikiLink(String(s).replace(/^"/, "").replace(/"$/, ""));
 			return {name, email: ""};
@@ -1173,7 +1187,7 @@ export default class WhisperCalPlugin extends Plugin {
 				if (msg) {
 					this.setCardStatus(file.path, msg, icon, autoClearMs ?? 0, variant);
 				} else {
-					cardStatus.delete(file.path);
+					this.cardUi.deleteStatus(file.path);
 					this.refreshCalendarCards(file.path);
 				}
 			},

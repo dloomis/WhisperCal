@@ -48,6 +48,7 @@ export interface WhisperCalSettings {
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	llmDebugMode: boolean;
+	llmDebugLogging: boolean;
 	autoSummarizeAfterTagging: boolean;
 	showAllDayEvents: boolean;
 	importantOrganizers: ImportantOrganizer[];
@@ -94,6 +95,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	llmDebugMode: false,
+	llmDebugLogging: false,
 	autoSummarizeAfterTagging: false,
 	showAllDayEvents: false,
 	importantOrganizers: [],
@@ -345,6 +347,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			this.renderGoogleAuthSettings(containerEl);
 		}
 
+		containerEl.createEl("div", {
+			cls: "whisper-cal-settings-warning",
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- "OAuth" is a product term
+			text: "OAuth tokens are stored unencrypted in this vault's plugin data folder. Avoid syncing the data file to untrusted services; revoke access from the provider's account portal if the file is exposed.",
+		});
+
 		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
 		this.renderAuthStatus(this.plugin.auth.getState());
 		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
@@ -563,6 +571,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}));
 		}
+
+		new Setting(containerEl)
+			.setName("Debug logging")
+			.setDesc("Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.llmDebugLogging)
+				.onChange(async (value) => {
+					this.plugin.settings.llmDebugLogging = value;
+					await this.plugin.saveSettings();
+				}));
 
 		new Setting(containerEl)
 			.setName("CLI command")

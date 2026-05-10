@@ -6,6 +6,7 @@ import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
 import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
 import {PeopleMatchService} from "../services/PeopleMatchService";
+import {FM} from "../constants";
 
 export class NoteCreator {
 	private app: App;
@@ -53,7 +54,7 @@ export class NoteCreator {
 			// series, so event_id alone would collapse sibling occurrences onto
 			// one note (causing e.g. an LLM job on Thursday's note to appear as
 			// running on Tuesday's card).
-			if (fm["calendar_event_id"] === event.id && fm["meeting_date"] === date) return child;
+			if (fm[FM.CALENDAR_EVENT_ID] === event.id && fm["meeting_date"] === date) return child;
 
 			// Match on meeting_subject + meeting_date
 			if (fm["meeting_subject"] === event.subject && fm["meeting_date"] === date) {

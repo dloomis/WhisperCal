@@ -6,6 +6,7 @@ import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import {ensureFolder} from "../utils/vault";
 import {yamlEscape} from "../utils/sanitize";
 import {coerceFmDate, coerceFmTime, formatDateTimeWithOffset} from "../utils/time";
+import {FM} from "../constants";
 
 interface SpeakerBlock {
 	speaker: string | null;
@@ -207,18 +208,18 @@ export async function createTranscriptFile(opts: {
 		// meeting_note → note direction even though the note → transcript
 		// link got written.
 		const existingFm = app.metadataCache.getFileCache(existingTranscript)?.frontmatter;
-		if (!existingFm?.["meeting_note"]) {
+		if (!existingFm?.[FM.MEETING_NOTE]) {
 			if (!noteBasename) {
 				console.error(`[WhisperCal] Cannot repair missing meeting_note on ${transcriptPath}: empty noteBasename from "${notePath}"`);
 			} else {
 				console.error(`[WhisperCal] Existing transcript missing meeting_note — repairing: ${transcriptPath}`);
 				await app.fileManager.processFrontMatter(existingTranscript, (fm: Record<string, unknown>) => {
-					fm["meeting_note"] = `[[${noteBasename}]]`;
+					fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
 				});
 			}
 		}
 
-		await updateFrontmatter(app, notePath, "transcript", `[[${transcriptBasename}]]`);
+		await updateFrontmatter(app, notePath, FM.TRANSCRIPT, `[[${transcriptBasename}]]`);
 		return transcriptPath;
 	}
 
@@ -234,8 +235,8 @@ export async function createTranscriptFile(opts: {
 	const noteFm = (noteFile instanceof TFile)
 		? app.metadataCache.getFileCache(noteFile)?.frontmatter
 		: undefined;
-	const wikiInvitees = Array.isArray(noteFm?.["meeting_invitees"])
-		? noteFm["meeting_invitees"] as string[]
+	const wikiInvitees = Array.isArray(noteFm?.[FM.MEETING_INVITEES])
+		? noteFm[FM.MEETING_INVITEES] as string[]
 		: undefined;
 
 	const frontmatter = buildFrontmatter({
@@ -267,8 +268,8 @@ export async function createTranscriptFile(opts: {
 	const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 	const allSpeakersNamed = data.speakers.length > 0 && data.speakers.every(sp => !sp.isStub);
 	await batchUpdateFrontmatter(app, notePath, {
-		transcript: `[[${transcriptBasename}]]`,
-		pipeline_state: allSpeakersNamed ? "tagged" : "titled",
+		[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,
+		[FM.PIPELINE_STATE]: allSpeakersNamed ? "tagged" : "titled",
 	});
 
 	return transcriptPath;

@@ -6,7 +6,9 @@ import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time"
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
-import {summarizeJobs, speakerTagJobs, researchJobs, recordingState, cardStatus, expandedCards, recordingStartTime, type CardStatusVariant} from "../state";
+import type {JobTracker} from "../services/JobTracker";
+import {type CardStatusVariant, type CardUiState} from "../services/CardUiState";
+import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
 import {removeFrontmatterKeys} from "../utils/frontmatter";
@@ -31,6 +33,8 @@ export interface MeetingCardOpts {
 	timezone: string;
 	noteCreator: NoteCreator;
 	app: App;
+	jobs: JobTracker;
+	cardUi: CardUiState;
 	transcriptFolderPath?: string;
 	recordingWindowMinutes?: number;
 	onNoteCreated?: (eventId: string) => void;
@@ -65,28 +69,17 @@ const stateLabels: Record<PillState, string> = {
 	running: " (running)",
 };
 
-/** Module-level duration timers keyed by notePath. Cleaned up on stop or card rebuild. */
-const recDurationTimers = new Map<string, ReturnType<typeof setInterval>>();
-
-function stopDurationTimer(notePath: string): void {
-	const id = recDurationTimers.get(notePath);
-	if (id != null) {
-		clearInterval(id);
-		recDurationTimers.delete(notePath);
-	}
-}
-
-function startDurationTimer(notePath: string, textEl: HTMLElement): void {
-	stopDurationTimer(notePath);
-	const start = recordingStartTime.get(notePath) ?? Date.now();
+function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLElement): void {
+	cardUi.stopDurationTimer(notePath);
+	const start = cardUi.getStartTime(notePath) ?? Date.now();
 	const tick = () => {
-		if (!textEl.isConnected) { stopDurationTimer(notePath); return; }
+		if (!textEl.isConnected) { cardUi.stopDurationTimer(notePath); return; }
 		const elapsed = formatElapsed((Date.now() - start) / 1000);
 		textEl.textContent = elapsed;
-		cardStatus.set(notePath, {message: elapsed, variant: "recording"});
+		cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
 	};
 	tick();
-	recDurationTimers.set(notePath, setInterval(tick, 1000));
+	cardUi.startDurationTimer(notePath, tick, 1000);
 }
 
 function renderPill(container: HTMLElement, icon: string, label: string, state: PillState): HTMLButtonElement {
@@ -223,6 +216,8 @@ function computePillStates(
 	app: App,
 	noteCreator: NoteCreator,
 	event: CalendarEvent,
+	jobs: JobTracker,
+	cardUi: CardUiState,
 ): PillStates {
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
@@ -234,35 +229,35 @@ function computePillStates(
 	const note: PillState = noteExists ? "complete" : "incomplete";
 	const research: PillState = !noteExists
 		? "disabled"
-		: researchJobs.has(notePath) ? "running"
+		: jobs.has("research", notePath) ? "running"
 		: noteFm["research_notes"] ? "complete"
 		: "incomplete";
 	const transcript: PillState = !noteExists
 		? "disabled"
-		: noteFm["transcript"] ? "complete" : "incomplete";
+		: noteFm[FM.TRANSCRIPT] ? "complete" : "incomplete";
 
-	const record: PillState = recordingState.has(notePath)
+	const record: PillState = cardUi.hasRecording(notePath)
 		? "running"
-		: noteFm["transcript"] ? "complete"
-		: recordingState.size > 0 ? "disabled"
+		: noteFm[FM.TRANSCRIPT] ? "complete"
+		: cardUi.recordingCount > 0 ? "disabled"
 		: "incomplete";
 
-	const pipelineState = noteFm["pipeline_state"] as string | undefined;
-	const transcriptFile = noteFm["transcript"]
-		? resolveWikiLink(app, noteFm, "transcript", notePath)
+	const pipelineState = noteFm[FM.PIPELINE_STATE] as string | undefined;
+	const transcriptFile = noteFm[FM.TRANSCRIPT]
+		? resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath)
 		: null;
 	const transcriptPath = transcriptFile?.path ?? "";
 
 	const speakers: PillState = transcript !== "complete"
 		? "disabled"
 		: (pipelineState && pipelineState !== "titled") ? "complete"
-		: speakerTagJobs.has(transcriptPath) ? "running"
+		: jobs.has("speakerTag", transcriptPath) ? "running"
 		: "incomplete";
 
 	const summary: PillState = speakers !== "complete"
 		? "disabled"
 		: pipelineState === "summarized" ? "complete"
-		: summarizeJobs.has(notePath) ? "running"
+		: jobs.has("summarize", notePath) ? "running"
 		: "incomplete";
 
 	return {note, research, transcript, record, speakers, summary, transcriptFile, transcriptPath, pipelineState};
@@ -281,16 +276,16 @@ async function healMissingSessionId(
 	if (!noteFile) return;
 
 	const noteFm = app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
-	if (noteFm["macwhisper_session_id"]) return; // already present
+	if (noteFm[FM.MACWHISPER_SESSION_ID]) return; // already present
 
-	const transcriptFile = resolveWikiLink(app, noteFm, "transcript", noteFile.path);
+	const transcriptFile = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, noteFile.path);
 	if (!transcriptFile) return;
 
 	const transcriptFm = app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
-	const sessionId = transcriptFm["macwhisper_session_id"] as string | undefined;
+	const sessionId = transcriptFm[FM.MACWHISPER_SESSION_ID] as string | undefined;
 	if (!sessionId) return;
 
-	await updateFrontmatter(app, noteFile.path, "macwhisper_session_id", sessionId);
+	await updateFrontmatter(app, noteFile.path, FM.MACWHISPER_SESSION_ID, sessionId);
 	console.debug(`[WhisperCal] Healed macwhisper_session_id on ${noteFile.path} from transcript`);
 }
 
@@ -387,7 +382,7 @@ export function renderMeetingCard(
 
 	// Collapse toggle — appended to the gutter icon row, pushed right
 	// Restore expand/collapse state across refreshes via module-level set
-	const isExpanded = expandedCards.has(opts.event.id);
+	const isExpanded = opts.cardUi.isExpanded(opts.event.id);
 	if (!isExpanded) card.addClass("whisper-cal-card-collapsed");
 	const toggle = iconRow.createDiv({
 		cls: "whisper-cal-card-toggle",
@@ -399,9 +394,9 @@ export function renderMeetingCard(
 		const nowCollapsed = card.classList.toggle("whisper-cal-card-collapsed");
 		toggle.ariaLabel = nowCollapsed ? "Expand actions" : "Collapse actions";
 		if (nowCollapsed) {
-			expandedCards.delete(opts.event.id);
+			opts.cardUi.collapse(opts.event.id);
 		} else {
-			expandedCards.add(opts.event.id);
+			opts.cardUi.expand(opts.event.id);
 		}
 	});
 
@@ -436,22 +431,23 @@ export function renderMeetingCard(
 	return card;
 }
 
-/** Build an onStatus callback that writes to the shared cardStatus map and triggers a card re-render. */
+/** Build an onStatus callback that writes to the shared CardUiState and triggers a card re-render. */
 function onStatusForCard(
 	notePath: string,
 	opts: MeetingCardOpts,
 ): (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void {
+	const {cardUi} = opts;
 	return (msg, icon, autoClearMs, variant) => {
 		if (msg) {
-			cardStatus.set(notePath, {message: msg, icon, variant});
+			cardUi.setStatus(notePath, {message: msg, icon, variant});
 		} else {
-			cardStatus.delete(notePath);
+			cardUi.deleteStatus(notePath);
 		}
 		opts.onStatusUpdate?.();
 		if (msg && autoClearMs && autoClearMs > 0) {
 			setTimeout(() => {
-				if (cardStatus.get(notePath)?.message === msg) {
-					cardStatus.delete(notePath);
+				if (cardUi.getStatus(notePath)?.message === msg) {
+					cardUi.deleteStatus(notePath);
 					opts.onStatusUpdate?.();
 				}
 			}, autoClearMs);
@@ -477,7 +473,7 @@ function renderCardDynamic(
 		onNoteCreated, onTagSpeakers, onSummarize, onResearch,
 	} = opts;
 
-	const states = computePillStates(app, noteCreator, event);
+	const states = computePillStates(app, noteCreator, event, opts.jobs, opts.cardUi);
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
 	const noteFm: Record<string, unknown> = noteFile
@@ -556,25 +552,26 @@ function renderCardDynamic(
 			recordPill.removeClass("whisper-cal-pill-recording");
 		};
 
+		const {cardUi} = opts;
 		const setRecording = () => {
-			if (!recordingStartTime.has(notePath)) recordingStartTime.set(notePath, Date.now());
-			const start = recordingStartTime.get(notePath)!;
+			if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
+			const start = cardUi.getStartTime(notePath)!;
 			const elapsed = formatElapsed((Date.now() - start) / 1000);
-			cardStatus.set(notePath, {message: elapsed, variant: "recording"});
+			cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
 			opts.onStatusUpdate?.();
 		};
 		const clearRecording = () => {
-			stopDurationTimer(notePath);
-			recordingStartTime.delete(notePath);
-			cardStatus.delete(notePath);
+			cardUi.stopDurationTimer(notePath);
+			cardUi.deleteStartTime(notePath);
+			cardUi.deleteStatus(notePath);
 			opts.onStatusUpdate?.();
 		};
 
 		if (states.record === "running") {
-			if (!recordingStartTime.has(notePath)) recordingStartTime.set(notePath, Date.now());
-			const start = recordingStartTime.get(notePath)!;
+			if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
+			const start = cardUi.getStartTime(notePath)!;
 			const elapsed = formatElapsed((Date.now() - start) / 1000);
-			cardStatus.set(notePath, {message: elapsed, variant: "recording"});
+			cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
 			addRecDot();
 		}
 		if (states.record === "complete") {
@@ -585,7 +582,7 @@ function renderCardDynamic(
 					recordPill.disabled = true;
 					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				void (async () => {
@@ -593,23 +590,23 @@ function renderCardDynamic(
 						pipelineState: states.pipelineState,
 					}).prompt();
 					if (choice === "view") {
-						const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+						const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 						if (tf) void app.workspace.openLinkText(tf.path, "", false);
 					} else if (choice === "re-record") {
 						// Reset transcript-related frontmatter
 						await removeFrontmatterKeys(app, notePath, [
-							"transcript", "pipeline_state", "macwhisper_session_id",
+							FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 						]);
 						// Ensure note exists then start recording
 						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 							await noteCreator.createNote(event);
 						}
-						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
+						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 						reRecording = true;
 						setRecording();
 						addRecDot();
 						recordPill.disabled = false;
-						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
+						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
 							reRecording = false;
 							recordPill.disabled = true;
 							removeRecDot();
@@ -623,7 +620,7 @@ function renderCardDynamic(
 				recordPill.disabled = true;
 				clearRecording();
 				removeRecDot();
-				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
+				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 			});
 		} else if (states.record === "incomplete") {
 			let recording = false;
@@ -633,7 +630,7 @@ function renderCardDynamic(
 					recordPill.disabled = true;
 					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStatus: onStatusForCard(notePath, opts)});
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				// Start
@@ -663,8 +660,8 @@ function renderCardDynamic(
 								// waitAndLink would have written had it not silently failed.
 								try {
 									await batchUpdateFrontmatter(app, notePath, {
-										transcript: `[[${orphanedTranscript.basename}]]`,
-										pipeline_state: "titled",
+										[FM.TRANSCRIPT]: `[[${orphanedTranscript.basename}]]`,
+										[FM.PIPELINE_STATE]: "titled",
 									});
 									new Notice("Restored transcript link in meeting note");
 								} catch (err) {
@@ -681,18 +678,18 @@ function renderCardDynamic(
 							// Defensive: clear any stale pipeline frontmatter that may
 							// have been partially written before the link step failed.
 							await removeFrontmatterKeys(app, notePath, [
-								"transcript", "pipeline_state", "macwhisper_session_id",
+								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 							]);
 						}
 						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
 							await noteCreator.createNote(event);
 						}
-						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl});
+						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 						recording = true;
 						recordPill.disabled = false;
 						setRecording();
 						addRecDot();
-						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, onStopped: () => {
+						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
 							recording = false;
 							recordPill.disabled = true;
 							removeRecDot();
@@ -713,7 +710,7 @@ function renderCardDynamic(
 		if (states.transcript !== "disabled") {
 			transcriptPill.addEventListener("click", () => {
 				if (states.transcript === "complete") {
-					const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+					const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 					if (tf) void app.workspace.openLinkText(tf.path, "", false);
 					return;
 				}
@@ -751,14 +748,14 @@ function renderCardDynamic(
 		const speakersPill = renderPill(actions, "users-round", "Speakers", states.speakers);
 		if (states.speakers === "incomplete" && onTagSpeakers) {
 			speakersPill.addEventListener("click", () => {
-				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 				if (!tf) return;
 				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
 				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath);
 			});
 		} else if (states.speakers === "complete") {
 			speakersPill.addEventListener("click", () => {
-				const tf = resolveWikiLink(app, noteFm, "transcript", notePath);
+				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 				if (tf) void app.workspace.openLinkText(tf.path, "", false);
 			});
 		}
@@ -799,8 +796,8 @@ function renderCardDynamic(
 		}
 	}
 
-	// Unified card status — renders from cardStatus map
-	const cs = cardStatus.get(notePath);
+	// Unified card status — renders from CardUiState
+	const cs = opts.cardUi.getStatus(notePath);
 	if (cs) {
 		const variant = cs.variant ?? "progress";
 		const statusEl = zone.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
@@ -810,8 +807,8 @@ function renderCardDynamic(
 		}
 		const textSpan = statusEl.createSpan({text: cs.message});
 		// Live duration counter — updates the text span directly every second
-		if (variant === "recording" && recordingStartTime.has(notePath)) {
-			startDurationTimer(notePath, textSpan);
+		if (variant === "recording" && opts.cardUi.getStartTime(notePath) !== undefined) {
+			startDurationTimer(opts.cardUi, notePath, textSpan);
 		}
 	}
 }

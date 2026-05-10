@@ -2,6 +2,7 @@ import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import type {FrontmatterSpeaker} from "./SpeakerTagParser";
+import {FM} from "../constants";
 
 /**
  * Apply approved speaker tag decisions to the transcript file:
@@ -50,10 +51,10 @@ export async function applySpeakerTags(
 			}
 		}
 		if (confirmed.length > 0) {
-			frontmatter["confirmed_speakers"] = confirmed;
+			frontmatter[FM.CONFIRMED_SPEAKERS] = confirmed;
 		}
 
-		frontmatter["pipeline_state"] = "tagged";
+		frontmatter[FM.PIPELINE_STATE] = "tagged";
 	});
 
 	// 2. Replace stub labels in body text

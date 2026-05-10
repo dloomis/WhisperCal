@@ -58,6 +58,18 @@ export async function batchUpdateFrontmatter(
 	});
 }
 
+/**
+ * Read a frontmatter value as a string. Returns undefined if the key is missing,
+ * the frontmatter is undefined, or the value is not a string.
+ */
+export function readFmString(
+	fm: Record<string, unknown> | undefined,
+	key: string,
+): string | undefined {
+	const v = fm?.[key];
+	return typeof v === "string" ? v : undefined;
+}
+
 export async function removeFrontmatterKeys(
 	app: App,
 	filePath: string,

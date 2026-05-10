@@ -7,7 +7,8 @@ import {getLinkedSessionIds} from "../utils/vault";
 import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
 import {parseDisplayName} from "../utils/nameParser";
-import type {CardStatusVariant} from "../state";
+import type {CardStatusVariant} from "./CardUiState";
+import {FM} from "../constants";
 
 export type OnStatus = (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void;
 
@@ -31,7 +32,7 @@ async function performLink(opts: {
 
 	// Write session ID to note frontmatter
 	try {
-		await updateFrontmatter(app, notePath, "macwhisper_session_id", sessionId);
+		await updateFrontmatter(app, notePath, FM.MACWHISPER_SESSION_ID, sessionId);
 	} catch (err) {
 		console.error("[WhisperCal] Failed to update frontmatter — YAML may be malformed:", err);
 		new Notice("Failed to update note frontmatter (check for invalid YAML)");
