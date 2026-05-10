@@ -1,9 +1,9 @@
 import {requestUrl} from "obsidian";
-import {createServer, type Server} from "http";
 import {createHash, randomBytes} from "crypto";
 import type {TokenCache} from "./AuthTypes";
 import {AuthError} from "./CalendarAuth";
 import {BaseCalendarAuth, type AuthCallbacks} from "./BaseCalendarAuth";
+import {LoopbackOAuthServer} from "./LoopbackOAuthServer";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -18,13 +18,9 @@ interface GoogleAuthConfig {
 	clientSecret: string;
 }
 
-const LOOPBACK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-
 export class GoogleAuth extends BaseCalendarAuth {
 	private config: GoogleAuthConfig;
-	private server: Server | null = null;
-	private loopbackTimer: ReturnType<typeof setTimeout> | null = null;
-	private signInTimedOut = false;
+	private readonly loopback = new LoopbackOAuthServer();
 
 	constructor(config: GoogleAuthConfig, callbacks: AuthCallbacks) {
 		super(callbacks);
@@ -44,7 +40,6 @@ export class GoogleAuth extends BaseCalendarAuth {
 			this.setState({status: "error", message: "Client ID and Client secret are required."});
 			return;
 		}
-		this.signInTimedOut = false;
 
 		// Generate PKCE challenge and CSRF state
 		const codeVerifier = randomBytes(32).toString("base64url");
@@ -53,7 +48,7 @@ export class GoogleAuth extends BaseCalendarAuth {
 
 		try {
 			// Start loopback server on random port
-			const {port, code: codePromise} = await this.startLoopbackServer(oauthState);
+			const {port, code: codePromise} = await this.loopback.start(oauthState);
 			const redirectUri = `http://127.0.0.1:${port}`;
 
 			// Build auth URL and open in browser
@@ -85,8 +80,8 @@ export class GoogleAuth extends BaseCalendarAuth {
 			// Wait for the auth code from the redirect
 			const authCode = await codePromise;
 			if (!authCode) {
-				if (this.signInTimedOut) {
-					const mins = Math.round(LOOPBACK_TIMEOUT_MS / 60000);
+				if (this.loopback.timedOut) {
+					const mins = Math.round(LoopbackOAuthServer.TIMEOUT_MS / 60000);
 					this.setState({
 						status: "error",
 						message: `Sign-in timed out after ${mins} minutes — please try again.`,
@@ -145,12 +140,12 @@ export class GoogleAuth extends BaseCalendarAuth {
 				this.setState({status: "error", message});
 			}
 		} finally {
-			this.stopLoopbackServer();
+			this.loopback.stop();
 		}
 	}
 
 	cancelSignIn(): void {
-		this.stopLoopbackServer();
+		this.loopback.stop();
 	}
 
 	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
@@ -184,68 +179,5 @@ export class GoogleAuth extends BaseCalendarAuth {
 			refreshToken, // Google doesn't return new refresh token
 			expiresAt: Date.now() + token.expires_in * 1000,
 		};
-	}
-
-	private startLoopbackServer(expectedState: string): Promise<{port: number; code: Promise<string | null>}> {
-		return new Promise((resolveStart, rejectStart) => {
-			let resolveCode: (code: string | null) => void;
-			const codePromise = new Promise<string | null>((r) => { resolveCode = r; });
-
-			const server = createServer((req, res) => {
-				const url = new URL(req.url ?? "", `http://127.0.0.1`);
-				const code = url.searchParams.get("code");
-				const error = url.searchParams.get("error");
-				const state = url.searchParams.get("state");
-
-				if (state !== expectedState) {
-					res.writeHead(400, {"Content-Type": "text/plain"});
-					res.end("Sign-in failed: invalid state parameter");
-					return;
-				}
-
-				if (code) {
-					res.writeHead(200, {"Content-Type": "text/html"});
-					res.end("<html><body><h2>Sign-in complete</h2><p>You can close this tab and return to Obsidian.</p></body></html>");
-					resolveCode(code);
-				} else {
-					const msg = error ?? "No authorization code received.";
-					res.writeHead(400, {"Content-Type": "text/plain"});
-					res.end(`Sign-in failed: ${msg}`);
-					resolveCode(null);
-				}
-			});
-
-			server.on("error", (e) => {
-				rejectStart(e);
-			});
-
-			// Listen on random port on loopback
-			server.listen(0, "127.0.0.1", () => {
-				const addr = server.address();
-				if (!addr || typeof addr === "string") {
-					rejectStart(new Error("Failed to start loopback server"));
-					return;
-				}
-				this.server = server;
-				// Time out after 5 minutes if the user doesn't complete the flow
-				this.loopbackTimer = setTimeout(() => {
-					this.signInTimedOut = true;
-					resolveCode(null);
-					this.stopLoopbackServer();
-				}, LOOPBACK_TIMEOUT_MS);
-				resolveStart({port: addr.port, code: codePromise});
-			});
-		});
-	}
-
-	private stopLoopbackServer(): void {
-		if (this.loopbackTimer) {
-			clearTimeout(this.loopbackTimer);
-			this.loopbackTimer = null;
-		}
-		if (this.server) {
-			this.server.close();
-			this.server = null;
-		}
 	}
 }

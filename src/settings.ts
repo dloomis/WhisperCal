@@ -180,6 +180,89 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		}, 500);
 	}
 
+	/**
+	 * Create a text-input setting bound to a getter/setter. Uses debouncedSave.
+	 * For non-trivial onChange logic (validation, side effects, dependent UI),
+	 * keep using `new Setting(...)` directly.
+	 */
+	private addTextSetting(opts: {
+		container: HTMLElement;
+		name: string;
+		desc: string;
+		placeholder?: string;
+		get: () => string;
+		set: (v: string) => void;
+		/** When true, store `value.trim()` instead of `value`. */
+		trim?: boolean;
+		/** Mount a FileSuggest or FolderSuggest on the input element. */
+		suggest?: "file" | "folder";
+	}): Setting {
+		const s = new Setting(opts.container).setName(opts.name).setDesc(opts.desc);
+		s.addText(text => {
+			if (opts.placeholder) text.setPlaceholder(opts.placeholder);
+			text.setValue(opts.get())
+				.onChange((value) => {
+					opts.set(opts.trim ? value.trim() : value);
+					this.debouncedSave();
+				});
+			if (opts.suggest === "folder") new FolderSuggest(this.app, text.inputEl);
+			else if (opts.suggest === "file") new FileSuggest(this.app, text.inputEl);
+		});
+		return s;
+	}
+
+	/**
+	 * Create a toggle setting bound to a boolean getter/setter. Saves immediately
+	 * via `plugin.saveSettings()`. For toggles with custom side effects (consent
+	 * flows, dependent UI rerenders), keep `new Setting(...)` direct.
+	 */
+	private addToggleSetting(opts: {
+		container: HTMLElement;
+		name: string;
+		desc: string;
+		get: () => boolean;
+		set: (v: boolean) => void;
+	}): Setting {
+		return new Setting(opts.container)
+			.setName(opts.name)
+			.setDesc(opts.desc)
+			.addToggle(toggle => toggle
+				.setValue(opts.get())
+				.onChange(async (value) => {
+					opts.set(value);
+					await this.plugin.saveSettings();
+				}));
+	}
+
+	/**
+	 * Create a numeric text-input setting. Parses input as int and only writes
+	 * when the value satisfies `min <= value` (default min=1). Uses debouncedSave.
+	 */
+	private addNumberSetting(opts: {
+		container: HTMLElement;
+		name: string;
+		desc: string;
+		placeholder?: string;
+		min?: number;
+		get: () => number;
+		set: (v: number) => void;
+	}): Setting {
+		const min = opts.min ?? 1;
+		return new Setting(opts.container)
+			.setName(opts.name)
+			.setDesc(opts.desc)
+			.addText(text => text
+				.setPlaceholder(opts.placeholder ?? String(min))
+				.setValue(String(opts.get()))
+				.onChange((value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= min) {
+						opts.set(num);
+						this.debouncedSave();
+					}
+				}));
+	}
+
 	display(): void {
 		// Unsubscribe any previous auth listener to prevent stacking on re-render
 		this.authUnsubscribe?.();
@@ -198,103 +281,81 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Notes")
 			.setHeading();
 
-		new Setting(containerEl)
-			.setName("People folder")
-			.setDesc("Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.")
-			.addText(text => {
-				text.setPlaceholder("People")
-					.setValue(this.plugin.settings.peopleFolderPath)
-					.onChange((value) => {
-						this.plugin.settings.peopleFolderPath = value;
-						this.debouncedSave();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
+		this.addTextSetting({
+			container: containerEl,
+			name: "People folder",
+			desc: "Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.",
+			placeholder: "People",
+			get: () => this.plugin.settings.peopleFolderPath,
+			set: v => { this.plugin.settings.peopleFolderPath = v; },
+			suggest: "folder",
+		});
 
-		new Setting(containerEl)
-			.setName("Auto-create people notes")
-			.setDesc("Automatically create people notes for meeting organizers that don't have one yet. Requires a people template.")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoCreatePeopleNotes)
-				.onChange(async (value) => {
-					this.plugin.settings.autoCreatePeopleNotes = value;
-					await this.plugin.saveSettings();
-				}));
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Auto-create people notes",
+			desc: "Automatically create people notes for meeting organizers that don't have one yet. Requires a people template.",
+			get: () => this.plugin.settings.autoCreatePeopleNotes,
+			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("People template")
-			.setDesc("Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}")
-			.addText(text => {
-				text.setPlaceholder("Templates/Person.md")
-					.setValue(this.plugin.settings.peopleTemplatePath)
-					.onChange((value) => {
-						this.plugin.settings.peopleTemplatePath = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			});
+		this.addTextSetting({
+			container: containerEl,
+			name: "People template",
+			desc: "Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}",
+			placeholder: "Templates/Person.md",
+			get: () => this.plugin.settings.peopleTemplatePath,
+			set: v => { this.plugin.settings.peopleTemplatePath = v; },
+			suggest: "file",
+		});
 
-		new Setting(containerEl)
-			.setName("Notes folder")
-			.setDesc("Vault folder where meeting notes are created")
-			.addText(text => {
-				text.setPlaceholder("Meetings")
-					.setValue(this.plugin.settings.noteFolderPath)
-					.onChange((value) => {
-						this.plugin.settings.noteFolderPath = value;
-						this.debouncedSave();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
+		this.addTextSetting({
+			container: containerEl,
+			name: "Notes folder",
+			desc: "Vault folder where meeting notes are created",
+			placeholder: "Meetings",
+			get: () => this.plugin.settings.noteFolderPath,
+			set: v => { this.plugin.settings.noteFolderPath = v; },
+			suggest: "folder",
+		});
 
-		new Setting(containerEl)
-			.setName("Transcripts folder")
-			.setDesc("Vault folder where transcript files are created when linking recordings")
-			.addText(text => {
-				text.setPlaceholder("Transcripts")
-					.setValue(this.plugin.settings.transcriptFolderPath)
-					.onChange((value) => {
-						this.plugin.settings.transcriptFolderPath = value;
-						this.debouncedSave();
-					});
-				new FolderSuggest(this.app, text.inputEl);
-			});
+		this.addTextSetting({
+			container: containerEl,
+			name: "Transcripts folder",
+			desc: "Vault folder where transcript files are created when linking recordings",
+			placeholder: "Transcripts",
+			get: () => this.plugin.settings.transcriptFolderPath,
+			set: v => { this.plugin.settings.transcriptFolderPath = v; },
+			suggest: "folder",
+		});
 
-		new Setting(containerEl)
-			.setName("Note filename template")
-			.setDesc("Template for meeting note filenames. Available: {{date}}, {{subject}}")
-			.addText(text => text
-				.setPlaceholder("{{date}} - {{subject}}")
-				.setValue(this.plugin.settings.noteFilenameTemplate)
-				.onChange((value) => {
-					this.plugin.settings.noteFilenameTemplate = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Note filename template",
+			desc: "Template for meeting note filenames. Available: {{date}}, {{subject}}",
+			placeholder: "{{date}} - {{subject}}",
+			get: () => this.plugin.settings.noteFilenameTemplate,
+			set: v => { this.plugin.settings.noteFilenameTemplate = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Unscheduled note subject")
-			.setDesc("Subject used for ad-hoc meeting notes not tied to a calendar event")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("Unscheduled Meeting")
-				.setValue(this.plugin.settings.unscheduledSubject)
-				.onChange((value) => {
-					this.plugin.settings.unscheduledSubject = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Unscheduled note subject",
+			desc: "Subject used for ad-hoc meeting notes not tied to a calendar event",
+			placeholder: "Unscheduled Meeting",
+			get: () => this.plugin.settings.unscheduledSubject,
+			set: v => { this.plugin.settings.unscheduledSubject = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Note template")
-			.setDesc("Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.")
-			.addText(text => {
-				text.setPlaceholder("Templates/WhisperCal Meeting.md")
-					.setValue(this.plugin.settings.noteTemplatePath)
-					.onChange((value) => {
-						this.plugin.settings.noteTemplatePath = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			});
+		this.addTextSetting({
+			container: containerEl,
+			name: "Note template",
+			desc: "Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.",
+			placeholder: "Templates/WhisperCal Meeting.md",
+			get: () => this.plugin.settings.noteTemplatePath,
+			set: v => { this.plugin.settings.noteTemplatePath = v; },
+			suggest: "file",
+		});
 
 		new Setting(containerEl)
 			.setName("Word replacement file")
@@ -392,59 +453,43 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
-			.setName("Show all-day events")
-			.setDesc("Display all-day events in the calendar view")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.showAllDayEvents)
-				.onChange(async (value) => {
-					this.plugin.settings.showAllDayEvents = value;
-					await this.plugin.saveSettings();
-				}));
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Show all-day events",
+			desc: "Display all-day events in the calendar view",
+			get: () => this.plugin.settings.showAllDayEvents,
+			set: v => { this.plugin.settings.showAllDayEvents = v; },
+		});
 
 		this.renderImportantOrganizers(containerEl);
 
-		new Setting(containerEl)
-			.setName("Refresh interval (minutes)")
-			.setDesc("How often to refresh the calendar view")
-			.addText(text => text
-				.setPlaceholder("5")
-				.setValue(String(this.plugin.settings.refreshIntervalMinutes))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.refreshIntervalMinutes = num;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Refresh interval (minutes)",
+			desc: "How often to refresh the calendar view",
+			placeholder: "5",
+			get: () => this.plugin.settings.refreshIntervalMinutes,
+			set: v => { this.plugin.settings.refreshIntervalMinutes = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Cache future days")
-			.setDesc("Number of upcoming days to pre-fetch for offline access")
-			.addText(text => text
-				.setPlaceholder("5")
-				.setValue(String(this.plugin.settings.cacheFutureDays))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 0) {
-						this.plugin.settings.cacheFutureDays = num;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Cache future days",
+			desc: "Number of upcoming days to pre-fetch for offline access",
+			placeholder: "5",
+			min: 0,
+			get: () => this.plugin.settings.cacheFutureDays,
+			set: v => { this.plugin.settings.cacheFutureDays = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Cache retention (days)")
-			.setDesc("How many days of past calendar data to keep in the local cache")
-			.addText(text => text
-				.setPlaceholder("30")
-				.setValue(String(this.plugin.settings.cacheRetentionDays))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.cacheRetentionDays = num;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Cache retention (days)",
+			desc: "How many days of past calendar data to keep in the local cache",
+			placeholder: "30",
+			get: () => this.plugin.settings.cacheRetentionDays,
+			set: v => { this.plugin.settings.cacheRetentionDays = v; },
+		});
 
 		new Setting(containerEl)
 			.setName("Recording")
@@ -485,33 +530,23 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setDesc(MACWHISPER_DB_PATH)
 			.setDisabled(true);
 
-		new Setting(macwhisperSettings)
-			.setName("Recording match window (minutes)")
-			.setDesc("How close a recording start must be to the scheduled meeting time to be suggested for linking")
-			.addText(text => text
-				.setPlaceholder("10")
-				.setValue(String(this.plugin.settings.recordingWindowMinutes))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.recordingWindowMinutes = num;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: macwhisperSettings,
+			name: "Recording match window (minutes)",
+			desc: "How close a recording start must be to the scheduled meeting time to be suggested for linking",
+			placeholder: "10",
+			get: () => this.plugin.settings.recordingWindowMinutes,
+			set: v => { this.plugin.settings.recordingWindowMinutes = v; },
+		});
 
-		new Setting(macwhisperSettings)
-			.setName("Unlinked lookback (days)")
-			.setDesc("How far back to check for unlinked recordings")
-			.addText(text => text
-				.setPlaceholder("30")
-				.setValue(String(this.plugin.settings.unlinkedLookbackDays))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= 1) {
-						this.plugin.settings.unlinkedLookbackDays = num;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: macwhisperSettings,
+			name: "Unlinked lookback (days)",
+			desc: "How far back to check for unlinked recordings",
+			placeholder: "30",
+			get: () => this.plugin.settings.unlinkedLookbackDays,
+			set: v => { this.plugin.settings.unlinkedLookbackDays = v; },
+		});
 
 		// Recording API sub-settings
 		new Setting(apiSettings)
@@ -561,27 +596,24 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			});
 
 		if (Platform.isMacOS) {
-			new Setting(containerEl)
-				.setName("Debug mode")
-				.setDesc("Open LLM commands in a Terminal window instead of running in the background")
-				.addToggle(toggle => toggle
-					.setValue(this.plugin.settings.llmDebugMode)
-					.onChange(async (value) => {
-						this.plugin.settings.llmDebugMode = value;
-						await this.plugin.saveSettings();
-					}));
+			this.addToggleSetting({
+				container: containerEl,
+				name: "Debug mode",
+				desc: "Open LLM commands in a Terminal window instead of running in the background",
+				get: () => this.plugin.settings.llmDebugMode,
+				set: v => { this.plugin.settings.llmDebugMode = v; },
+			});
 		}
 
-		new Setting(containerEl)
-			.setName("Debug logging")
-			.setDesc("Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.llmDebugLogging)
-				.onChange(async (value) => {
-					this.plugin.settings.llmDebugLogging = value;
-					await this.plugin.saveSettings();
-				}));
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Debug logging",
+			desc: "Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.",
+			get: () => this.plugin.settings.llmDebugLogging,
+			set: v => { this.plugin.settings.llmDebugLogging = v; },
+		});
 
+		// CLI command has a "fall back to claude on empty" rule — keep direct.
 		new Setting(containerEl)
 			.setName("CLI command")
 			.setDesc("Command used to invoke the LLM (default: claude)")
@@ -593,19 +625,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.debouncedSave();
 				}));
 
-		new Setting(containerEl)
-			.setName("Additional flags")
-			.setDesc("Extra CLI flags appended to the LLM command. " +
+		this.addTextSetting({
+			container: containerEl,
+			name: "Additional flags",
+			desc: "Extra CLI flags appended to the LLM command. " +
 				"⚠️ The default --dangerously-skip-permissions is required for " +
 				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization.")
-			.addText(text => text
-				.setPlaceholder("--dangerously-skip-permissions")
-				.setValue(this.plugin.settings.llmExtraFlags)
-				.onChange((value) => {
-					this.plugin.settings.llmExtraFlags = value;
-					this.debouncedSave();
-				}));
+				"and summarization.",
+			placeholder: "--dangerously-skip-permissions",
+			get: () => this.plugin.settings.llmExtraFlags,
+			set: v => { this.plugin.settings.llmExtraFlags = v; },
+		});
 
 		new Setting(containerEl)
 			.setName("Anthropic API key")
@@ -684,29 +714,22 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"researchModel",
 		);
 
-		new Setting(containerEl)
-			.setName("Microphone user")
-			.setDesc("Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts")
-			.addText(text => text
-				.setPlaceholder("Full name")
-				.setValue(this.plugin.settings.microphoneUser)
-				.onChange((value) => {
-					this.plugin.settings.microphoneUser = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Microphone user",
+			desc: "Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts",
+			placeholder: "Full name",
+			get: () => this.plugin.settings.microphoneUser,
+			set: v => { this.plugin.settings.microphoneUser = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Roster enrichment cap")
-			.setDesc("Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.")
-			.addText(text => text
-				.setValue(String(this.plugin.settings.rosterMaxEnriched))
-				.onChange((value) => {
-					const n = parseInt(value, 10);
-					if (!isNaN(n) && n >= 1) {
-						this.plugin.settings.rosterMaxEnriched = n;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Roster enrichment cap",
+			desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
+			get: () => this.plugin.settings.rosterMaxEnriched,
+			set: v => { this.plugin.settings.rosterMaxEnriched = v; },
+		});
 
 		// Populate all model dropdowns from the API
 		const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
@@ -728,45 +751,30 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		/* eslint-enable obsidianmd/ui/sentence-case */
 
-		new Setting(containerEl)
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setName("LLM timeout (minutes)")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Kill the LLM process if it runs longer than this (0 = no timeout)")
-			.addText(text => text
-				.setValue(String(this.plugin.settings.llmTimeoutMinutes))
-				.onChange((value) => {
-					const n = parseInt(value, 10);
-					if (!isNaN(n) && n >= 0) {
-						this.plugin.settings.llmTimeoutMinutes = n;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "LLM timeout (minutes)",
+			desc: "Kill the LLM process if it runs longer than this (0 = no timeout)",
+			min: 0,
+			get: () => this.plugin.settings.llmTimeoutMinutes,
+			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
+		});
 
-		new Setting(containerEl)
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setName("Max concurrent LLM processes")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Maximum number of LLM processes that can run simultaneously")
-			.addText(text => text
-				.setValue(String(this.plugin.settings.llmMaxConcurrent))
-				.onChange((value) => {
-					const n = parseInt(value, 10);
-					if (!isNaN(n) && n >= 1) {
-						this.plugin.settings.llmMaxConcurrent = n;
-						this.debouncedSave();
-					}
-				}));
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Max concurrent LLM processes",
+			desc: "Maximum number of LLM processes that can run simultaneously",
+			get: () => this.plugin.settings.llmMaxConcurrent,
+			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Auto-summarize after tagging")
-			.setDesc("Automatically start summarization after speaker tagging completes")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
-				.onChange(async (value) => {
-					this.plugin.settings.autoSummarizeAfterTagging = value;
-					await this.plugin.saveSettings();
-				}));
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Auto-summarize after tagging",
+			desc: "Automatically start summarization after speaker tagging completes",
+			get: () => this.plugin.settings.autoSummarizeAfterTagging,
+			set: v => { this.plugin.settings.autoSummarizeAfterTagging = v; },
+		});
 
 	}
 
@@ -815,31 +823,23 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Microsoft account")
 			.setHeading();
 
-		new Setting(containerEl)
-			.setName("Tenant ID")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
-				.setValue(this.plugin.settings.tenantId)
-				.onChange((value) => {
-					this.plugin.settings.tenantId = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Tenant ID",
+			desc: "Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.",
+			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+			get: () => this.plugin.settings.tenantId,
+			set: v => { this.plugin.settings.tenantId = v; },
+		});
 
-		new Setting(containerEl)
-			.setName("Client ID")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Application (client) ID from your Azure AD app registration")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
-				.setValue(this.plugin.settings.clientId)
-				.onChange((value) => {
-					this.plugin.settings.clientId = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Client ID",
+			desc: "Application (client) ID from your Azure AD app registration",
+			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+			get: () => this.plugin.settings.clientId,
+			set: v => { this.plugin.settings.clientId = v; },
+		});
 
 		new Setting(containerEl)
 			.setName("Cloud instance")
@@ -863,17 +863,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		/* eslint-disable obsidianmd/ui/sentence-case */
-		new Setting(containerEl)
-			.setName("Client ID")
-			.setDesc("OAuth client ID from your Google Cloud Console desktop app credentials")
-			.addText(text => text
-				.setPlaceholder("xxxxxxxxxxxx.apps.googleusercontent.com")
-				.setValue(this.plugin.settings.googleClientId)
-				.onChange((value) => {
-					this.plugin.settings.googleClientId = value;
-					this.debouncedSave();
-				}));
+		this.addTextSetting({
+			container: containerEl,
+			name: "Client ID",
+			desc: "OAuth client ID from your Google Cloud Console desktop app credentials",
+			placeholder: "xxxxxxxxxxxx.apps.googleusercontent.com",
+			get: () => this.plugin.settings.googleClientId,
+			set: v => { this.plugin.settings.googleClientId = v; },
+		});
 
+		// Client secret needs `inputEl.type = "password"` — keep direct.
 		new Setting(containerEl)
 			.setName("Client secret")
 			.setDesc("OAuth client secret from your Google Cloud Console desktop app credentials")
