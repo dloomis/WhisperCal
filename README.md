@@ -16,8 +16,19 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 ---
 
+## Project Status & Tested Configurations
+
+WhisperCal is built and used daily by a single developer, so some integrations are far better exercised than others. Read these caveats before relying on a path that hasn't been heavily tested:
+
+- **MacWhisper integration may be stale.** Development started with MacWhisper as the recording source, but mid-project the recording flow was rewritten around a localhost Recording API (a fork of [Tome](https://github.com/dloomis/Tome)). The Recording API path is the actively maintained one — MacWhisper code still ships and was working when last touched, but it has not been smoke-tested recently and may have regressed. If you depend on MacWhisper, please file issues; PRs welcome.
+- **Google Calendar is loosely tested.** The developer uses Microsoft 365, so Microsoft Graph is the well-trodden path. Google Calendar support is implemented and has been smoke-tested but does not get the daily exercise that the Microsoft path does. Edge cases (recurring events, tentative responses, secondary calendars, all-day events spanning timezones, etc.) are likely to surface bugs before they're caught in development.
+- **Only Claude has been tested as the LLM CLI.** The `llmCli` setting accepts any command that reads a prompt from stdin and writes the response to stdout, but only Anthropic's `claude` CLI has been used in practice. Other CLIs (e.g. `codex`, OpenAI-style wrappers) may need adjustments to flags, prompt format, or output parsing before they work. The "Per-prompt model selection" feature additionally assumes Claude model IDs and queries the Anthropic API to populate the model dropdown; with a non-Claude CLI those dropdowns will be empty and you'll need to type model IDs by hand.
+
+---
+
 ## Table of Contents
 
+- [Project Status & Tested Configurations](#project-status--tested-configurations)
 - [Features at a Glance](#features-at-a-glance)
 - [Platform Support](#platform-support)
 - [Prerequisites](#prerequisites)
@@ -179,6 +190,8 @@ Then in WhisperCal settings:
 - Select your **Cloud instance** (most users should leave this on "Public").
 
 ### Google Calendar Setup
+
+> ⚠️ **Caveat:** The developer uses Microsoft 365, so the Google Calendar path is loosely tested. Sign-in, basic event fetching, and people search work, but edge cases (recurring exceptions, secondary calendars, response statuses, timezone-spanning events) are likely to surface bugs. See [Project Status & Tested Configurations](#project-status--tested-configurations).
 
 WhisperCal connects to Google Calendar through the Google Calendar API. You need to create OAuth credentials in the Google Cloud Console:
 
@@ -497,6 +510,8 @@ WhisperCal supports two recording sources, configurable in **Settings > WhisperC
 
 ### MacWhisper
 
+> ⚠️ **Caveat:** MacWhisper was the original recording source but the developer has since switched to the Recording API path (Tome fork). The MacWhisper code still ships and was working when last touched, but it is not exercised daily and may have regressed. See [Project Status & Tested Configurations](#project-status--tested-configurations).
+
 The default source. WhisperCal reads directly from [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper)'s local SQLite database to match recordings to meetings and extract transcripts. It does not modify your audio files.
 
 **Requirements:**
@@ -612,6 +627,8 @@ Role: Engineering Manager
 ---
 
 ## LLM Integration
+
+> ⚠️ **Caveat:** Only Anthropic's `claude` CLI has been tested. The plugin spawns whatever command is in the **CLI command** setting and pipes the prompt over stdin, so other CLIs (`codex`, OpenAI-style wrappers, etc.) may work — but flag handling, prompt format, and output parsing have not been validated against them. Per-prompt model dropdowns are also Claude-specific (they query the Anthropic API to enumerate models); with a non-Claude CLI those will be empty and you'll need to type model IDs manually. See [Project Status & Tested Configurations](#project-status--tested-configurations).
 
 WhisperCal invokes an external LLM CLI tool as a background process to tag speakers in transcripts, summarize meetings, and run meeting research. The LLM runs headlessly inside Obsidian — no terminal window is required. Progress and errors are reported via Obsidian notices.
 
