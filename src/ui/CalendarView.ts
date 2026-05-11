@@ -870,13 +870,18 @@ export class CalendarView extends ItemView {
 					location: choice.event.location,
 				});
 			} else {
-				// Create new meeting — prompt for a name
-				const defaultName = recording.title || this.settings.unscheduledSubject;
+				// Create new meeting — prompt for a name. Strip any leading
+				// YYYY-MM-DD prefix from the suggested/typed name; the note
+				// filename template prepends the date already, so leaving it
+				// in would duplicate it (e.g. "2026-05-08 - 2026-05-08 …").
+				const stripLeadingDate = (s: string): string =>
+					s.replace(/^\d{4}-\d{2}-\d{2}\s*[-–—]?\s*/, "").trim();
+				const defaultName = stripLeadingDate(recording.title || this.settings.unscheduledSubject);
 				const name = await new NameInputModal(this.app, {
 					defaultValue: defaultName,
 				}).prompt();
 				if (!name) return;
-				const subject = name;
+				const subject = stripLeadingDate(name) || name;
 				const event: CalendarEvent = {
 					id: "unscheduled",
 					subject,
