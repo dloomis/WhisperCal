@@ -636,10 +636,12 @@ export class CalendarView extends ItemView {
 				if (parsed) endTime = parsed;
 			}
 
-			// Prefer basename over frontmatter subject (user may rename the note)
-			const displaySubject = child.basename.startsWith(`${datePrefix} - `)
-				? child.basename.slice(datePrefix.length + 3)
-				: meetingSubject ?? child.basename;
+			// Prefer basename over frontmatter subject (user may rename the
+			// note). Tolerate either separator after the date prefix —
+			// "YYYY-MM-DD - Subject" (template-created) or "YYYY-MM-DD Subject"
+			// (verbatim names from the link-unlinked-transcript flow).
+			const strippedBasename = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "");
+			const displaySubject = strippedBasename || meetingSubject || child.basename;
 
 			results.push({
 				id: `unscheduled-${child.path}`,
