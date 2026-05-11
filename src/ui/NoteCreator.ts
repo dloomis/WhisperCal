@@ -17,12 +17,12 @@ export class NoteCreator {
 		this.settings = settings;
 	}
 
-	getNotePath(event: CalendarEvent): string {
-		const date = formatDate(event.startTime, this.settings.timezone);
-		const subject = sanitizeFilename(event.subject);
-		const filename = this.settings.noteFilenameTemplate
-			.replace("{{date}}", date)
-			.replace("{{subject}}", subject);
+	getNotePath(event: CalendarEvent, opts?: {filenameOverride?: string}): string {
+		const filename = opts?.filenameOverride
+			? sanitizeFilename(opts.filenameOverride)
+			: this.settings.noteFilenameTemplate
+				.replace("{{date}}", formatDate(event.startTime, this.settings.timezone))
+				.replace("{{subject}}", sanitizeFilename(event.subject));
 		return normalizePath(`${this.settings.noteFolderPath}/${filename}.md`);
 	}
 
@@ -90,8 +90,8 @@ export class NoteCreator {
 		}
 	}
 
-	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean}): Promise<void> {
-		const path = this.getNotePath(event);
+	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean; filenameOverride?: string}): Promise<void> {
+		const path = this.getNotePath(event, {filenameOverride: opts?.filenameOverride});
 
 		// If note already exists, just open it
 		const existing = this.app.vault.getAbstractFileByPath(path);
