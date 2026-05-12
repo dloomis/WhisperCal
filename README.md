@@ -888,7 +888,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **People folder** | *(empty)* | Vault folder containing people notes. Matched attendees render as `[[wiki links]]`. |
 | **Notes folder** | `Meetings` | Where meeting notes are created. |
 | **Transcripts folder** | `Transcripts` | Where transcript files are created. |
-| **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}`, `{{subject}}`. |
+| **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}` (YYYY-MM-DD), `{{time}}` (HHmm, 24-hour), `{{subject}}`. Add `{{time}}` to keep two same-subject meetings on the same day in separate notes. |
 | **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
 | **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
 
