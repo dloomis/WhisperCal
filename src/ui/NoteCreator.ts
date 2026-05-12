@@ -1,7 +1,7 @@
 import {App, MarkdownView, TFile, TFolder, WorkspaceLeaf, normalizePath} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {WhisperCalSettings} from "../settings";
-import {formatDate} from "../utils/time";
+import {coerceFmTime, formatDate, formatTimeHHmm, parseDateTime} from "../utils/time";
 import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
 import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
@@ -22,6 +22,7 @@ export class NoteCreator {
 			? sanitizeFilename(opts.filenameOverride)
 			: this.settings.noteFilenameTemplate
 				.replace("{{date}}", formatDate(event.startTime, this.settings.timezone))
+				.replace("{{time}}", formatTimeHHmm(event.startTime, this.settings.timezone))
 				.replace("{{subject}}", sanitizeFilename(event.subject));
 		return normalizePath(`${this.settings.noteFolderPath}/${filename}.md`);
 	}
@@ -44,34 +45,60 @@ export class NoteCreator {
 
 		const files = getMarkdownFilesRecursive(folder);
 		const date = formatDate(event.startTime, this.settings.timezone);
+		const eventHHmm = formatTimeHHmm(event.startTime, this.settings.timezone);
+
+		// When a frontmatter note has a meeting_start value, require it to match
+		// the event's start time. Two same-subject same-day meetings (e.g. an
+		// 09:00 and a 14:00 with identical subjects) must not collapse onto one
+		// note. If meeting_start is absent (legacy notes), fall back to a
+		// time-agnostic match.
+		const startMatches = (fm: Record<string, unknown>): boolean => {
+			const fmTime = coerceFmTime(fm["meeting_start"]);
+			if (!fmTime) return true;
+			const fmDate = (fm["meeting_date"] as string) || date;
+			const parsed = parseDateTime(fmDate, fmTime);
+			if (!parsed) return true;
+			return formatTimeHHmm(parsed, this.settings.timezone) === eventHHmm;
+		};
 
 		for (const child of files) {
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
 
-			// Match on calendar_event_id AND meeting_date. MS Graph occasionally
-			// returns the same `id` for different occurrences of a recurring
-			// series, so event_id alone would collapse sibling occurrences onto
-			// one note (causing e.g. an LLM job on Thursday's note to appear as
-			// running on Tuesday's card).
-			if (fm[FM.CALENDAR_EVENT_ID] === event.id && fm["meeting_date"] === date) return child;
+			// Match on calendar_event_id AND meeting_date AND meeting_start.
+			// MS Graph occasionally returns the same `id` for different
+			// occurrences of a recurring series, and a user may also have
+			// two distinct events with the same Graph id collapsed by Graph;
+			// the time qualifier disambiguates either case.
+			if (fm[FM.CALENDAR_EVENT_ID] === event.id
+				&& fm["meeting_date"] === date
+				&& startMatches(fm as Record<string, unknown>)) {
+				return child;
+			}
 
-			// Match on meeting_subject + meeting_date
-			if (fm["meeting_subject"] === event.subject && fm["meeting_date"] === date) {
+			// Match on meeting_subject + meeting_date + meeting_start.
+			// Time qualifier prevents collapsing two real same-subject
+			// same-day meetings (e.g. two "ATLAS IL6 schedule" events).
+			if (fm["meeting_subject"] === event.subject
+				&& fm["meeting_date"] === date
+				&& startMatches(fm as Record<string, unknown>)) {
 				return child;
 			}
 		}
 
 		// Last resort: match notes whose basename contains the subject and
 		// whose frontmatter Date (or meeting_date) falls on the same day.
-		// Catches legacy notes created outside WhisperCal.
+		// Catches legacy notes created outside WhisperCal. Still applies the
+		// time qualifier when meeting_start is present.
 		const subject = sanitizeFilename(event.subject);
 		for (const child of files) {
 			if (!child.basename.includes(subject)) continue;
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
 			const fmDate = (fm["meeting_date"] ?? fm["Date"] ?? "") as string;
-			if (typeof fmDate === "string" && fmDate.startsWith(date)) return child;
+			if (typeof fmDate !== "string" || !fmDate.startsWith(date)) continue;
+			if (!startMatches(fm as Record<string, unknown>)) continue;
+			return child;
 		}
 		return null;
 	}
@@ -91,7 +118,18 @@ export class NoteCreator {
 	}
 
 	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean; filenameOverride?: string}): Promise<void> {
-		const path = this.getNotePath(event, {filenameOverride: opts?.filenameOverride});
+		const noteCreated = new Date();
+
+		// For unscheduled events, stamp the actual creation time so
+		// frontmatter records a real meeting_start and the card can
+		// render inline at the correct time slot.
+		const effectiveEvent = event.id === "unscheduled" && !opts?.preserveTimestamps
+			? {...event, startTime: noteCreated, endTime: noteCreated}
+			: event;
+
+		// Path is derived from effectiveEvent so {{time}} reflects creation
+		// time (not the midnight placeholder) for unscheduled notes.
+		const path = this.getNotePath(effectiveEvent, {filenameOverride: opts?.filenameOverride});
 
 		// If note already exists, just open it
 		const existing = this.app.vault.getAbstractFileByPath(path);
@@ -103,15 +141,6 @@ export class NoteCreator {
 
 		// Ensure folder exists
 		await ensureFolder(this.app, this.settings.noteFolderPath);
-
-		const noteCreated = new Date();
-
-		// For unscheduled events, stamp the actual creation time so
-		// frontmatter records a real meeting_start and the card can
-		// render inline at the correct time slot.
-		const effectiveEvent = event.id === "unscheduled" && !opts?.preserveTimestamps
-			? {...event, startTime: noteCreated, endTime: noteCreated}
-			: event;
 
 		const content = await this.buildNoteContent(effectiveEvent, noteCreated);
 		if (!content) return;

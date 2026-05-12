@@ -332,8 +332,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addTextSetting({
 			container: containerEl,
 			name: "Note filename template",
-			desc: "Template for meeting note filenames. Available: {{date}}, {{subject}}",
-			placeholder: "{{date}} - {{subject}}",
+			desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
+			placeholder: "{{date}} {{time}} - {{subject}}",
 			get: () => this.plugin.settings.noteFilenameTemplate,
 			set: v => { this.plugin.settings.noteFilenameTemplate = v; },
 		});

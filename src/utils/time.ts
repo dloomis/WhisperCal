@@ -91,6 +91,19 @@ export function formatTime(date: Date, timezone: string): string {
 }
 
 /**
+ * Format a Date as 4-digit 24-hour time (e.g. "1730") in the given timezone.
+ * Designed for filenames: collation-friendly, no separator characters.
+ */
+export function formatTimeHHmm(date: Date, timezone: string): string {
+	return new Intl.DateTimeFormat("en-GB", {
+		timeZone: timezone,
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	}).format(date).replace(":", "");
+}
+
+/**
  * Format a Date as a local date string (e.g. "2026-02-28") in the given timezone.
  */
 export function formatDate(date: Date, timezone: string): string {
