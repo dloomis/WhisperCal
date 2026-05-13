@@ -38,10 +38,13 @@ Derived values (from filename, no read needed):
 - Read(transcript_path, limit=60) — frontmatter only
 - Bash: wc -l transcript_path — total line count
 - Glob("Caches/Speaker Rosters/SANITIZED_SUBJECT.md") — roster cache for Step 5
+- Glob("Caches/Tagging History/SANITIZED_SUBJECT.md") — historical priors cache for Rule 2.5
+
+If the tagging-history Glob hits, schedule a Read of it (limit=120) alongside the body chunks in Round 2. Extract the per-person table (Person, Transcripts, Common Stubs, Top Vocatives Used) and the meeting-level fields (transcripts_observed, first_speaker_tendency). Pass to Step 6 as the **tagging history prior**.
 
 Extract from frontmatter:
 - session_id (or macwhisper_session_id for WhisperCal stubs)
-- speakers — array with name, id, stub flag, line_count per speaker
+- **speaker block** — array of speaker objects with name, id, stub flag, line_count. Read from `speakers:` (MacWhisper-era schema) OR `attendees:` (TOME-era schema), whichever is present as a nested-object list. The two are equivalent — TOME just renamed the field. Note: some TOME files use a *flat-list* `attendees:` (just `- Speaker 2`, `- You` strings); treat that as "no speaker metadata available" and rely on body parsing in Step 2 Round 2.
 - meeting_note — wiki-link to parent meeting note (used in Step 3a)
 - calendar_event — event title, "none", or absent
 - calendar_attendees — array of plain string names (or invitees for WhisperCal, or meeting_invitees for wiki-link format like "- [[Name]]")
@@ -49,6 +52,8 @@ Extract from frontmatter:
 - is_recurring — enables roster cache path
 - pipeline_state — current pipeline state
 - tags — detect WhisperCal stubs (tags: [transcript])
+
+**Body delimiter format depends on era:** MacWhisper transcripts use `**Name** [HH:MM:SS]` (square brackets); TOME transcripts use `**Name** (HH:MM:SS)` (parens). When scanning the body in Step 5 or counting lines per speaker, accept either: `^\*\*([^*]+)\*\*\s*[\[(](\d{1,2}:\d{2}(?::\d{2})?)[\])]`.
 
 Pipeline state: any value (tagged, extracted, summarized, titled) or absent means proceed.
 
@@ -130,6 +135,26 @@ Source values: "meeting_invitee", "calendar", "microphone_user", "vocative_recov
 
 **This table is the foundation for Step 6 confidence refinement. Do not skip to Step 4 until this is complete.**
 
+### 3e. Signature Cache Reads (Parallel Batch)
+
+After Phase 3c builds the People context table, issue a single parallel batch:
+
+```
+Read("Caches/Speaker Signatures/{Full Name}.md", limit=80)
+```
+
+— one Read per invitee in the People context table. Misses are silently skipped (not every invitee will have a signature cache yet). For each hit, extract:
+- aliases
+- top signature phrases (the bulleted list under `## Signature phrases`)
+- typical_meetings
+- vocatives used by others (the bulleted list under `## Vocatives used by others to address them`)
+
+Attach this data to the corresponding row in the People context table as new columns:
+
+| Full Name | Nickname | Role/Context | People Note Filename | Source | Aliases | Signature Phrases | Vocatives |
+
+This data feeds Rule 5.5 in Step 6.
+
 ### 3d. Roster Cache Merge (If Cache Hit)
 
 If a cache was found in Step 2:
@@ -209,6 +234,16 @@ Assign the Microphone user to the "Microphone" label. If no "Microphone" label e
 - Calendar + one other transcript signal (style, topic expertise, vocative response) = HIGH
 - Calendar alone with no transcript evidence = do not assign. Invitees may be absent.
 
+### Rule 2.5: Historical Stub Continuity — CERTAIN or HIGH
+
+When a Tagging History cache is provided for this meeting subject (loaded in Step 2):
+
+- If a stub (e.g., "Speaker 1") matches a person in that cache's `Common Stubs` column with **≥80%** frequency (count for that stub ÷ that person's `Transcripts`) AND that person is in the People context table (calendar or invitee): **CERTAIN**. Evidence: `"history: <person> in N/M prior <subject>"`.
+- **60–79%** frequency + that person is in the People context table: **HIGH**. Evidence: same shape.
+- **<60%** frequency: weak signal — do not upgrade on this alone. May still corroborate other rules.
+
+Special case: if `first_speaker_tendency` in the cache names a person and that person is in the People context table, treat as supporting evidence for the Speaker who appears first chronologically in the transcript body.
+
 ### Rule 3: Vocative Scanning & Matching
 
 Vocatives matched in Step 5 now resolve to full names via the People context table.
@@ -241,14 +276,25 @@ Resolve first names to full names:
 2. Calendar preference — if exactly one candidate is a calendar attendee, use them.
 3. Neither resolves — flag as LOW with all candidates and their Context values listed.
 
+### Rule 5.5: Signature Phrase Match — CERTAIN or HIGH
+
+When Signature Caches are loaded into the People context table (Step 3e):
+
+- If a speaker's transcript blocks contain a top signature phrase from an invitee's signature cache (case-insensitive substring match) AND that invitee is in the People context table:
+  - **2+ distinct signature phrases match the same invitee**: **CERTAIN**. Evidence: `"signature: <phrase1>, <phrase2>"`.
+  - **1 signature phrase match**: **HIGH**. Evidence: `"signature: <phrase>"`.
+- Combine multiplicatively with Rule 2.5: a history-prior match (≥60%) + any signature-phrase match for the same person = **CERTAIN**, even without a vocative.
+
+The `Aliases` column from Step 3e can also resolve unmatched vocatives in Rule 3 — a vocative matching an alias resolves as if it matched the Full Name.
+
 ### Rule 6: Alias / Transcription Error Handling
 
 For unresolved stubs, check Nicknames for phonetically similar matches to words spoken near that speaker. Confidence: LOW unless corroborated by Role/Context.
 
 ### Confidence Levels (REFINED)
 
-- **CERTAIN:** microphone user, calendar + vocative, multiple vocative-responses, or multiple independent signals agreeing
-- **HIGH:** calendar + single signal, single vocative-response, vocative + context match, or calendar + role/context alignment
+- **CERTAIN:** microphone user, calendar + vocative, multiple vocative-responses, multiple independent signals agreeing, **history ≥80% + invitee present, 2+ signature phrases + invitee present, or history-prior (≥60%) + any signature phrase match**
+- **HIGH:** calendar + single signal, single vocative-response, vocative + context match, calendar + role/context alignment, **history 60–79% + invitee present, or single signature phrase + invitee present**
 - **LOW:** single weak signal, phonetic guess, ambiguous match, or unresolved collision
 - **null:** no evidence found
 
@@ -278,6 +324,19 @@ Return the mapping in the output format specified by the caller. Do not write ch
 - Cached People context remains valid for 14 days
 - On cache hit: skip Step 3 Phase 2 reads entirely (major time savings)
 - On cache miss or new names: merge results into cache for future runs
+
+**Tagging History Cache (read-only here):**
+- Located at `Caches/Tagging History/{SANITIZED_SUBJECT}.md`
+- Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
+- Provides per-meeting behavioral priors: which person has occupied each stub historically, modal first speaker, vocatives used to address each person
+- Feeds Rule 2.5 in Step 6
+
+**Speaker Signature Cache (read-only here):**
+- Located at `Caches/Speaker Signatures/{Full Name}.md` — basename matches the People note
+- Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
+- Provides per-person linguistic priors: signature phrases, aliases, typical meetings, vocatives others use
+- Read in Step 3e in a single parallel batch keyed off the People context table
+- Feeds Rule 5.5 in Step 6 (and the alias bridge in Rule 3)
 
 **Tool Call Batching Summary:**
 - Step 2: 3 parallel calls (Read transcript frontmatter, wc, Glob roster cache) + transcript body chunks in parallel

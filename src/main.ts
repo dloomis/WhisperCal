@@ -725,8 +725,9 @@ export default class WhisperCalPlugin extends Plugin {
 
 	/**
 	 * Reset pipeline_state to "tagged" on the meeting note and its linked
-	 * transcript so the summarizer prompt's literal `tagged` → `summarized`
-	 * find-replace succeeds on re-runs, then re-invoke summarization.
+	 * transcript so the summarizer prompt's Step 4 gate sees a clean "tagged"
+	 * state and proceeds without prompting the user to confirm a re-run.
+	 * The plugin then sets pipeline_state back to "summarized" on success.
 	 */
 	private async regenerateSummary(notePath: string): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
@@ -806,11 +807,18 @@ export default class WhisperCalPlugin extends Plugin {
 				debugMode: this.settings.llmDebugMode,
 				debugLogging: this.settings.llmDebugLogging,
 			}),
-			onSuccess: ({exitCode, stderr}) => {
+			onSuccess: async ({exitCode, stderr}) => {
 				if (exitCode === 0) {
 					if (!this.app.vault.getAbstractFileByPath(notePath)) {
 						new Notice("Meeting note was deleted while summarization was running");
 					} else {
+						// Plugin owns pipeline_state on success — the LLM editing it
+						// directly has historically dropped adjacent frontmatter fields.
+						await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "summarized");
+						const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+						if (transcriptFile) {
+							await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "summarized");
+						}
 						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done");
 					}
 				} else {

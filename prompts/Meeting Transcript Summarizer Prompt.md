@@ -111,7 +111,7 @@ Create a structured summary with these sections:
 
 - [ ] Task description — [[Owner]] / [[Requestor]] — YYYY-MM-DD — 🔺
 - [ ] Task with same owner/requestor — [[Owner]] — YYYY-MM-DD
-- [ ] Task for microphone user — [[Dan Loomis]] — YYYY-MM-DD
+- [ ] Task for microphone user — [[Microphone User]] — YYYY-MM-DD
 
 ## Key Discussion Points
 
@@ -185,18 +185,11 @@ Use the **Edit tool** to insert the summary into the meeting note.
 
 ---
 
-## Step 8: Update Pipeline State
+## Step 8: Pipeline State
 
-> **CRITICAL — DO NOT SKIP THIS STEP.** The plugin UI relies on `pipeline_state: summarized` to mark the Summary pill as complete. If you do not update both files, the user will see an incomplete workflow and have to fix it manually. This step is mandatory even if the summary was short or the meeting was trivial.
-
-After successfully writing the summary, you MUST update **both** files:
-
-1. **Meeting note:** Replace `pipeline_state: tagged` with `pipeline_state: summarized` in the frontmatter
-2. **Transcript:** Replace `pipeline_state: tagged` with `pipeline_state: summarized` in the frontmatter
-
-**Edit strategy:** Use the Edit tool to make a targeted find-and-replace of the `pipeline_state: tagged` line in each file's YAML frontmatter. Do this as two separate Edit calls — one for the meeting note, one for the transcript. Do NOT proceed to Step 9 until both edits are confirmed successful.
-
-**Verification:** After editing, re-read the frontmatter of both files and confirm `pipeline_state: summarized` is present. If either edit failed, retry before continuing.
+> **Do NOT edit `pipeline_state` in either file.** The WhisperCal plugin sets `pipeline_state: summarized` on both the meeting note and its linked transcript automatically after this prompt exits successfully. Do not modify frontmatter on the transcript at all; only edit the meeting note's body to insert the summary (Step 7).
+>
+> Historical note: this prompt used to instruct the LLM to find-and-replace `pipeline_state: tagged` → `pipeline_state: summarized`. Broad `old_string` values silently dropped adjacent frontmatter fields (notably `meeting_note`), which is why the plugin now owns this update.
 
 ---
 
