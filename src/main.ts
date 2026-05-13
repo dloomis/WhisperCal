@@ -937,7 +937,7 @@ export default class WhisperCalPlugin extends Plugin {
 		label: string;
 		promptPath?: string;
 		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "configDir">;
-		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void;
+		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void | Promise<void>;
 		onRegister?: () => void;
 		onCleanup?: () => void;
 		/** Icon for card status (e.g. "sparkles", "users-round", "book-open") */
@@ -1023,7 +1023,7 @@ export default class WhisperCalPlugin extends Plugin {
 					});
 				}
 
-				opts.onSuccess(result);
+				void opts.onSuccess(result);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				new Notice(`${label} encountered an unexpected error: ${msg}`);
