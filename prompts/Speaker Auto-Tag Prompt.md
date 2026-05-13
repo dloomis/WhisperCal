@@ -40,7 +40,7 @@ Derived values (from filename, no read needed):
 - Glob("Caches/Speaker Rosters/SANITIZED_SUBJECT.md") — roster cache for Step 5
 - Glob("Caches/Tagging History/SANITIZED_SUBJECT.md") — historical priors cache for Rule 2.5
 
-If the tagging-history Glob hits, schedule a Read of it (limit=120) alongside the body chunks in Round 2. Extract the per-person table (Person, Transcripts, Common Stubs, Top Vocatives Used) and the meeting-level fields (transcripts_observed, first_speaker_tendency). Pass to Step 6 as the **tagging history prior**.
+If the tagging-history Glob hits, schedule a Read of it (limit=120) alongside the body chunks in Round 2. Extract the per-person table (Person, Transcripts, Common Stubs) and the meeting-level fields (transcripts_observed, first_speaker_tendency). Pass to Step 6 as the **tagging history prior**.
 
 Extract from frontmatter:
 - session_id (or macwhisper_session_id for WhisperCal stubs)
@@ -84,18 +84,18 @@ The transcript frontmatter contains `meeting_note` field with a wiki-link to the
 Example invitees field:
 ```
 meeting_invitees:
-  - "[[People/Joe Jackson]]"
-  - "[[People/Tanner Bragg]]"
-  - "[[People/Gregory Porter]]"
-  - "[[People/Andrew Davis]]"
+  - "[[People/Alice Smith]]"
+  - "[[People/Bob Lee]]"
+  - "[[People/Carol Davis]]"
+  - "[[People/Dave Wong]]"
 ```
 
 Or plain names:
 ```
 meeting_invitees:
-  - Joe Jackson
-  - Tanner Bragg
-  - Gregory Porter
+  - Alice Smith
+  - Bob Lee
+  - Carol Davis
 ```
 
 ### 3b. Parse Invitees & Build File Paths (DETERMINISTIC)
@@ -108,10 +108,10 @@ Issue **ALL** Read calls in a single parallel batch. This is deterministic — n
 
 Example (if 4 invitees):
 ```
-Read(People/Joe Jackson.md, limit=60)
-Read(People/Tanner Bragg.md, limit=60)
-Read(People/Gregory Porter.md, limit=60)
-Read(People/Andrew Davis.md, limit=60)
+Read(People/Alice Smith.md, limit=60)
+Read(People/Bob Lee.md, limit=60)
+Read(People/Carol Davis.md, limit=60)
+Read(People/Dave Wong.md, limit=60)
 ```
 
 ### 3c. Build People Context Table (Phase 2)
@@ -147,11 +147,10 @@ Read("Caches/Speaker Signatures/{Full Name}.md", limit=80)
 - aliases
 - top signature phrases (the bulleted list under `## Signature phrases`)
 - typical_meetings
-- vocatives used by others (the bulleted list under `## Vocatives used by others to address them`)
 
 Attach this data to the corresponding row in the People context table as new columns:
 
-| Full Name | Nickname | Role/Context | People Note Filename | Source | Aliases | Signature Phrases | Vocatives |
+| Full Name | Nickname | Role/Context | People Note Filename | Source | Aliases | Signature Phrases |
 
 This data feeds Rule 5.5 in Step 6.
 
@@ -270,8 +269,8 @@ Resolve first names to full names:
 **First-name collision (multiple candidates share first name): try disambiguation in order:**
 
 1. **Context match** (NEW) — if transcript topic/discussion matches one candidate's Role/Context value, resolve at HIGH confidence with evidence "role/context match: [Context]"
-   - Example: Speaker discusses "VMware patching" and context table has "Gregory Kanis - VMware Administrator, Platform Team" → HIGH match
-   - Example: Speaker discusses "observability deployment" and context table has "Tanner Bragg - SRE, Platform Team" and "Tanner Smith - Finance" → HIGH match to Bragg
+   - Example: Speaker discusses "VMware patching" and context table has "Erin Park - VMware Administrator, Platform Team" → HIGH match
+   - Example: Speaker discusses "observability deployment" and context table has "Bob Lee - SRE, Platform Team" and "Bob Park - Finance" → HIGH match to Lee
 
 2. Calendar preference — if exactly one candidate is a calendar attendee, use them.
 3. Neither resolves — flag as LOW with all candidates and their Context values listed.
@@ -328,13 +327,13 @@ Return the mapping in the output format specified by the caller. Do not write ch
 **Tagging History Cache (read-only here):**
 - Located at `Caches/Tagging History/{SANITIZED_SUBJECT}.md`
 - Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
-- Provides per-meeting behavioral priors: which person has occupied each stub historically, modal first speaker, vocatives used to address each person
+- Provides per-meeting behavioral priors: which person has occupied each stub historically, modal first speaker
 - Feeds Rule 2.5 in Step 6
 
 **Speaker Signature Cache (read-only here):**
 - Located at `Caches/Speaker Signatures/{Full Name}.md` — basename matches the People note
 - Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
-- Provides per-person linguistic priors: signature phrases, aliases, typical meetings, vocatives others use
+- Provides per-person linguistic priors: signature phrases, aliases, typical meetings. Aliases include the person's nickname (e.g., "JT" for Jamal Thompson) — match these against names spoken in the transcript body as a primary identification signal.
 - Read in Step 3e in a single parallel batch keyed off the People context table
 - Feeds Rule 5.5 in Step 6 (and the alias bridge in Rule 3)
 
