@@ -339,14 +339,14 @@ export class SpeakerTagModal extends Modal {
 			this.close();
 		});
 
-		// Focus first input — but keep its dropdown closed (focus() fires the
-		// focus event synchronously, so guard around it and clear once it's past).
+		// Focus first input — but keep its dropdown closed on open. The flag is
+		// consumed by that first focus event (see the focus handler), so it works
+		// whether focus() dispatches synchronously or on a later tick.
 		setTimeout(() => {
 			if (this.inputs.length > 0) {
 				this.suppressFocusDropdown = true;
 				this.inputs[0]!.focus();
 				this.inputs[0]!.select();
-				window.setTimeout(() => { this.suppressFocusDropdown = false; }, 0);
 			}
 		}, 10);
 	}
@@ -461,8 +461,13 @@ export class SpeakerTagModal extends Modal {
 
 		// Open the dropdown on focus so the invitee list is one click away —
 		// except for the initial autofocus, which would pop it open unprompted.
+		// Consume the suppression flag on the first focus event (whenever it
+		// fires) so this is immune to sync-vs-async focus dispatch ordering.
 		input.addEventListener("focus", () => {
-			if (this.suppressFocusDropdown) return;
+			if (this.suppressFocusDropdown) {
+				this.suppressFocusDropdown = false;
+				return;
+			}
 			updateDropdown();
 		});
 
