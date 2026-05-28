@@ -38,6 +38,7 @@ export interface WhisperCalSettings {
 	researchPromptPath: string;
 	microphoneUser: string;
 	rosterMaxEnriched: number;
+	speakerTagClipSeconds: number;
 	llmEnabled: boolean;
 	anthropicApiKey: string;
 	llmCli: string;
@@ -85,6 +86,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
 	rosterMaxEnriched: 20,
+	speakerTagClipSeconds: 0,
 	llmEnabled: false,
 	anthropicApiKey: "",
 	llmCli: "claude",
@@ -729,6 +731,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
 			get: () => this.plugin.settings.rosterMaxEnriched,
 			set: v => { this.plugin.settings.rosterMaxEnriched = v; },
+		});
+
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Speaker clip length (seconds)",
+			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 = play the full snippet (until the next speaker).",
+			placeholder: "0",
+			min: 0,
+			get: () => this.plugin.settings.speakerTagClipSeconds,
+			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
 		});
 
 		// Populate all model dropdowns from the API

@@ -671,7 +671,8 @@ Each speaker row in the confirmation modal has an expandable **excerpt panel**. 
 When the transcript has a linked recording, the confirmation modal becomes a listening tool — text alone often isn't enough to tell who a generic "Speaker N" is, especially when their first lines are short ("Hm.", "Okay.").
 
 - A compact **audio player** appears at the top of the modal, loaded with the meeting recording.
-- Every timestamp in a speaker's excerpt panel is a **click-to-play** control: click it to seek the player to that exact moment and hear the voice. Click a later line for the same speaker to jump to a clearer sample. Pause and scrub with the player's own controls.
+- Every timestamp in a speaker's excerpt panel is a **click-to-play** control: click it to play just that snippet — playback starts at the line and stops automatically at the next speaker's timestamp. Click a later line for the same speaker to hear a clearer sample. Pause and scrub freely with the player's own controls.
+- The **"Speaker clip length (seconds)"** setting caps how long each snippet plays. Leave it at `0` to play the whole snippet, or set e.g. `5` to hear a fixed five-second clip (still never bleeding past the next speaker).
 
 The recording is discovered automatically from the transcript's `recording` frontmatter key (a wiki link to the audio file, e.g. `recording: "[[My Meeting.m4a]]"`). The [Recording API](#recording-api) source writes this link when it saves the meeting audio into the vault. Timestamps are read straight from the transcript body, so no conversion or extra setup is needed. If a transcript has no linked recording, the modal behaves exactly as before — excerpts with plain-text timestamps and no player.
 

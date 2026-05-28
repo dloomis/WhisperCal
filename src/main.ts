@@ -683,7 +683,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// transcript frontmatter) so the modal can offer click-to-play per timestamp.
 				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
 				const audioFile = resolveWikiLink(this.app, transcriptFm, "recording", transcriptPath);
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile).prompt();
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile, this.settings.speakerTagClipSeconds).prompt();
 				if (!decisions) {
 					clearProgressStatus();
 					return;

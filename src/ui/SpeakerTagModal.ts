@@ -36,6 +36,16 @@ function parseOffsetSeconds(ts: string): number | null {
 	return null;
 }
 
+/** A contiguous run of one speaker's lines, with its audio span. */
+interface ExcerptBlock {
+	/** Block text including the leading **Speaker** label. */
+	text: string;
+	/** Playback start offset in seconds, or null if no timestamp parsed. */
+	startOffset: number | null;
+	/** Start offset of the next block (any speaker) — where this snippet ends. */
+	endOffset: number | null;
+}
+
 /**
  * Modal for reviewing and approving proposed speaker tag mappings.
  * Returns the decisions array, or null if cancelled.
@@ -49,11 +59,17 @@ export class SpeakerTagModal extends Modal {
 	private inputs: HTMLInputElement[] = [];
 	private peopleFolderPath: string;
 	private people: PersonEntry[] = [];
-	private speakerBlocks: Map<string, string[]>;
+	private speakerBlocks: Map<string, ExcerptBlock[]>;
 	private audioFile: TFile | null;
 	private audioEl: HTMLAudioElement | null = null;
+	/** Seconds to play per click; 0 = play the full snippet (until the next speaker). */
+	private clipSeconds: number;
+	/** Playback position (seconds) to pause at, set when a snippet is clicked. */
+	private stopAt: number | null = null;
+	/** True while we are seeking on the user's behalf, so manual seeks can be told apart. */
+	private seekingForSnippet = false;
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0) {
 		super(app);
 		// Keep original index order so speakers appear in transcript sequence.
 		// Show every speaker — including any the LLM proposed as the microphone user — so the
@@ -66,11 +82,12 @@ export class SpeakerTagModal extends Modal {
 		this.people = this.buildPeopleList();
 		this.speakerBlocks = this.parseSpeakerBlocks(transcriptContent);
 		this.audioFile = audioFile;
+		this.clipSeconds = clipSeconds;
 	}
 
-	/** Parse transcript body into per-speaker blocks for the excerpt panel. */
-	private parseSpeakerBlocks(content: string): Map<string, string[]> {
-		const map = new Map<string, string[]>();
+	/** Parse transcript body into per-speaker blocks (with audio spans) for the excerpt panel. */
+	private parseSpeakerBlocks(content: string): Map<string, ExcerptBlock[]> {
+		const map = new Map<string, ExcerptBlock[]>();
 		// Strip YAML frontmatter
 		const firstFence = content.indexOf("---");
 		if (firstFence < 0) return map;
@@ -86,10 +103,23 @@ export class SpeakerTagModal extends Modal {
 			starts.push({name: m[1]!, pos: m.index});
 		}
 
+		// First pass: build each block in global transcript order with its start offset.
+		const ordered: {name: string; block: ExcerptBlock}[] = [];
 		for (let i = 0; i < starts.length; i++) {
 			const {name, pos} = starts[i]!;
 			const end = i + 1 < starts.length ? starts[i + 1]!.pos : body.length;
-			const block = body.slice(pos, end).trim();
+			const text = body.slice(pos, end).trim();
+			const firstLine = text.split("\n", 1)[0] ?? "";
+			const startOffset = parseOffsetSeconds(firstLine.replace(/^\*\*.+?\*\*\s*/, ""));
+			ordered.push({name, block: {text, startOffset, endOffset: null}});
+		}
+
+		// Second pass: a snippet ends where the next block (any speaker) begins.
+		for (let i = 0; i < ordered.length; i++) {
+			ordered[i]!.block.endOffset = ordered[i + 1]?.block.startOffset ?? null;
+		}
+
+		for (const {name, block} of ordered) {
 			if (!map.has(name)) map.set(name, []);
 			map.get(name)!.push(block);
 		}
@@ -97,10 +127,28 @@ export class SpeakerTagModal extends Modal {
 		return map;
 	}
 
+	/**
+	 * Seek the player to a snippet and pause at its end. The stop point is the next
+	 * speaker's timestamp, optionally shortened by the clip-length setting
+	 * (0 = play the whole snippet). Enforced by the timeupdate listener in onOpen.
+	 */
+	private playSnippet(start: number, end: number | null): void {
+		if (!this.audioEl) return;
+		let stopAt = end;
+		if (this.clipSeconds > 0) {
+			const capped = start + this.clipSeconds;
+			stopAt = stopAt === null ? capped : Math.min(stopAt, capped);
+		}
+		this.stopAt = stopAt;
+		this.seekingForSnippet = true;
+		this.audioEl.currentTime = start;
+		void this.audioEl.play();
+	}
+
 	/** Render transcript blocks into the excerpt panel, stripping the bold speaker prefix. */
-	private renderExcerpt(container: HTMLElement, blocks: string[]): void {
+	private renderExcerpt(container: HTMLElement, blocks: ExcerptBlock[]): void {
 		for (const block of blocks) {
-			const lines = block.split("\n");
+			const lines = block.text.split("\n");
 			const firstLine = lines[0] ?? "";
 			// Strip leading **Speaker Name** to show just the timestamp
 			const stripped = firstLine.replace(/^\*\*.+?\*\*\s*/, "");
@@ -109,19 +157,15 @@ export class SpeakerTagModal extends Modal {
 			const blockEl = container.createDiv({cls: "whisper-cal-excerpt-block"});
 
 			// When a recording is linked and the timestamp parses, make it a
-			// one-click control that seeks the in-modal player to that offset.
-			const offset = this.audioEl ? parseOffsetSeconds(stripped) : null;
-			if (this.audioEl && offset !== null) {
+			// one-click control that plays just this snippet in the in-modal player.
+			if (this.audioEl && block.startOffset !== null) {
+				const start = block.startOffset;
 				const tsEl = blockEl.createDiv({cls: "whisper-cal-excerpt-ts is-playable"});
 				const icon = tsEl.createSpan({cls: "whisper-cal-excerpt-play"});
 				setIcon(icon, "play");
 				tsEl.createSpan({text: stripped});
-				tsEl.setAttribute("aria-label", "Play from here");
-				tsEl.addEventListener("click", () => {
-					if (!this.audioEl) return;
-					this.audioEl.currentTime = offset;
-					void this.audioEl.play();
-				});
+				tsEl.setAttribute("aria-label", "Play this snippet");
+				tsEl.addEventListener("click", () => this.playSnippet(start, block.endOffset));
 			} else {
 				blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
 			}
@@ -171,6 +215,21 @@ export class SpeakerTagModal extends Modal {
 			this.audioEl.controls = true;
 			this.audioEl.preload = "metadata";
 			this.audioEl.src = this.app.vault.getResourcePath(this.audioFile);
+
+			// Stop at the snippet boundary. timeupdate (not setTimeout) so the cut
+			// point tracks actual playback position, immune to streaming latency.
+			this.audioEl.addEventListener("timeupdate", () => {
+				if (this.stopAt !== null && this.audioEl && this.audioEl.currentTime >= this.stopAt) {
+					this.audioEl.pause();
+					this.stopAt = null;
+				}
+			});
+			// A seek we didn't initiate (user grabbed the scrubber) cancels the
+			// pending snippet stop so manual playback runs unrestricted.
+			this.audioEl.addEventListener("seeked", () => {
+				if (this.seekingForSnippet) this.seekingForSnippet = false;
+				else this.stopAt = null;
+			});
 		}
 
 		const rows = contentEl.createDiv({cls: "whisper-cal-speaker-tag-rows"});
