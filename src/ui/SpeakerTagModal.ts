@@ -70,6 +70,8 @@ export class SpeakerTagModal extends Modal {
 	private seekingForSnippet = false;
 	/** Curated attendee names (from meeting_invitees) shown first in the dropdown. */
 	private meetingInvitees: string[];
+	/** Suppresses the focus-triggered dropdown for the initial programmatic autofocus. */
+	private suppressFocusDropdown = false;
 
 	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0, meetingInvitees: string[] = []) {
 		super(app);
@@ -337,11 +339,14 @@ export class SpeakerTagModal extends Modal {
 			this.close();
 		});
 
-		// Focus first input
+		// Focus first input — but keep its dropdown closed (focus() fires the
+		// focus event synchronously, so guard around it and clear once it's past).
 		setTimeout(() => {
 			if (this.inputs.length > 0) {
+				this.suppressFocusDropdown = true;
 				this.inputs[0]!.focus();
 				this.inputs[0]!.select();
+				window.setTimeout(() => { this.suppressFocusDropdown = false; }, 0);
 			}
 		}, 10);
 	}
@@ -447,8 +452,12 @@ export class SpeakerTagModal extends Modal {
 			setTimeout(() => showDropdown(false), 150);
 		});
 
-		// Open the dropdown on focus so the invitee list is one click away.
-		input.addEventListener("focus", () => updateDropdown());
+		// Open the dropdown on focus so the invitee list is one click away —
+		// except for the initial autofocus, which would pop it open unprompted.
+		input.addEventListener("focus", () => {
+			if (this.suppressFocusDropdown) return;
+			updateDropdown();
+		});
 
 		// Caret affordance signals this is a dropdown and toggles it.
 		const caret = wrapper.createDiv({cls: "whisper-cal-autocomplete-caret"});
