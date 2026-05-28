@@ -683,7 +683,16 @@ export default class WhisperCalPlugin extends Plugin {
 				// transcript frontmatter) so the modal can offer click-to-play per timestamp.
 				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
 				const audioFile = resolveWikiLink(this.app, transcriptFm, "recording", transcriptPath);
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile, this.settings.speakerTagClipSeconds).prompt();
+				// Curated attendee names to prefill the modal's dropdowns. Source from the
+				// parent meeting note (the source of truth), falling back to the transcript copy.
+				const inviteeRaw = (Array.isArray(meetingFm[FM.MEETING_INVITEES]) ? meetingFm[FM.MEETING_INVITEES]
+					: Array.isArray(transcriptFm[FM.MEETING_INVITEES]) ? transcriptFm[FM.MEETING_INVITEES]
+					: []) as unknown[];
+				const meetingInvitees = inviteeRaw
+					.filter((v): v is string => typeof v === "string")
+					.map(v => stripWikiLink(v))
+					.filter(Boolean);
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile, this.settings.speakerTagClipSeconds, meetingInvitees).prompt();
 				if (!decisions) {
 					clearProgressStatus();
 					return;

@@ -656,11 +656,11 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 **The confirmation modal** shows each speaker from the transcript with:
 - The **original stub name** (e.g., "Speaker 1") and how many transcript lines they have.
-- The **proposed real name** pre-filled from the LLM output (editable).
+- A **name dropdown** pre-filled with the LLM's proposed name. Focus the field or click its caret to pick from the meeting's invitees (the transcript/note `meeting_invitees`), which appear first and are tagged **invitee**. You can still type a one-off name to match anyone in your People folder, or type a new name and choose **"+ Create note"** to make a person note on the fly.
 - A **confidence badge** (CERTAIN, HIGH, or LOW) and the LLM's evidence for its guess.
-- Speakers are sorted by confidence (highest first) so you can quickly approve high-confidence matches and focus attention on uncertain ones.
+- Speakers appear in the order they first speak in the transcript.
 
-You can clear a name field to leave that speaker untagged, or type a different name. Click **Cancel** to discard all changes.
+You can clear a name field to leave that speaker untagged. Click **Cancel** to discard all changes.
 
 #### Per-Speaker Transcript Excerpts
 

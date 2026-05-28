@@ -1228,8 +1228,29 @@
 
 .whisper-cal-speaker-tag-input {
 	width: 100%;
-	padding: 4px 8px;
+	padding: 4px 24px 4px 8px;
 	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-autocomplete-caret {
+	position: absolute;
+	top: 0;
+	right: 0;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	padding: 0 6px;
+	cursor: pointer;
+	color: var(--text-faint);
+}
+
+.whisper-cal-autocomplete-caret:hover {
+	color: var(--text-normal);
+}
+
+.whisper-cal-autocomplete-caret svg {
+	width: 14px;
+	height: 14px;
 }
 
 .whisper-cal-autocomplete-dropdown {
@@ -1248,9 +1269,22 @@
 }
 
 .whisper-cal-autocomplete-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	padding: 4px 8px;
 	font-size: var(--font-ui-small);
 	cursor: pointer;
+}
+
+.whisper-cal-autocomplete-tag {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-accent);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	padding: 0 6px;
+	flex-shrink: 0;
 }
 
 .whisper-cal-autocomplete-item:hover,

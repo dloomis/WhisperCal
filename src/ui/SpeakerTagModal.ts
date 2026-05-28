@@ -68,8 +68,10 @@ export class SpeakerTagModal extends Modal {
 	private stopAt: number | null = null;
 	/** True while we are seeking on the user's behalf, so manual seeks can be told apart. */
 	private seekingForSnippet = false;
+	/** Curated attendee names (from meeting_invitees) shown first in the dropdown. */
+	private meetingInvitees: string[];
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0, meetingInvitees: string[] = []) {
 		super(app);
 		// Keep original index order so speakers appear in transcript sequence.
 		// Show every speaker — including any the LLM proposed as the microphone user — so the
@@ -83,6 +85,8 @@ export class SpeakerTagModal extends Modal {
 		this.speakerBlocks = this.parseSpeakerBlocks(transcriptContent);
 		this.audioFile = audioFile;
 		this.clipSeconds = clipSeconds;
+		// Dedupe while preserving order.
+		this.meetingInvitees = [...new Set(meetingInvitees.filter(Boolean))];
 	}
 
 	/** Parse transcript body into per-speaker blocks (with audio spans) for the excerpt panel. */
@@ -280,8 +284,8 @@ export class SpeakerTagModal extends Modal {
 			input.value = mapping.proposedName;
 			this.inputs.push(input);
 
-			if (this.people.length > 0) {
-				this.attachAutocomplete(wrapper, input, mapping.proposedName);
+			if (this.people.length > 0 || this.meetingInvitees.length > 0 || this.peopleFolderPath) {
+				this.attachAutocomplete(wrapper, input);
 			}
 
 			// Confidence + evidence below input
@@ -342,57 +346,54 @@ export class SpeakerTagModal extends Modal {
 		}, 10);
 	}
 
-	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement, originalProposed: string): void {
+	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement): void {
 		const dropdown = wrapper.createDiv({cls: "whisper-cal-autocomplete-dropdown whisper-cal-hidden"});
 		let selectedIdx = -1;
-		let userEdited = !originalProposed;
 
 		const showDropdown = (visible: boolean) => dropdown.toggleClass("whisper-cal-hidden", !visible);
 		const isDropdownVisible = () => !dropdown.hasClass("whisper-cal-hidden");
-
-		input.addEventListener("input", () => {
-			userEdited = input.value.trim() !== originalProposed;
-		});
 
 		const updateDropdown = (): void => {
 			const query = input.value.trim().toLowerCase();
 			dropdown.empty();
 			selectedIdx = -1;
 
-			// Only show autocomplete when user has edited away from the LLM proposal, or it was empty
-			if (!userEdited || !query) {
-				showDropdown(false);
-				return;
+			// Merge candidates: meeting invitees first (the curated, expected attendees),
+			// then broader people-folder matches. An empty query lists all invitees so the
+			// field behaves as a prefilled dropdown; typing filters across both sets.
+			const seen = new Set<string>();
+			const candidates: {name: string; invitee: boolean}[] = [];
+			const consider = (name: string, invitee: boolean) => {
+				const key = name.toLowerCase();
+				if (seen.has(key)) return;
+				if (query && !key.includes(query)) return;
+				seen.add(key);
+				candidates.push({name, invitee});
+			};
+			for (const name of this.meetingInvitees) consider(name, true);
+			if (query) {
+				for (const person of this.people) consider(person.name, false);
 			}
 
-			const matches = this.people.filter(p =>
-				p.name.toLowerCase().includes(query)
-			).slice(0, 8);
+			const matches = candidates.slice(0, 8);
+			const exactMatch = query.length > 0 && seen.has(query);
 
-			const exactMatch = this.people.some(p =>
-				p.name.toLowerCase() === query
-			);
-
-			if (matches.length === 0 && !this.peopleFolderPath) {
-				showDropdown(false);
-				return;
-			}
-
-			for (const person of matches) {
-				const item = dropdown.createDiv({
-					cls: "whisper-cal-autocomplete-item",
-					text: person.name,
-				});
+			for (const cand of matches) {
+				const item = dropdown.createDiv({cls: "whisper-cal-autocomplete-item"});
+				item.createSpan({text: cand.name});
+				if (cand.invitee) {
+					item.createSpan({cls: "whisper-cal-autocomplete-tag", text: "invitee"});
+				}
 				item.addEventListener("mousedown", (e) => {
 					e.preventDefault();
-					input.value = person.name;
-					userEdited = false;
+					input.value = cand.name;
 					showDropdown(false);
 				});
 			}
 
-			// "+ Create note" option when typed name doesn't exactly match
-			if (this.peopleFolderPath && query && !exactMatch) {
+			// "+ Create note" option when the typed name doesn't exactly match a known person.
+			const hasCreate = !!this.peopleFolderPath && !!query && !exactMatch;
+			if (hasCreate) {
 				const createItem = dropdown.createDiv({
 					cls: "whisper-cal-autocomplete-item whisper-cal-autocomplete-create",
 				});
@@ -408,7 +409,7 @@ export class SpeakerTagModal extends Modal {
 				});
 			}
 
-			showDropdown(matches.length > 0 || (!exactMatch && !!this.peopleFolderPath));
+			showDropdown(matches.length > 0 || hasCreate);
 		};
 
 		const highlightItem = (items: HTMLElement[]): void => {
@@ -446,8 +447,20 @@ export class SpeakerTagModal extends Modal {
 			setTimeout(() => showDropdown(false), 150);
 		});
 
-		input.addEventListener("focus", () => {
-			if (input.value.trim()) updateDropdown();
+		// Open the dropdown on focus so the invitee list is one click away.
+		input.addEventListener("focus", () => updateDropdown());
+
+		// Caret affordance signals this is a dropdown and toggles it.
+		const caret = wrapper.createDiv({cls: "whisper-cal-autocomplete-caret"});
+		setIcon(caret, "chevron-down");
+		caret.addEventListener("mousedown", (e) => {
+			e.preventDefault();
+			if (isDropdownVisible()) {
+				showDropdown(false);
+			} else {
+				input.focus();
+				updateDropdown();
+			}
 		});
 	}
 
