@@ -366,24 +366,31 @@ export class SpeakerTagModal extends Modal {
 			// Merge candidates: meeting invitees first (the curated, expected attendees),
 			// then broader people-folder matches. An empty query lists all invitees so the
 			// field behaves as a prefilled dropdown; typing filters across both sets.
+			// Invitees are bounded and never truncated (the list scrolls); only the much
+			// larger people folder is capped.
+			const PEOPLE_LIMIT = 10;
 			const seen = new Set<string>();
-			const candidates: {name: string; invitee: boolean}[] = [];
-			const consider = (name: string, invitee: boolean) => {
+			const invitees: string[] = [];
+			const others: string[] = [];
+			const consider = (name: string, target: string[]) => {
 				const key = name.toLowerCase();
 				if (seen.has(key)) return;
 				if (query && !key.includes(query)) return;
 				seen.add(key);
-				candidates.push({name, invitee});
+				target.push(name);
 			};
-			for (const name of this.meetingInvitees) consider(name, true);
+			for (const name of this.meetingInvitees) consider(name, invitees);
 			if (query) {
-				for (const person of this.people) consider(person.name, false);
+				for (const person of this.people) consider(person.name, others);
 			}
 
-			const matches = candidates.slice(0, 8);
+			const candidates = [
+				...invitees.map(name => ({name, invitee: true})),
+				...others.slice(0, PEOPLE_LIMIT).map(name => ({name, invitee: false})),
+			];
 			const exactMatch = query.length > 0 && seen.has(query);
 
-			for (const cand of matches) {
+			for (const cand of candidates) {
 				const item = dropdown.createDiv({cls: "whisper-cal-autocomplete-item"});
 				item.createSpan({text: cand.name});
 				if (cand.invitee) {
@@ -414,7 +421,7 @@ export class SpeakerTagModal extends Modal {
 				});
 			}
 
-			showDropdown(matches.length > 0 || hasCreate);
+			showDropdown(candidates.length > 0 || hasCreate);
 		};
 
 		const highlightItem = (items: HTMLElement[]): void => {
