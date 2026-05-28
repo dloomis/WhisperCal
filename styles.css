@@ -1363,9 +1363,39 @@
 	color: var(--text-faint);
 }
 
+.whisper-cal-excerpt-ts.is-playable {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	cursor: pointer;
+	color: var(--text-accent);
+}
+
+.whisper-cal-excerpt-ts.is-playable:hover {
+	color: var(--text-accent-hover);
+	text-decoration: underline;
+}
+
+.whisper-cal-excerpt-play {
+	display: inline-flex;
+	align-items: center;
+}
+
+.whisper-cal-excerpt-play svg {
+	width: 0.9em;
+	height: 0.9em;
+	vertical-align: -1px;
+}
+
 .whisper-cal-excerpt-text {
 	white-space: pre-wrap;
 	line-height: 1.4;
+}
+
+.whisper-cal-modal-audio {
+	width: 100%;
+	height: 32px;
+	margin: 4px 0 10px;
 }
 
 .whisper-cal-speaker-tag-buttons {

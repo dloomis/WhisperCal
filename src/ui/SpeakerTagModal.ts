@@ -1,4 +1,4 @@
-import {Modal, App, TFolder, TFile, Notice} from "obsidian";
+import {Modal, App, TFolder, TFile, Notice, setIcon} from "obsidian";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
 import {renderModalHeader} from "./ModalHeader";
@@ -17,6 +17,26 @@ interface PersonEntry {
 }
 
 /**
+ * Parse a transcript block's leading timestamp token into an offset in seconds.
+ * Supports the Tome format "(15.739)" (seconds from zero) and the MacWhisper
+ * format "[HH:MM:SS]" / "[MM:SS]". Returns null when no timestamp is recognized.
+ */
+function parseOffsetSeconds(ts: string): number | null {
+	const paren = ts.match(/^\((\d+(?:\.\d+)?)\)/);
+	if (paren) return parseFloat(paren[1]!);
+
+	const bracket = ts.match(/^\[(?:(\d+):)?(\d{1,2}):(\d{2})\]/);
+	if (bracket) {
+		const h = bracket[1] ? parseInt(bracket[1], 10) : 0;
+		const m = parseInt(bracket[2]!, 10);
+		const s = parseInt(bracket[3]!, 10);
+		return h * 3600 + m * 60 + s;
+	}
+
+	return null;
+}
+
+/**
  * Modal for reviewing and approving proposed speaker tag mappings.
  * Returns the decisions array, or null if cancelled.
  */
@@ -29,28 +49,23 @@ export class SpeakerTagModal extends Modal {
 	private inputs: HTMLInputElement[] = [];
 	private peopleFolderPath: string;
 	private people: PersonEntry[] = [];
-	private microphoneUser: string;
-	private micMappings: ProposedSpeakerMapping[] = [];
 	private speakerBlocks: Map<string, string[]>;
+	private audioFile: TFile | null;
+	private audioEl: HTMLAudioElement | null = null;
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, microphoneUser: string, transcriptContent: string) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null) {
 		super(app);
-		this.microphoneUser = microphoneUser;
-		// Keep original index order so speakers appear in transcript sequence
-		const sorted = [...mappings].sort((a, b) => a.index - b.index);
-		// Separate out the microphone user — they're always the same person
-		if (microphoneUser) {
-			const micLower = microphoneUser.toLowerCase();
-			this.micMappings = sorted.filter(m => m.proposedName.toLowerCase() === micLower);
-			this.mappings = sorted.filter(m => m.proposedName.toLowerCase() !== micLower);
-		} else {
-			this.mappings = sorted;
-		}
+		// Keep original index order so speakers appear in transcript sequence.
+		// Show every speaker — including any the LLM proposed as the microphone user — so the
+		// user can override a wrong mic guess (Rule 1's old "most lines" fallback frequently
+		// mislabelled the host as the recorder).
+		this.mappings = [...mappings].sort((a, b) => a.index - b.index);
 		this.meetingTitle = title;
 		this.meetingSubtitle = subtitle;
 		this.peopleFolderPath = peopleFolderPath;
 		this.people = this.buildPeopleList();
 		this.speakerBlocks = this.parseSpeakerBlocks(transcriptContent);
+		this.audioFile = audioFile;
 	}
 
 	/** Parse transcript body into per-speaker blocks for the excerpt panel. */
@@ -92,7 +107,25 @@ export class SpeakerTagModal extends Modal {
 			const bodyLines = lines.slice(1).join("\n").trim();
 
 			const blockEl = container.createDiv({cls: "whisper-cal-excerpt-block"});
-			blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
+
+			// When a recording is linked and the timestamp parses, make it a
+			// one-click control that seeks the in-modal player to that offset.
+			const offset = this.audioEl ? parseOffsetSeconds(stripped) : null;
+			if (this.audioEl && offset !== null) {
+				const tsEl = blockEl.createDiv({cls: "whisper-cal-excerpt-ts is-playable"});
+				const icon = tsEl.createSpan({cls: "whisper-cal-excerpt-play"});
+				setIcon(icon, "play");
+				tsEl.createSpan({text: stripped});
+				tsEl.setAttribute("aria-label", "Play from here");
+				tsEl.addEventListener("click", () => {
+					if (!this.audioEl) return;
+					this.audioEl.currentTime = offset;
+					void this.audioEl.play();
+				});
+			} else {
+				blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
+			}
+
 			if (bodyLines) {
 				blockEl.createDiv({cls: "whisper-cal-excerpt-text", text: bodyLines});
 			}
@@ -130,6 +163,15 @@ export class SpeakerTagModal extends Modal {
 			?.addEventListener("click", (e) => e.stopImmediatePropagation());
 
 		renderModalHeader(contentEl, this.meetingTitle, this.meetingSubtitle);
+
+		// Pinned audio player — present only when the transcript links a recording.
+		// Per-speaker timestamps seek this element so the user can hear who's speaking.
+		if (this.audioFile) {
+			this.audioEl = contentEl.createEl("audio", {cls: "whisper-cal-modal-audio"});
+			this.audioEl.controls = true;
+			this.audioEl.preload = "metadata";
+			this.audioEl.src = this.app.vault.getResourcePath(this.audioFile);
+		}
 
 		const rows = contentEl.createDiv({cls: "whisper-cal-speaker-tag-rows"});
 
@@ -375,25 +417,18 @@ export class SpeakerTagModal extends Modal {
 
 	onClose(): void {
 		const decisions: SpeakerTagDecision[] | null = this.submitted
-			? [
-				// Auto-confirm microphone user mappings
-				...this.micMappings.map(m => ({
-					speakerId: m.speakerId,
-					originalName: m.originalName,
-					confirmedName: this.microphoneUser,
-					confidence: m.confidence,
-					evidence: m.evidence,
-				})),
-				// User-confirmed mappings from the modal
-				...this.mappings.map((m, i) => ({
-					speakerId: m.speakerId,
-					originalName: m.originalName,
-					confirmedName: this.inputs[i]?.value.trim() ?? "",
-					confidence: m.confidence,
-					evidence: m.evidence,
-				})),
-			]
+			? this.mappings.map((m, i) => ({
+				speakerId: m.speakerId,
+				originalName: m.originalName,
+				confirmedName: this.inputs[i]?.value.trim() ?? "",
+				confidence: m.confidence,
+				evidence: m.evidence,
+			}))
 			: null;
+
+		// Stop playback before tearing down the modal DOM.
+		this.audioEl?.pause();
+		this.audioEl = null;
 
 		this.contentEl.empty();
 		setTimeout(() => {

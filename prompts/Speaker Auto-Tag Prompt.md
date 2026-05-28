@@ -225,7 +225,9 @@ Analyze the full transcript body (from Step 2), speaker stubs (frontmatter), and
 
 ### Rule 1: Microphone Speaker — CERTAIN
 
-Assign the Microphone user to the "Microphone" label. If no "Microphone" label exists, assign to the speaker with the most lines. Evidence: "microphone". Never overridden.
+Assign the Microphone user only when there is an explicit "Microphone" speaker stub (MacWhisper transcripts have this — the mic channel is a separate speaker). Evidence: "microphone". Never overridden.
+
+If no "Microphone" stub exists (TOME, Call Recording, generic "Speaker N" stubs), do NOT guess the microphone user from line count or any other heuristic. Identify the microphone user only through the same signals used for any other invitee (Rules 2–6). Line count is not evidence of microphone identity — the most talkative speaker is often the host or a vendor, not the recorder.
 
 ### Rule 2: Calendar Attendees — CERTAIN or HIGH
 

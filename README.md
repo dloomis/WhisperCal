@@ -664,7 +664,16 @@ You can clear a name field to leave that speaker untagged, or type a different n
 
 #### Per-Speaker Transcript Excerpts
 
-Each speaker row in the confirmation modal has an expandable **excerpt panel**. Click the chevron toggle next to a speaker to see their actual transcript lines — timestamps and spoken text. This lets you hear each speaker's "voice" in context, making it easier to confirm or correct the LLM's identification without leaving the modal.
+Each speaker row in the confirmation modal has an expandable **excerpt panel**. Click the chevron toggle next to a speaker to see their actual transcript lines — timestamps and spoken text. This lets you read each speaker's words in context, making it easier to confirm or correct the LLM's identification without leaving the modal.
+
+#### Click-to-Play Audio
+
+When the transcript has a linked recording, the confirmation modal becomes a listening tool — text alone often isn't enough to tell who a generic "Speaker N" is, especially when their first lines are short ("Hm.", "Okay.").
+
+- A compact **audio player** appears at the top of the modal, loaded with the meeting recording.
+- Every timestamp in a speaker's excerpt panel is a **click-to-play** control: click it to seek the player to that exact moment and hear the voice. Click a later line for the same speaker to jump to a clearer sample. Pause and scrub with the player's own controls.
+
+The recording is discovered automatically from the transcript's `recording` frontmatter key (a wiki link to the audio file, e.g. `recording: "[[My Meeting.m4a]]"`). The [Recording API](#recording-api) source writes this link when it saves the meeting audio into the vault. Timestamps are read straight from the transcript body, so no conversion or extra setup is needed. If a transcript has no linked recording, the modal behaves exactly as before — excerpts with plain-text timestamps and no player.
 
 #### Required LLM Output Format
 

@@ -679,7 +679,11 @@ export default class WhisperCalPlugin extends Plugin {
 					: {};
 				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
 				const subtitle = buildMeetingSubtitle(meetingFm);
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, this.settings.microphoneUser, transcriptContent).prompt();
+				// Resolve the linked recording (Tome writes `recording: [[...m4a]]` to the
+				// transcript frontmatter) so the modal can offer click-to-play per timestamp.
+				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
+				const audioFile = resolveWikiLink(this.app, transcriptFm, "recording", transcriptPath);
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile).prompt();
 				if (!decisions) {
 					clearProgressStatus();
 					return;
