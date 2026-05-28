@@ -36,7 +36,11 @@ export async function startApiRecording(opts: {
 	if (!health.modelsReady) {
 		throw new Error("Recording service is still loading models\u2026");
 	}
-	if (health.isRecording) {
+	// Block only on active audio capture. A session in "transcribing"
+	// (post-processing) no longer holds the mic, so the recording service can
+	// accept a new recording \u2014 defer that decision to it rather than pre-blocking.
+	const {state} = await recordingStatus(baseUrl);
+	if (state === "recording") {
 		throw new Error("Recording service is already recording");
 	}
 
@@ -119,14 +123,18 @@ export function watchApiRecording(opts: {
 			await sleep(WATCH_INTERVAL_MS);
 			if (!cardUi.hasRecording(notePath)) return; // stopped via WhisperCal
 			try {
-				const health = await recordingHealth(baseUrl);
+				const {state} = await recordingStatus(baseUrl);
 				// Re-check after async call — stopApiRecording may have
-				// deleted the state while we were awaiting the health check.
+				// deleted the state while we were awaiting the status check.
 				if (!cardUi.hasRecording(notePath)) return;
-				if (!health.isRecording) {
+				// Release the recording lock the moment active capture ends.
+				// "transcribing"/"complete"/"idle" mean the mic is free, so another
+				// meeting can start recording while this one finishes post-processing;
+				// waitAndLink owns the transcribe→link tail from here.
+				if (state !== "recording") {
 					const info = cardUi.getRecording(notePath) ?? null;
 					cardUi.deleteRecording(notePath);
-					console.debug(`[WhisperCal] API recording stopped externally for ${notePath}`);
+					console.debug(`[WhisperCal] API capture ended (state=${state}) for ${notePath}`);
 					onStopped();
 					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl, onStatus);
 					return;
