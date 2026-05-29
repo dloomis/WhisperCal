@@ -46,6 +46,9 @@ export interface WhisperCalSettings {
 	speakerTagModel: string;
 	summarizerModel: string;
 	researchModel: string;
+	speakerTagFlags: string;
+	summarizerFlags: string;
+	researchFlags: string;
 	llmTimeoutMinutes: number;
 	llmMaxConcurrent: number;
 	llmDebugMode: boolean;
@@ -94,6 +97,9 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	speakerTagModel: "",
 	summarizerModel: "",
 	researchModel: "",
+	speakerTagFlags: "",
+	summarizerFlags: "",
+	researchFlags: "",
 	llmTimeoutMinutes: 5,
 	llmMaxConcurrent: 2,
 	llmDebugMode: false,
@@ -180,6 +186,18 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			this.saveTimer = null;
 			void this.plugin.saveSettings();
 		}, 500);
+	}
+
+	/**
+	 * Add a lightweight sub-section heading. Visually lighter than `setHeading()`
+	 * at the top level (see `.whisper-cal-subheading` in styles.css) so nested
+	 * groups read as children of the section above them, not as peer sections.
+	 */
+	private addSubHeading(container: HTMLElement, name: string): void {
+		new Setting(container)
+			.setName(name)
+			.setHeading()
+			.settingEl.addClass("whisper-cal-subheading");
 	}
 
 	/**
@@ -597,23 +615,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
-		if (Platform.isMacOS) {
-			this.addToggleSetting({
-				container: containerEl,
-				name: "Debug mode",
-				desc: "Open LLM commands in a Terminal window instead of running in the background",
-				get: () => this.plugin.settings.llmDebugMode,
-				set: v => { this.plugin.settings.llmDebugMode = v; },
-			});
-		}
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Debug logging",
-			desc: "Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.",
-			get: () => this.plugin.settings.llmDebugLogging,
-			set: v => { this.plugin.settings.llmDebugLogging = v; },
-		});
+		// ── CLI & runtime: shared invocation settings that apply to every prompt ──
+		this.addSubHeading(containerEl, "CLI & runtime");
 
 		// CLI command has a "fall back to claude on empty" rule — keep direct.
 		new Setting(containerEl)
@@ -629,11 +632,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		this.addTextSetting({
 			container: containerEl,
-			name: "Additional flags",
-			desc: "Extra CLI flags appended to the LLM command. " +
+			name: "Additional flags (all prompts)",
+			desc: "Extra CLI flags appended to every LLM command. " +
 				"⚠️ The default --dangerously-skip-permissions is required for " +
 				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization.",
+				"and summarization. Use the per-prompt flags below for task-specific options.",
 			placeholder: "--dangerously-skip-permissions",
 			get: () => this.plugin.settings.llmExtraFlags,
 			set: v => { this.plugin.settings.llmExtraFlags = v; },
@@ -653,19 +656,58 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					});
 			});
 
-		// Per-prompt settings: each prompt has a file path + model selector
+		this.addNumberSetting({
+			container: containerEl,
+			name: "LLM timeout (minutes)",
+			desc: "Kill the LLM process if it runs longer than this (0 = no timeout)",
+			min: 0,
+			get: () => this.plugin.settings.llmTimeoutMinutes,
+			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
+		});
+
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Max concurrent LLM processes",
+			desc: "Maximum number of LLM processes that can run simultaneously",
+			get: () => this.plugin.settings.llmMaxConcurrent,
+			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
+		});
+
+		if (Platform.isMacOS) {
+			this.addToggleSetting({
+				container: containerEl,
+				name: "Debug mode",
+				desc: "Open LLM commands in a Terminal window instead of running in the background",
+				get: () => this.plugin.settings.llmDebugMode,
+				set: v => { this.plugin.settings.llmDebugMode = v; },
+			});
+		}
+
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Debug logging",
+			desc: "Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.",
+			get: () => this.plugin.settings.llmDebugLogging,
+			set: v => { this.plugin.settings.llmDebugLogging = v; },
+		});
+
+		// Per-prompt settings: each prompt has its own sub-section with a file
+		// path, model, and additional flags appended after the global flags.
 		const modelSelects: HTMLSelectElement[] = [];
 
 		const addPromptSetting = (
 			name: string,
-			desc: string,
+			promptDesc: string,
 			placeholder: string,
 			pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
 			modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
+			flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
 		) => {
+			this.addSubHeading(containerEl, name);
+
 			new Setting(containerEl)
-				.setName(`${name} prompt`)
-				.setDesc(desc)
+				.setName("Prompt")
+				.setDesc(promptDesc)
 				.addText(text => {
 					text.setPlaceholder(placeholder)
 						.setValue(this.plugin.settings[pathKey])
@@ -677,7 +719,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 
 			new Setting(containerEl)
-				.setName(`${name} model`)
+				.setName("Model")
 				.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key above to load available models.`)
 				.addDropdown(dropdown => {
 					modelSelects.push(dropdown.selectEl);
@@ -692,6 +734,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 				});
+
+			this.addTextSetting({
+				container: containerEl,
+				name: "Additional flags",
+				desc: `Extra CLI flags for ${name.toLowerCase()} only, appended after the global flags above (e.g. --effort medium). Leave empty to use only the global flags.`,
+				placeholder: "--effort medium",
+				get: () => this.plugin.settings[flagsKey],
+				set: v => { this.plugin.settings[flagsKey] = v; },
+			});
 		};
 
 		addPromptSetting(
@@ -700,20 +751,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"Prompts/Speaker Tagging.md",
 			"speakerTaggingPromptPath",
 			"speakerTagModel",
-		);
-		addPromptSetting(
-			"Summarizer",
-			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
-			"Prompts/Meeting Summarizer.md",
-			"summarizerPromptPath",
-			"summarizerModel",
-		);
-		addPromptSetting(
-			"Research",
-			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
-			"Prompts/Meeting Research.md",
-			"researchPromptPath",
-			"researchModel",
+			"speakerTagFlags",
 		);
 
 		this.addTextSetting({
@@ -743,6 +781,32 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
 		});
 
+		addPromptSetting(
+			"Summarizer",
+			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
+			"Prompts/Meeting Summarizer.md",
+			"summarizerPromptPath",
+			"summarizerModel",
+			"summarizerFlags",
+		);
+
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Auto-summarize after tagging",
+			desc: "Automatically start summarization after speaker tagging completes",
+			get: () => this.plugin.settings.autoSummarizeAfterTagging,
+			set: v => { this.plugin.settings.autoSummarizeAfterTagging = v; },
+		});
+
+		addPromptSetting(
+			"Research",
+			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
+			"Prompts/Meeting Research.md",
+			"researchPromptPath",
+			"researchModel",
+			"researchFlags",
+		);
+
 		// Populate all model dropdowns from the API
 		const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
 			["speakerTagModel", "summarizerModel", "researchModel"];
@@ -762,31 +826,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		void refreshModels();
 
 		/* eslint-enable obsidianmd/ui/sentence-case */
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "LLM timeout (minutes)",
-			desc: "Kill the LLM process if it runs longer than this (0 = no timeout)",
-			min: 0,
-			get: () => this.plugin.settings.llmTimeoutMinutes,
-			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Max concurrent LLM processes",
-			desc: "Maximum number of LLM processes that can run simultaneously",
-			get: () => this.plugin.settings.llmMaxConcurrent,
-			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
-		});
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Auto-summarize after tagging",
-			desc: "Automatically start summarization after speaker tagging completes",
-			get: () => this.plugin.settings.autoSummarizeAfterTagging,
-			set: v => { this.plugin.settings.autoSummarizeAfterTagging = v; },
-		});
 
 	}
 

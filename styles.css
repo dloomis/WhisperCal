@@ -567,6 +567,22 @@
 	min-width: 300px;
 }
 
+/* Settings — lighter sub-section label nested under a top-level heading.
+   Distinguished from the section heading: smaller, muted, uppercased. */
+.whisper-cal-settings .setting-item-heading.whisper-cal-subheading {
+	border-top: none;
+	padding-top: 18px;
+	padding-bottom: 2px;
+}
+
+.whisper-cal-settings .setting-item-heading.whisper-cal-subheading .setting-item-name {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-muted);
+}
+
 /* Auth settings UI */
 .whisper-cal-settings-warning {
 	background: var(--background-modifier-error-hover);

@@ -13,6 +13,7 @@ interface LlmInvokerOpts {
 	inlinePrompt?: string;    // direct prompt text — replaces the prompt file reference when set
 	llmCli: string;
 	llmExtraFlags: string;
+	llmPromptFlags?: string;  // per-prompt flags appended after llmExtraFlags (e.g. "--effort medium")
 	llmModel?: string;        // model ID to pass via --model flag (empty = CLI default)
 	timeoutMs?: number;       // kill the process after this many ms (0 = no timeout)
 	// Optional parameters that skip prompt steps when provided
@@ -64,6 +65,17 @@ function escapeSq(s: string): string {
 // Wrap a shell argument in single quotes (with internal escaping)
 function shellQuote(s: string): string {
 	return `'${escapeSq(s)}'`;
+}
+
+/**
+ * Split a flag string on whitespace and append each token (quoted individually
+ * to prevent injection) to flagParts. No-op for empty/whitespace-only input.
+ */
+function appendFlags(flagParts: string[], flags: string | undefined): void {
+	if (!flags || !flags.trim()) return;
+	for (const flag of flags.trim().split(/\s+/)) {
+		flagParts.push(platformQuote(flag));
+	}
 }
 
 /** Quote a shell argument for the current platform. */
@@ -166,12 +178,10 @@ function buildCliCommand(opts: LlmInvokerOpts, systemPromptFile?: string): strin
 		flagParts.push(`--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`);
 	}
 	if (opts.llmModel) flagParts.push(`--model ${platformQuote(opts.llmModel)}`);
-	if (opts.llmExtraFlags.trim()) {
-		// Split extra flags on whitespace and quote each individually to prevent injection
-		for (const flag of opts.llmExtraFlags.trim().split(/\s+/)) {
-			flagParts.push(platformQuote(flag));
-		}
-	}
+	// Global flags first, then per-prompt flags so a prompt-specific value can
+	// override a general one (later flags win in most CLIs).
+	appendFlags(flagParts, opts.llmExtraFlags);
+	appendFlags(flagParts, opts.llmPromptFlags);
 	const flags = flagParts.join(" ");
 	return `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""}`;
 }
@@ -237,6 +247,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
 	// Ensure any --mcp-config file referenced in flags exists (may be missing after reboot).
 	ensureMcpConfigFile(opts.llmExtraFlags);
+	if (opts.llmPromptFlags) ensureMcpConfigFile(opts.llmPromptFlags);
 
 	if (opts.debugMode) {
 		return spawnLlmPromptTerminal(opts);
