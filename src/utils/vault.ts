@@ -66,6 +66,13 @@ export function getLinkedSessionIds(app: App): Set<string> {
 		if (Array.isArray(tags) && (tags as string[]).includes("transcript")) continue;
 		const sid = fm[FM.MACWHISPER_SESSION_ID] as string | undefined;
 		if (sid) linked.add(sid);
+		// Merged notes carry every source session id in an array
+		const sids: unknown = fm[FM.MACWHISPER_SESSION_IDS];
+		if (Array.isArray(sids)) {
+			for (const s of sids) {
+				if (typeof s === "string" && s) linked.add(s);
+			}
+		}
 	}
 	return linked;
 }

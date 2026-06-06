@@ -25,6 +25,8 @@ export const FM = {
 	CALENDAR_ATTENDEES: "calendar_attendees",
 	INVITEES: "invitees",
 	MACWHISPER_SESSION_ID: "macwhisper_session_id",
+	MACWHISPER_SESSION_IDS: "macwhisper_session_ids",
+	MERGED_FROM: "merged_from",
 	TRANSCRIPT: "transcript",
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",

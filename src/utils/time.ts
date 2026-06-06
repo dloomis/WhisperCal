@@ -199,6 +199,17 @@ export function formatElapsed(seconds: number): string {
 	return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/** Parse a duration from number (seconds) or string ("MM:SS" / "HH:MM:SS"). */
+export function parseDurationSeconds(raw: unknown): number {
+	if (typeof raw === "number") return raw;
+	if (typeof raw !== "string") return 0;
+	const parts = raw.split(":").map(Number);
+	if (parts.some(isNaN)) return 0;
+	if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
+	if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
+	return 0;
+}
+
 export function formatRecordingDuration(seconds: number): string {
 	if (seconds <= 0) return "";
 	const minutes = Math.floor(seconds / 60);

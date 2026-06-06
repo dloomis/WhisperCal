@@ -14,6 +14,7 @@ import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
 import {removeFrontmatterKeys} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
+import {LlmInstructionsModal} from "./LlmInstructionsModal";
 
 function personnelTypeIcon(type: string): string | null {
 	switch (type.toLowerCase()) {
@@ -40,12 +41,14 @@ export interface MeetingCardOpts {
 	onNoteCreated?: (eventId: string) => void;
 	importantOrganizerEmails?: readonly string[];
 	llmEnabled?: boolean;
-	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
-	onSummarize?: (notePath: string, force?: boolean) => void;
+	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
+	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
 	onStatusUpdate?: () => void;
+	isMergeSelected?: () => boolean;
+	onToggleMergeSelect?: (selected: boolean) => void;
 }
 
 type PillState = "incomplete" | "complete" | "disabled" | "running";
@@ -98,6 +101,36 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 	return btn;
 }
 
+/**
+ * Attach a tiny "+" badge to a pill wrapper that fades in on hover.
+ * Clicking it opens the custom instructions modal, then runs the action
+ * with the entered text (empty text = run normally; cancel = no run).
+ */
+function renderInstructAffordance(
+	wrap: HTMLElement,
+	app: App,
+	label: string,
+	modalTitle: string,
+	modalSubtitle: string,
+	run: (customInstructions?: string) => void,
+): void {
+	const btn = wrap.createEl("button", {
+		cls: "whisper-cal-pill-instruct",
+		attr: {"aria-label": label},
+	});
+	setIcon(btn, "plus");
+	btn.addEventListener("click", () => {
+		void (async () => {
+			const instructions = await new LlmInstructionsModal(app, {
+				title: modalTitle,
+				subtitle: modalSubtitle,
+			}).prompt();
+			if (instructions === null) return; // cancelled
+			run(instructions || undefined);
+		})();
+	});
+}
+
 function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): {gutter: HTMLElement; timeDiv: HTMLElement | null; iconRow: HTMLElement} {
 	const notAccepted = !event.isOrganizer && event.responseStatus !== "accepted" && event.responseStatus !== "organizer";
 	const gutterCls = notAccepted
@@ -109,13 +142,16 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 
 	let timeDivRef: HTMLElement | null = null;
 
+	// Top row — time + merge checkbox, level with the meeting title line
+	const topRow = gutter.createDiv({cls: "whisper-cal-card-gutter-toprow"});
+
 	if (event.isAllDay) {
-		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
+		topRow.createDiv({cls: "whisper-cal-card-gutter-time", text: "All Day"});
 	} else if (event.id === "unscheduled") {
-		gutter.createDiv({cls: "whisper-cal-card-gutter-time", text: "Ad Hoc"});
+		topRow.createDiv({cls: "whisper-cal-card-gutter-time", text: "Ad Hoc"});
 	} else {
 		const timeStr = formatTime(event.startTime, timezone);
-		const timeDiv = gutter.createDiv({cls: "whisper-cal-card-gutter-time"});
+		const timeDiv = topRow.createDiv({cls: "whisper-cal-card-gutter-time"});
 		timeDivRef = timeDiv;
 		const match = timeStr.match(/^(.+)\s+(AM|PM)$/i);
 		if (match) {
@@ -131,6 +167,19 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 				gutter.createDiv({cls: "whisper-cal-card-gutter-duration", text: durText});
 			}
 		}
+	}
+
+	// Merge checkbox — static zone so it survives dynamic-zone rebuilds.
+	// Eligibility (note must exist) is toggled by renderCardDynamic.
+	if (event.id !== "unscheduled" && opts.onToggleMergeSelect) {
+		const mergeCb = topRow.createEl("input", {
+			type: "checkbox",
+			cls: "whisper-cal-merge-checkbox whisper-cal-merge-checkbox-hidden",
+			attr: {"aria-label": "Select meeting to merge"},
+		});
+		mergeCb.checked = opts.isMergeSelected?.() ?? false;
+		mergeCb.addEventListener("click", (e) => e.stopPropagation());
+		mergeCb.addEventListener("change", () => opts.onToggleMergeSelect?.(mergeCb.checked));
 	}
 
 	// Category → colored left border on the card
@@ -490,6 +539,17 @@ function renderCardDynamic(
 		delete cardEl.dataset.transcriptPath;
 	}
 
+	// Merge checkbox eligibility — only cards with an existing note can merge
+	const mergeCb = cardEl.querySelector<HTMLInputElement>(".whisper-cal-merge-checkbox");
+	if (mergeCb) {
+		const eligible = states.note === "complete";
+		mergeCb.toggleClass("whisper-cal-merge-checkbox-hidden", !eligible);
+		if (!eligible && mergeCb.checked) {
+			mergeCb.checked = false;
+			opts.onToggleMergeSelect?.(false);
+		}
+	}
+
 	// Update gutter highlight classes
 	const gutter = cardEl.querySelector(".whisper-cal-card-gutter");
 	if (gutter instanceof HTMLElement) {
@@ -745,14 +805,22 @@ function renderCardDynamic(
 
 	// Speakers pill (LLM feature)
 	if (opts.llmEnabled !== false) {
-		const speakersPill = renderPill(actions, "users-round", "Speakers", states.speakers);
+		const speakersWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
+		const speakersPill = renderPill(speakersWrap, "users-round", "Speakers", states.speakers);
 		if (states.speakers === "incomplete" && onTagSpeakers) {
-			speakersPill.addEventListener("click", () => {
+			const runTagSpeakers = (customInstructions?: string) => {
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 				if (!tf) return;
 				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
-				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath);
-			});
+				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath, customInstructions);
+			};
+			speakersPill.addEventListener("click", () => runTagSpeakers());
+			renderInstructAffordance(
+				speakersWrap, app,
+				"Tag speakers with custom instructions",
+				"Tag speakers with instructions", event.subject,
+				runTagSpeakers,
+			);
 		} else if (states.speakers === "complete") {
 			speakersPill.addEventListener("click", () => {
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
@@ -763,11 +831,18 @@ function renderCardDynamic(
 
 	// Summary pill (LLM feature)
 	if (opts.llmEnabled !== false) {
-		const summaryPill = renderPill(actions, "sparkles", "Summary", states.summary);
+		const summaryWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
+		const summaryPill = renderPill(summaryWrap, "sparkles", "Summary", states.summary);
 		if (states.summary === "incomplete" && onSummarize) {
 			summaryPill.addEventListener("click", () => {
 				onSummarize(notePath);
 			});
+			renderInstructAffordance(
+				summaryWrap, app,
+				"Summarize with custom instructions",
+				"Summarize with instructions", event.subject,
+				(customInstructions) => onSummarize(notePath, false, customInstructions),
+			);
 		} else if (states.summary === "complete") {
 			summaryPill.addEventListener("click", () => {
 				void (async () => {
@@ -779,6 +854,15 @@ function renderCardDynamic(
 					}
 				})();
 			});
+			if (onSummarize) {
+				// Skip the regenerate confirmation — entering instructions makes the intent clear
+				renderInstructAffordance(
+					summaryWrap, app,
+					"Regenerate summary with custom instructions",
+					"Regenerate summary with instructions", event.subject,
+					(customInstructions) => onSummarize(notePath, true, customInstructions),
+				);
+			}
 		}
 	}
 

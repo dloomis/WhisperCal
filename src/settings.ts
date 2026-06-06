@@ -65,6 +65,7 @@ export interface WhisperCalSettings {
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
 	skipWordReplacementConfirm: boolean;
+	mergeArchiveFolderPath: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -116,6 +117,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 	skipWordReplacementConfirm: false,
+	mergeArchiveFolderPath: "WhisperCal Archive",
 };
 
 class LlmConsentModal extends Modal {
@@ -346,6 +348,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			placeholder: "Transcripts",
 			get: () => this.plugin.settings.transcriptFolderPath,
 			set: v => { this.plugin.settings.transcriptFolderPath = v; },
+			suggest: "folder",
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Merge archive folder",
+			desc: "Vault folder where original part notes and transcripts are moved after merging meeting cards. Must be outside the notes and transcripts folders.",
+			placeholder: "WhisperCal Archive",
+			get: () => this.plugin.settings.mergeArchiveFolderPath,
+			set: v => { this.plugin.settings.mergeArchiveFolderPath = v; },
 			suggest: "folder",
 		});
 

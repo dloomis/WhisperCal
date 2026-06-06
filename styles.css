@@ -301,6 +301,9 @@
 .whisper-cal-card-subject {
 	font-size: var(--font-ui-medium);
 	font-weight: var(--font-semibold);
+	/* Match the gutter time's line-height so title, time, and merge
+	   checkbox sit on the same line */
+	line-height: 1.2;
 	color: var(--text-normal);
 	min-width: 0;
 	overflow: hidden;
@@ -958,6 +961,47 @@
 	cursor: pointer;
 }
 
+/* Wrapper positioning context for the hover instruction affordance */
+.whisper-cal-pill-wrap {
+	position: relative;
+	display: inline-flex;
+}
+
+/* Tiny "+" badge on the pill's top-right corner — fades in on hover and
+   opens the custom instructions dialog. Sits inside the pill bounds because
+   the actions row clips overflow for the collapse animation. */
+.whisper-cal-pill-instruct {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 13px;
+	height: 13px;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.15s ease;
+}
+
+.whisper-cal-pill-instruct svg {
+	width: 9px;
+	height: 9px;
+}
+
+.whisper-cal-pill-wrap:hover .whisper-cal-pill-instruct,
+.whisper-cal-pill-instruct:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
 @keyframes whisper-cal-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.4; }
@@ -1085,6 +1129,10 @@
 	border-left: 3px solid var(--text-warning);
 }
 
+.whisper-cal-unlinked-card.whisper-cal-card-note-open {
+	background: var(--background-modifier-hover);
+}
+
 .whisper-cal-unlinked-title {
 	font-size: var(--font-ui-small);
 	font-weight: var(--font-semibold);
@@ -1131,6 +1179,20 @@
 }
 
 .whisper-cal-name-input-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+/* LlmInstructionsModal */
+.whisper-cal-instructions-textarea {
+	width: 100%;
+	resize: vertical;
+	margin-top: 8px;
+}
+
+.whisper-cal-instructions-buttons {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
@@ -1551,4 +1613,112 @@
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
+}
+
+/* Merge meeting cards */
+.whisper-cal-card-gutter-toprow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	gap: 2px;
+}
+
+.whisper-cal-merge-checkbox {
+	flex-shrink: 0;
+	--checkbox-size: 14px;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	cursor: pointer;
+}
+
+/* Beat Obsidian's input[type="checkbox"] margin rules: push to the right
+   edge and pull past the gutter padding to sit close to the divider */
+.whisper-cal-card-gutter-toprow input.whisper-cal-merge-checkbox {
+	margin: 0 -6px 0 auto;
+}
+
+.whisper-cal-card:hover .whisper-cal-merge-checkbox,
+.whisper-cal-merge-checkbox:checked,
+.whisper-cal-merge-active .whisper-cal-merge-checkbox {
+	opacity: 1;
+}
+
+.whisper-cal-merge-checkbox.whisper-cal-merge-checkbox-hidden {
+	display: none;
+}
+
+/* Lives inside the sticky header; spans edge-to-edge and sits flush
+   against the header's bottom border */
+.whisper-cal-merge-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 12px;
+	margin: 4px -12px -4px;
+	background: var(--background-primary);
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.whisper-cal-merge-bar.whisper-cal-hidden {
+	display: none;
+}
+
+.whisper-cal-merge-bar-text {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.whisper-cal-merge-bar-btns {
+	display: flex;
+	gap: 6px;
+	margin-left: auto;
+}
+
+/* MergeConfirmModal */
+.whisper-cal-merge-confirm-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: 0;
+}
+
+.whisper-cal-merge-confirm-list {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	margin-bottom: 12px;
+}
+
+.whisper-cal-merge-confirm-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+}
+
+.whisper-cal-merge-confirm-row + .whisper-cal-merge-confirm-row {
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.whisper-cal-merge-confirm-time {
+	flex-shrink: 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.whisper-cal-merge-confirm-subject {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.whisper-cal-merge-confirm-state {
+	flex-shrink: 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	padding: 1px 6px;
 }

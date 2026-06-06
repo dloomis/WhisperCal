@@ -124,14 +124,14 @@ export default class WhisperCalPlugin extends Plugin {
 			getUserEmail: () => this.upstream.getUserEmail(),
 			jobs: this.jobs,
 			cardUi: this.cardUi,
-			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => {
-				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath);
+			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => {
+				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath, customInstructions);
 			},
-			onSummarize: (notePath: string, force?: boolean) => {
+			onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => {
 				if (force) {
-					void this.regenerateSummary(notePath);
+					void this.regenerateSummary(notePath, customInstructions);
 				} else {
-					void this.doSummarize(notePath);
+					void this.doSummarize(notePath, false, customInstructions);
 				}
 			},
 			onResearch: (notePath: string) => {
@@ -532,6 +532,7 @@ export default class WhisperCalPlugin extends Plugin {
 		transcriptFile: TFile,
 		transcriptFm: Record<string, unknown>,
 		notePath: string,
+		customInstructions?: string,
 	): Promise<void> {
 		const transcriptPath = transcriptFile.path;
 		const state = readFmString(transcriptFm, FM.PIPELINE_STATE);
@@ -609,6 +610,7 @@ export default class WhisperCalPlugin extends Plugin {
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				calendarAttendees,
 				peopleRoster,
+				additionalInstructions: customInstructions,
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
@@ -743,7 +745,7 @@ export default class WhisperCalPlugin extends Plugin {
 	 * state and proceeds without prompting the user to confirm a re-run.
 	 * The plugin then sets pipeline_state back to "summarized" on success.
 	 */
-	private async regenerateSummary(notePath: string): Promise<void> {
+	private async regenerateSummary(notePath: string, customInstructions?: string): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
@@ -758,10 +760,10 @@ export default class WhisperCalPlugin extends Plugin {
 		if (transcriptFile) {
 			await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "tagged");
 		}
-		await this.doSummarize(notePath, true);
+		await this.doSummarize(notePath, true, customInstructions);
 	}
 
-	private async doSummarize(notePath: string, skipPipelineCheck = false): Promise<void> {
+	private async doSummarize(notePath: string, skipPipelineCheck = false, customInstructions?: string): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
@@ -818,6 +820,7 @@ export default class WhisperCalPlugin extends Plugin {
 				llmExtraFlags: this.settings.llmExtraFlags,
 				llmPromptFlags: this.settings.summarizerFlags || undefined,
 				llmModel: this.settings.summarizerModel || undefined,
+				additionalInstructions: customInstructions,
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
 				debugLogging: this.settings.llmDebugLogging,

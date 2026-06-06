@@ -8,6 +8,8 @@ import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/Unl
 import {EventSuggestModal} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
+import {MergeConfirmModal} from "./MergeConfirmModal";
+import {computeSmartMergeName, mergeMeetings, resolveMergeParts} from "../services/MeetingMerger";
 import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
@@ -24,8 +26,8 @@ export interface CalendarViewCallbacks {
 	getUserEmail: () => string;
 	jobs: JobTracker;
 	cardUi: CardUiState;
-	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string) => void;
-	onSummarize: (notePath: string, force?: boolean) => void;
+	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
+	onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch: (notePath: string) => void;
 	getAuthState: () => AuthState;
 	onSignIn: () => Promise<void>;
@@ -58,6 +60,8 @@ export class CalendarView extends ItemView {
 	private unlinkedGeneration = 0;
 	private nowLineTimerId: number | null = null;
 	private cards = new Map<string, {el: HTMLElement; opts: MeetingCardOpts}>();
+	private mergeSelection = new Set<string>();
+	private mergeBarEl: HTMLElement | null = null;
 	private pendingFmPaths = new Set<string>();
 	private refreshGeneration = 0;
 	private peopleMatchService: PeopleMatchService | null = null;
@@ -144,6 +148,10 @@ export class CalendarView extends ItemView {
 		this.authStatusEl = stickyHeader.createDiv({cls: "whisper-cal-auth-inline whisper-cal-hidden"});
 		this.renderAuthInline(this.callbacks.getAuthState());
 
+		// Merge bar — lives in the sticky header so Obsidian's status bar
+		// overlay (backlinks/word count) can never cover it
+		this.mergeBarEl = stickyHeader.createDiv({cls: "whisper-cal-merge-bar whisper-cal-hidden"});
+
 		// Content area
 		this.contentContainer = root.createDiv({cls: "whisper-cal-content"});
 		this.unlinkedEl = root.createDiv({cls: "whisper-cal-unlinked-section"});
@@ -225,6 +233,8 @@ export class CalendarView extends ItemView {
 		this.authStatusEl = null;
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
+		this.mergeBarEl = null;
+		this.mergeSelection.clear();
 		this.cards.clear();
 		this.pendingFmPaths.clear();
 		if (this.cardRefreshTimer !== null) {
@@ -399,6 +409,11 @@ export class CalendarView extends ItemView {
 		this.contentContainer.empty();
 		this.cards.clear();
 
+		// Full re-render invalidates merge selection (cards are rebuilt)
+		this.mergeSelection.clear();
+		this.contentContainer.removeClass("whisper-cal-merge-active");
+		this.updateMergeBar();
+
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 
 		// Unscheduled card — always at the top
@@ -551,6 +566,13 @@ export class CalendarView extends ItemView {
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,
 			onStatusUpdate: () => this.rerenderCardById(event.id),
+			isMergeSelected: () => this.mergeSelection.has(event.id),
+			onToggleMergeSelect: (selected: boolean) => {
+				if (selected) this.mergeSelection.add(event.id);
+				else this.mergeSelection.delete(event.id);
+				this.contentContainer?.toggleClass("whisper-cal-merge-active", this.mergeSelection.size > 0);
+				this.updateMergeBar();
+			},
 		};
 	}
 
@@ -668,12 +690,13 @@ export class CalendarView extends ItemView {
 
 	/** Find card whose note or transcript matches the given path. */
 	private findCardByPath(path: string): HTMLElement | null {
-		if (!this.contentContainer) return null;
 		const escaped = CSS.escape(path);
-		const el = this.contentContainer.querySelector(
-			`[data-note-path="${escaped}"], [data-transcript-path="${escaped}"]`,
-		);
-		return el instanceof HTMLElement ? el : null;
+		const selector = `[data-note-path="${escaped}"], [data-transcript-path="${escaped}"]`;
+		for (const container of [this.contentContainer, this.unlinkedEl]) {
+			const el = container?.querySelector(selector);
+			if (el instanceof HTMLElement) return el;
+		}
+		return null;
 	}
 
 	private updateNoteOpenHighlight(): void {
@@ -740,6 +763,82 @@ export class CalendarView extends ItemView {
 		this.updateNoteOpenHighlight();
 	}
 
+	/** Show the floating merge bar when two or more cards are selected. */
+	private updateMergeBar(): void {
+		if (!this.mergeBarEl) return;
+		const n = this.mergeSelection.size;
+		this.mergeBarEl.empty();
+		this.mergeBarEl.toggleClass("whisper-cal-hidden", n < 2);
+		if (n < 2) return;
+
+		this.mergeBarEl.createSpan({
+			cls: "whisper-cal-merge-bar-text",
+			text: `${n} meetings selected`,
+		});
+		const btns = this.mergeBarEl.createDiv({cls: "whisper-cal-merge-bar-btns"});
+
+		const mergeBtn = btns.createEl("button", {
+			cls: "whisper-cal-btn whisper-cal-btn-small mod-cta",
+			text: "Merge",
+		});
+		mergeBtn.addEventListener("click", () => {
+			mergeBtn.disabled = true;
+			void this.handleMergeSelected().finally(() => {
+				mergeBtn.disabled = false;
+			});
+		});
+
+		const clearBtn = btns.createEl("button", {
+			cls: "whisper-cal-btn whisper-cal-btn-small",
+			text: "Clear",
+		});
+		clearBtn.addEventListener("click", () => this.clearMergeSelection());
+	}
+
+	private clearMergeSelection(): void {
+		this.mergeSelection.clear();
+		if (this.contentContainer) {
+			this.contentContainer.removeClass("whisper-cal-merge-active");
+			// Checkboxes live in the static card zone, so uncheck them directly
+			const checked = this.contentContainer.querySelectorAll<HTMLInputElement>(".whisper-cal-merge-checkbox:checked");
+			for (const cb of Array.from(checked)) cb.checked = false;
+		}
+		this.updateMergeBar();
+	}
+
+	private async handleMergeSelected(): Promise<void> {
+		const notePaths: string[] = [];
+		for (const id of this.mergeSelection) {
+			const path = this.cards.get(id)?.el.dataset.notePath;
+			if (path && !notePaths.includes(path)) notePaths.push(path);
+		}
+
+		const parts = resolveMergeParts(this.app, notePaths);
+		if (parts.length < 2) {
+			new Notice("Select at least two meetings with notes to merge");
+			return;
+		}
+
+		const name = await new MergeConfirmModal(this.app, {
+			parts,
+			defaultName: computeSmartMergeName(parts),
+			timezone: this.settings.timezone,
+		}).prompt();
+		if (!name) return;
+
+		try {
+			const result = await mergeMeetings(this.app, this.settings, parts, name);
+			const mergedName = result.mergedNotePath.split("/").pop()?.replace(/\.md$/, "") ?? name;
+			new Notice(`Merged ${parts.length} meetings into "${mergedName}"`);
+			this.clearMergeSelection();
+			if (this.cachedEvents) this.renderEvents(this.cachedEvents);
+			void this.loadAndRenderUnlinkedSection();
+		} catch (e) {
+			console.error("[WhisperCal] Merge meetings error:", e);
+			new Notice(`Failed to merge meetings: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
 	private async loadAndRenderUnlinkedSection(): Promise<void> {
 		if (!this.unlinkedEl) return;
 		this.unlinkedEl.empty();
@@ -781,10 +880,16 @@ export class CalendarView extends ItemView {
 		for (const recording of unlinked) {
 			this.renderUnlinkedCard(body, recording);
 		}
+
+		// Freshly-built DOM — re-apply the active-note highlight
+		this.applyNoteOpenHighlight();
 	}
 
 	private renderUnlinkedCard(container: HTMLElement, recording: UnlinkedRecording): void {
 		const card = container.createDiv({cls: "whisper-cal-unlinked-card"});
+		if (recording.transcriptPath) {
+			card.dataset.transcriptPath = recording.transcriptPath;
+		}
 
 		const title = recording.title || "Untitled recording";
 		card.createDiv({cls: "whisper-cal-unlinked-title", text: title});

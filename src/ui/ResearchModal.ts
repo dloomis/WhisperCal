@@ -84,6 +84,8 @@ export class ResearchModal extends Modal {
 			cls: "whisper-cal-research-instructions",
 		});
 		this.instructionsEl.rows = 3;
+		// Textarea is the direct prompt; only usable when bypass is enabled.
+		this.updateBypassState();
 
 		// Buttons
 		const btnRow = contentEl.createDiv({cls: "whisper-cal-research-buttons"});
@@ -122,8 +124,11 @@ export class ResearchModal extends Modal {
 		this.instructionsLabel.textContent = bypass ? "Prompt" : "Additional instructions";
 		this.instructionsEl.placeholder = bypass
 			? "Enter your research prompt\u2026"
-			: "Additional instructions (optional)\u2026";
+			: "Enable \u201cUse as direct prompt\u201d above to edit";
 		this.instructionsEl.rows = bypass ? 6 : 3;
+		// The textarea is the direct prompt input; disable it unless bypass is on
+		// so it's clear the prompt only runs when "Use as direct prompt" is checked.
+		this.instructionsEl.disabled = !bypass;
 	}
 
 	private renderResults(): void {

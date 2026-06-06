@@ -5,18 +5,8 @@ import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink} from "../utils/vault";
 import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
+import {parseDurationSeconds} from "../utils/time";
 import {FM} from "../constants";
-
-/** Parse duration from number (seconds) or string ("MM:SS" / "HH:MM:SS"). */
-function parseDuration(raw: unknown): number {
-	if (typeof raw === "number") return raw;
-	if (typeof raw !== "string") return 0;
-	const parts = raw.split(":").map(Number);
-	if (parts.some(isNaN)) return 0;
-	if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
-	if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
-	return 0;
-}
 
 interface ApiTranscriptData {
 	file: TFile;
@@ -161,7 +151,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			recordingStart = new Date(file.stat.ctime);
 		}
 
-		const durationSeconds = parseDuration(fm["duration"]);
+		const durationSeconds = parseDurationSeconds(fm["duration"]);
 
 		let speakerCount = 0;
 		if (typeof fm["speaker_count"] === "number") {
