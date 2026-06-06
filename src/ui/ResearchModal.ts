@@ -74,17 +74,17 @@ export class ResearchModal extends Modal {
 		});
 		this.bypassCheckbox.addEventListener("change", () => this.updateBypassState());
 
-		// Instructions / direct prompt textarea
+		// Direct prompt textarea (only shown when bypass is enabled)
 		this.instructionsLabel = contentEl.createEl("label", {
-			text: "Additional instructions",
+			text: "Prompt",
 			cls: "whisper-cal-research-label",
 		});
 		this.instructionsEl = contentEl.createEl("textarea", {
-			placeholder: "Additional instructions (optional)\u2026",
+			placeholder: "Enter your research prompt\u2026",
 			cls: "whisper-cal-research-instructions",
 		});
-		this.instructionsEl.rows = 3;
-		// Textarea is the direct prompt; only usable when bypass is enabled.
+		this.instructionsEl.rows = 6;
+		// Textarea is the direct prompt; only shown when bypass is enabled.
 		this.updateBypassState();
 
 		// Buttons
@@ -121,14 +121,11 @@ export class ResearchModal extends Modal {
 
 	private updateBypassState(): void {
 		const bypass = this.bypassCheckbox.checked;
-		this.instructionsLabel.textContent = bypass ? "Prompt" : "Additional instructions";
-		this.instructionsEl.placeholder = bypass
-			? "Enter your research prompt\u2026"
-			: "Enable \u201cUse as direct prompt\u201d above to edit";
-		this.instructionsEl.rows = bypass ? 6 : 3;
-		// The textarea is the direct prompt input; disable it unless bypass is on
-		// so it's clear the prompt only runs when "Use as direct prompt" is checked.
-		this.instructionsEl.disabled = !bypass;
+		// The textarea is the direct prompt input; hide it entirely unless
+		// "Use as direct prompt" is checked.
+		this.instructionsLabel.toggleClass("whisper-cal-hidden", !bypass);
+		this.instructionsEl.toggleClass("whisper-cal-hidden", !bypass);
+		if (bypass) this.instructionsEl.focus();
 	}
 
 	private renderResults(): void {
