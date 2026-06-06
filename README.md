@@ -46,6 +46,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Collapsible Cards](#collapsible-cards)
   - [All-Day Events](#all-day-events)
   - [Unscheduled Meetings](#unscheduled-meetings)
+  - [Merging Meetings](#merging-meetings)
   - [Active Event Highlighting](#active-event-highlighting)
   - [Conflict Detection](#conflict-detection)
   - [Gap Markers](#gap-markers)
@@ -103,6 +104,8 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
 - **Speaker tagging** — Run an LLM in the background to identify speakers, review proposals with per-speaker transcript excerpts, and approve names in an in-Obsidian modal.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
+- **Per-run custom instructions** — Hover any Speakers or Summary pill to reveal a **+** button that lets you add one-off instructions for that LLM run (e.g., "focus on action items").
+- **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
 - **Per-prompt model selection** — Choose a different Claude model for each LLM prompt (speaker tagging, summarization, research).
@@ -284,6 +287,25 @@ An "Unscheduled Meeting" card always appears at the top of the calendar view. Us
 
 Unscheduled notes use the current timestamp as their meeting time and get a wider recording-matching window (720 minutes instead of the usual 15).
 
+### Merging Meetings
+
+When one long meeting ends up as several back-to-back recordings (e.g., "Planning part 1", "Planning part 2"), you can merge the parts into a single meeting note and transcript:
+
+1. Hover a meeting card's time gutter — cards with an existing note show a **merge checkbox**.
+2. Check two or more cards. A merge bar appears in the header showing the selection count with **Merge** and **Clear** buttons.
+3. Click **Merge**. A confirmation modal lists the parts in chronological order with each one's pipeline state, and prompts for the merged meeting name. The default name strips trailing "part N" suffixes and picks the most common base title.
+
+**What merging does:**
+
+- Builds one **merged transcript** with a `### Part N` heading per recording (original timestamps and recording embeds preserved), a combined Context section, and the total duration summed across parts.
+- **Renumbers raw "Speaker N" stubs** so they stay unique across parts ("You" and already-tagged names pass through unchanged). Attendees, confirmed speakers, and tags are unioned.
+- Keeps the **calendar-linked part** (or the earliest part) as the merged note, renames it to the merged name, and appends the other parts' note bodies as `## Part — …` sections so per-part summaries aren't lost.
+- Moves the original part transcripts and notes to the **merge archive folder** (default: `WhisperCal Archive`; configurable in settings, must be outside the notes and transcripts folders).
+- Records every source MacWhisper session in `macwhisper_session_ids` and links the archived originals in `merged_from` frontmatter.
+- Sets `pipeline_state: tagged` if every part was already tagged, otherwise `titled` — so you can run Speakers and Summary on the merged transcript as usual.
+
+Parts can be in any pipeline state — calendar-linked, ad hoc, tagged, or raw — and can be mixed freely in one merge.
+
 ### Active Event Highlighting
 
 When viewing today's calendar:
@@ -344,6 +366,8 @@ Cards that have a meeting note but haven't completed the full pipeline (through 
 ### Note-Open Highlighting
 
 When you open a meeting note in any editor tab, the corresponding card in the calendar sidebar is highlighted and scrolled into view. If the note belongs to a different day, the calendar automatically navigates to that day.
+
+The same highlight applies to transcripts: opening a transcript file highlights its meeting card, and opening an unlinked transcript highlights its card in the [Unlinked Recordings](#unlinked-recordings) section.
 
 ### Unlinked Recordings
 
@@ -499,6 +523,8 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `note_created` | Fallback timestamp for unscheduled notes |
 | `is_recurring` | Passed to transcript creation |
 | `macwhisper_session_id` | Links a MacWhisper recording to the note |
+| `macwhisper_session_ids` | All source session IDs on a merged note (see [Merging Meetings](#merging-meetings)) |
+| `merged_from` | Links to the archived original parts on a merged note |
 | `transcript` | Backlink to the transcript file |
 | `pipeline_state` | Workflow state; mirrored from transcript automatically |
 
@@ -648,7 +674,7 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 **Usage:**
 
-1. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command.
+1. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command. Hovering the pill reveals a small **+** button — click it to enter one-off custom instructions for this run (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
 2. The pill shows a spinning indicator while the LLM runs in the background.
 3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
 4. Review the proposed mappings, edit any names, and click **Apply**.
@@ -774,7 +800,7 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command.
+1. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command. Hovering the pill reveals a small **+** button — click it to enter one-off custom instructions for this run (e.g., "focus on the budget discussion"). On an already-summarized meeting, the **+** button regenerates the summary with your instructions, skipping the regenerate confirmation.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
 4. The banner disappears and the Summary pill fills in.
@@ -797,8 +823,7 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
 1. Click the **Research pill** on a meeting card, or run the **"Research meeting"** command.
 2. A modal opens where you can:
    - **Search and select vault notes** to include as context (project plans, policies, prior notes, etc.).
-   - **Add custom instructions** for the LLM.
-   - **Bypass the prompt file** entirely by checking "Use as direct prompt" and writing a custom prompt in the text area.
+   - **Bypass the prompt file** entirely by checking "Use as direct prompt" and writing a custom prompt in the text area. The text area is disabled until the checkbox is enabled — it is the direct prompt input, not supplemental instructions.
 3. Click **Research** to run the LLM in the background.
 4. When complete, the research output is written into the meeting note and `research_notes` is set in frontmatter.
 
@@ -900,6 +925,7 @@ All commands are available from the command palette (`Cmd+P`):
 | **Transcripts folder** | `Transcripts` | Where transcript files are created. |
 | **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}` (YYYY-MM-DD), `{{time}}` (HHmm, 24-hour), `{{subject}}`. Add `{{time}}` to keep two same-subject meetings on the same day in separate notes. |
 | **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
+| **Merge archive folder** | `WhisperCal Archive` | Where original part notes and transcripts are moved after [merging meetings](#merging-meetings). Must be outside the notes and transcripts folders. |
 | **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
 
 ### Recording
