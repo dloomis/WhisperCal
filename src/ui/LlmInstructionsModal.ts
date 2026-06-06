@@ -11,12 +11,14 @@ export class LlmInstructionsModal extends Modal {
 	private submitted = false;
 	private title: string;
 	private subtitle: string;
+	private placeholder: string;
 	private textareaEl!: HTMLTextAreaElement;
 
-	constructor(app: App, opts: {title: string; subtitle?: string}) {
+	constructor(app: App, opts: {title: string; subtitle?: string; placeholder?: string}) {
 		super(app);
 		this.title = opts.title;
 		this.subtitle = opts.subtitle ?? "";
+		this.placeholder = opts.placeholder ?? "Additional instructions for this run…";
 	}
 
 	prompt(): Promise<string | null> {
@@ -33,7 +35,7 @@ export class LlmInstructionsModal extends Modal {
 		renderModalHeader(contentEl, this.title, this.subtitle);
 
 		this.textareaEl = contentEl.createEl("textarea", {
-			placeholder: "Additional instructions for this run…",
+			placeholder: this.placeholder,
 			cls: "whisper-cal-instructions-textarea",
 		});
 		this.textareaEl.rows = 4;

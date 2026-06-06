@@ -70,6 +70,27 @@ export function readFmString(
 	return typeof v === "string" ? v : undefined;
 }
 
+/**
+ * Detect a single-source recording from transcript frontmatter — a voice memo
+ * or a recording where diarization collapsed to at most one speaker. These
+ * often capture more people than the mic suggests (e.g. a phone call held up
+ * to the mic), so speaker tagging benefits from per-run hints.
+ *
+ * Checks, in order:
+ * - Tome's `source_app: Voice Memo`
+ * - MacWhisper's `speaker_count` (number) ≤ 1
+ * - Tome's `attendees` list length ≤ 1
+ */
+export function isSingleSourceTranscript(fm: Record<string, unknown> | undefined): boolean {
+	if (!fm) return false;
+	if (fm["source_app"] === "Voice Memo") return true;
+	const speakerCount = fm["speaker_count"];
+	if (typeof speakerCount === "number") return speakerCount <= 1;
+	const attendees = fm["attendees"];
+	if (Array.isArray(attendees)) return attendees.length <= 1;
+	return false;
+}
+
 export async function removeFrontmatterKeys(
 	app: App,
 	filePath: string,

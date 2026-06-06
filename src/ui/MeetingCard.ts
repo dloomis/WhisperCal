@@ -11,7 +11,7 @@ import {type CardStatusVariant, type CardUiState} from "../services/CardUiState"
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
-import {removeFrontmatterKeys} from "../utils/frontmatter";
+import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
@@ -814,7 +814,27 @@ function renderCardDynamic(
 				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
 				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath, customInstructions);
 			};
-			speakersPill.addEventListener("click", () => runTagSpeakers());
+			speakersPill.addEventListener("click", () => {
+				// Single-source recordings (voice memos, single-speaker diarization)
+				// often capture more people than the mic suggests — auto-open the
+				// instructions modal so the user can hint who's who. Empty Run
+				// proceeds normally; cancel aborts.
+				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
+				const transcriptFm = tf ? app.metadataCache.getFileCache(tf)?.frontmatter : undefined;
+				if (!isSingleSourceTranscript(transcriptFm)) {
+					runTagSpeakers();
+					return;
+				}
+				void (async () => {
+					const instructions = await new LlmInstructionsModal(app, {
+						title: "Tag speakers with instructions",
+						subtitle: "Single-mic recording — if more than one person spoke, say how many and who's who.",
+						placeholder: "e.g. \"Phone call held up to the mic: I am the local speaker, the other voice is Joe Jackson.\"",
+					}).prompt();
+					if (instructions === null) return; // cancelled
+					runTagSpeakers(instructions || undefined);
+				})();
+			});
 			renderInstructAffordance(
 				speakersWrap, app,
 				"Tag speakers with custom instructions",
