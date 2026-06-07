@@ -943,25 +943,6 @@
 	50% { opacity: 0.3; }
 }
 
-/* Accent dot badge on the Speakers pill — cached LLM candidates are ready
-   for review. Persistent cue, so no pulse; fades out on hover so the "+"
-   instruct affordance owns the corner. */
-.whisper-cal-pill-tag-dot {
-	position: absolute;
-	top: 5px;
-	right: 5px;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--interactive-accent);
-	pointer-events: none;
-	transition: opacity 0.15s ease;
-}
-
-.whisper-cal-pill-wrap:hover .whisper-cal-pill-tag-dot {
-	opacity: 0;
-}
-
 /* Recording pill: solid red-tinted background, no pulse — looks clickable (stop) */
 .whisper-cal-pill-recording {
 	animation: none;
@@ -986,10 +967,14 @@
 	display: inline-flex;
 }
 
-/* Tiny "+" badge on the pill's top-right corner — fades in on hover and
-   opens the custom instructions dialog. Sits inside the pill bounds because
-   the actions row clips overflow for the collapse animation. */
-.whisper-cal-pill-instruct {
+/* Corner action badge on a pill's top-right — hosts the LLM actions
+   (summarize on the Note pill, tag speakers on the Transcript pill).
+   Default: hover-revealed. Sits inside the pill bounds because the actions
+   row clips overflow for the collapse animation.
+   .is-ready: always visible as a call-to-action.
+   .is-running: always visible, pulsing, inert.
+   .has-candidates: green — unapproved proposals await review (click = resume review). */
+.whisper-cal-pill-corner-badge {
 	position: absolute;
 	top: 1px;
 	right: 1px;
@@ -1010,59 +995,27 @@
 	transition: opacity 0.15s ease;
 }
 
-.whisper-cal-pill-instruct svg {
+.whisper-cal-pill-corner-badge svg {
 	width: 9px;
 	height: 9px;
 }
 
-.whisper-cal-pill-wrap:hover .whisper-cal-pill-instruct,
-.whisper-cal-pill-instruct:focus-visible {
+.whisper-cal-pill-wrap:hover .whisper-cal-pill-corner-badge,
+.whisper-cal-pill-corner-badge:focus-visible,
+.whisper-cal-pill-corner-badge.is-ready,
+.whisper-cal-pill-corner-badge.is-running {
 	opacity: 1;
 	pointer-events: auto;
 }
 
-/* Summary badge on the Note pill — replaces the old Summary pill.
-   Default (summary complete): hover-revealed like the instruct affordance.
-   .is-ready (tagged, awaiting summary): always visible as a call-to-action.
-   .is-running: always visible, pulsing. */
-.whisper-cal-pill-summary-badge {
-	position: absolute;
-	top: 1px;
-	right: 1px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 13px;
-	height: 13px;
-	padding: 0;
-	border: none;
-	border-radius: 50%;
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
-	cursor: pointer;
-	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 0.15s ease;
-}
-
-.whisper-cal-pill-summary-badge svg {
-	width: 9px;
-	height: 9px;
-}
-
-.whisper-cal-pill-wrap:hover .whisper-cal-pill-summary-badge,
-.whisper-cal-pill-summary-badge:focus-visible,
-.whisper-cal-pill-summary-badge.is-ready,
-.whisper-cal-pill-summary-badge.is-running {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-.whisper-cal-pill-summary-badge.is-running {
+.whisper-cal-pill-corner-badge.is-running {
 	pointer-events: none;
 	cursor: wait;
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-pill-corner-badge.has-candidates {
+	background: var(--color-green);
 }
 
 @keyframes whisper-cal-pulse {

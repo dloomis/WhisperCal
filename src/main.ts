@@ -144,6 +144,12 @@ export default class WhisperCalPlugin extends Plugin {
 			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => {
 				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath, customInstructions);
 			},
+			onRetagSpeakers: (notePath: string, customInstructions?: string) => {
+				void this.regenerateSpeakerTags(notePath, customInstructions);
+			},
+			onReviewSpeakerCandidates: (notePath: string) => {
+				this.reviewSpeakerCandidates(notePath);
+			},
 			onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => {
 				if (force) {
 					void this.regenerateSummary(notePath, customInstructions);
@@ -795,6 +801,50 @@ export default class WhisperCalPlugin extends Plugin {
 				clearProgressStatus();
 			}
 		});
+	}
+
+	/**
+	 * Open the speaker review modal directly from cached proposals (badge
+	 * menu "Review speaker candidates" — no intermediate prompt).
+	 */
+	private reviewSpeakerCandidates(notePath: string): void {
+		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+		if (!transcriptFile) {
+			new Notice("No linked transcript found");
+			return;
+		}
+		const mappings = buildMappingsFromCache(this.app, transcriptFile.path);
+		if (mappings.length === 0) {
+			new Notice("No cached speaker candidates found");
+			return;
+		}
+		void this.presentSpeakerTagModal(mappings, transcriptFile, transcriptFile.path, notePath);
+	}
+
+	/**
+	 * Re-run speaker tagging on an already-tagged transcript. Mirrors
+	 * regenerateSummary: clear stale cached proposals, reset pipeline_state to
+	 * "titled" on transcript and note so doTagSpeakers' state guard passes,
+	 * then run the normal tagging flow. Applying the new tags advances the
+	 * state again (and re-triggers auto-summarize in automatic mode).
+	 */
+	private async regenerateSpeakerTags(notePath: string, customInstructions?: string): Promise<void> {
+		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+		if (!transcriptFile) {
+			new Notice("No linked transcript found");
+			return;
+		}
+		if (this.jobs.has("speakerTag", transcriptFile.path)) {
+			new Notice("Speaker tagging already in progress");
+			return;
+		}
+		await clearSpeakerProposals(this.app, transcriptFile.path);
+		await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "titled");
+		await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "titled");
+		// The metadataCache may not have re-indexed the writes above yet —
+		// override the state in the fm we pass so the guard sees "titled".
+		const transcriptFm = (this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {}) as Record<string, unknown>;
+		await this.doTagSpeakers(transcriptFile, {...transcriptFm, [FM.PIPELINE_STATE]: "titled"}, notePath, customInstructions);
 	}
 
 	/**

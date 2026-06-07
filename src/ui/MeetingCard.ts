@@ -42,6 +42,8 @@ export interface MeetingCardOpts {
 	importantOrganizerEmails?: readonly string[];
 	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
+	onRetagSpeakers?: (notePath: string, customInstructions?: string) => void;
+	onReviewSpeakerCandidates?: (notePath: string) => void;
 	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
@@ -101,36 +103,6 @@ function renderPill(container: HTMLElement, icon: string, label: string, state: 
 		btn.disabled = true;
 	}
 	return btn;
-}
-
-/**
- * Attach a tiny "+" badge to a pill wrapper that fades in on hover.
- * Clicking it opens the custom instructions modal, then runs the action
- * with the entered text (empty text = run normally; cancel = no run).
- */
-function renderInstructAffordance(
-	wrap: HTMLElement,
-	app: App,
-	label: string,
-	modalTitle: string,
-	modalSubtitle: string,
-	run: (customInstructions?: string) => void,
-): void {
-	const btn = wrap.createEl("button", {
-		cls: "whisper-cal-pill-instruct",
-		attr: {"aria-label": label},
-	});
-	setIcon(btn, "plus");
-	btn.addEventListener("click", () => {
-		void (async () => {
-			const instructions = await new LlmInstructionsModal(app, {
-				title: modalTitle,
-				subtitle: modalSubtitle,
-			}).prompt();
-			if (instructions === null) return; // cancelled
-			run(instructions || undefined);
-		})();
-	});
 }
 
 function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string, opts: MeetingCardOpts): {gutter: HTMLElement; timeDiv: HTMLElement | null; iconRow: HTMLElement} {
@@ -572,69 +544,7 @@ function renderCardDynamic(
 	const actionsWrap = zone.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Note pill — notebook-pen (vs generic file-text) keeps it visually
-	// distinct from the Speakers pill's scroll-text transcript icon
-	const noteIcon = states.note === "complete" ? "notebook-pen" : "file-plus-2";
-	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-	const notePill = renderPill(noteWrap, noteIcon, "Note", states.note);
-	notePill.addEventListener("click", () => {
-		notePill.disabled = true;
-		const handleClick = async () => {
-			try {
-				if (noteCreator.noteExists(event)) {
-					await healMissingSessionId(app, noteCreator, event);
-					await noteCreator.openExistingNote(event);
-				} else {
-					const isUnscheduled = event.id.startsWith("unscheduled");
-					let targetEvent = event;
-					if (isUnscheduled) {
-						const name = await new NameInputModal(app, {
-							defaultValue: event.subject,
-						}).prompt();
-						if (!name) return;
-						targetEvent = {...event, subject: name};
-					}
-					await noteCreator.createNote(targetEvent);
-					if (onNoteCreated) onNoteCreated(event.id);
-				}
-			} finally {
-				notePill.disabled = false;
-			}
-		};
-		void handleClick();
-	});
-
-	// Summary corner badge — replaces the old Summary pill (a completed
-	// summary's pill was just a second "open note" button). Ready state is a
-	// visible call-to-action; complete state is hover-revealed for the rare
-	// regenerate. Clicks go through the instructions modal (empty Run = plain
-	// run) so per-run custom instructions keep their entry point.
-	if (opts.llmEnabled !== false && onSummarize && states.summary !== "disabled") {
-		const badge = noteWrap.createEl("button", {cls: "whisper-cal-pill-summary-badge"});
-		setIcon(badge, "sparkles");
-		if (states.summary === "running") {
-			badge.addClass("is-running");
-			badge.setAttribute("aria-label", "Summarizing…");
-			badge.disabled = true;
-		} else {
-			const regen = states.summary === "complete";
-			if (!regen) badge.addClass("is-ready");
-			badge.setAttribute("aria-label", regen ? "Regenerate summary" : "Summarize meeting");
-			badge.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void (async () => {
-					const instructions = await new LlmInstructionsModal(app, {
-						title: regen ? "Regenerate summary with instructions" : "Summarize with instructions",
-						subtitle: event.subject,
-					}).prompt();
-					if (instructions === null) return; // cancelled
-					onSummarize(notePath, regen, instructions || undefined);
-				})();
-			});
-		}
-	}
-
-	// Record pill (REST API recording — right after Note, before Research)
+	// Record pill (REST API recording — first in the row)
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
 	if (recordingApiBaseUrl) {
 		const recordPill = renderPill(actions, "mic", "Record", states.record);
@@ -802,17 +712,18 @@ function renderCardDynamic(
 		}
 	}
 
-	// Transcript pill (MacWhisper — hidden when recording API is enabled)
+	// Link-recording pill (MacWhisper — hidden when recording API is enabled).
+	// Occupies the record slot: it attaches a recording to the note.
 	if (!recordingApiBaseUrl) {
-		const transcriptPill = renderPill(actions, "mic", "Transcript", states.transcript);
+		const linkPill = renderPill(actions, "mic", "Link recording", states.transcript);
 		if (states.transcript !== "disabled") {
-			transcriptPill.addEventListener("click", () => {
+			linkPill.addEventListener("click", () => {
 				if (states.transcript === "complete") {
 					const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 					if (tf) void app.workspace.openLinkText(tf.path, "", false);
 					return;
 				}
-				transcriptPill.disabled = true;
+				linkPill.disabled = true;
 				const handleMic = async () => {
 					let linked = false;
 					try {
@@ -833,7 +744,7 @@ function renderCardDynamic(
 							onStatus: onStatusForCard(notePath, opts),
 						});
 					} finally {
-						if (!linked) transcriptPill.disabled = false;
+						if (!linked) linkPill.disabled = false;
 					}
 				};
 				void handleMic();
@@ -841,61 +752,149 @@ function renderCardDynamic(
 		}
 	}
 
-	// Speakers pill (LLM feature)
-	if (opts.llmEnabled !== false) {
-		const speakersWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-		// Once tags are applied the pill is just a link to the transcript —
-		// swap to a transcript icon so it reads as one.
-		const speakersIcon = states.speakers === "complete" ? "scroll-text" : "users-round";
-		const speakersPill = renderPill(speakersWrap, speakersIcon, "Speakers", states.speakers);
-		if (states.speakers === "complete") {
-			speakersPill.setAttribute("aria-label", "Speakers tagged — open transcript");
-		}
-		if (states.speakersCandidatesReady) {
-			// Cached LLM candidates await review — clicking the pill already
-			// routes to CachedProposalModal, so the dot is purely a cue.
-			speakersPill.createSpan({cls: "whisper-cal-pill-tag-dot"});
-			speakersPill.setAttribute("aria-label", "Speakers (candidates ready for review)");
-		}
-		if (states.speakers === "incomplete" && onTagSpeakers) {
-			const runTagSpeakers = (customInstructions?: string) => {
-				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-				if (!tf) return;
-				const transcriptFm = app.metadataCache.getFileCache(tf)?.frontmatter ?? {};
-				onTagSpeakers(tf, transcriptFm as Record<string, unknown>, notePath, customInstructions);
-			};
-			speakersPill.addEventListener("click", () => {
-				// Single-source recordings (voice memos, single-speaker diarization)
-				// often capture more people than the mic suggests — auto-open the
-				// instructions modal so the user can hint who's who. Empty Run
-				// proceeds normally; cancel aborts.
-				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-				const transcriptFm = tf ? app.metadataCache.getFileCache(tf)?.frontmatter : undefined;
-				if (!isSingleSourceTranscript(transcriptFm)) {
-					runTagSpeakers();
-					return;
+	// Note pill — notebook-pen (vs generic file-text) keeps it visually
+	// distinct from the Transcript pill's scroll-text icon
+	const noteIcon = states.note === "complete" ? "notebook-pen" : "file-plus-2";
+	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
+	const notePill = renderPill(noteWrap, noteIcon, "Note", states.note);
+	notePill.addEventListener("click", () => {
+		notePill.disabled = true;
+		const handleClick = async () => {
+			try {
+				if (noteCreator.noteExists(event)) {
+					await healMissingSessionId(app, noteCreator, event);
+					await noteCreator.openExistingNote(event);
+				} else {
+					const isUnscheduled = event.id.startsWith("unscheduled");
+					let targetEvent = event;
+					if (isUnscheduled) {
+						const name = await new NameInputModal(app, {
+							defaultValue: event.subject,
+						}).prompt();
+						if (!name) return;
+						targetEvent = {...event, subject: name};
+					}
+					await noteCreator.createNote(targetEvent);
+					if (onNoteCreated) onNoteCreated(event.id);
 				}
+			} finally {
+				notePill.disabled = false;
+			}
+		};
+		void handleClick();
+	});
+
+	// Summary corner badge — replaces the old Summary pill (a completed
+	// summary's pill was just a second "open note" button). Ready state is a
+	// visible call-to-action; complete state is hover-revealed for the rare
+	// regenerate. Clicks go through the instructions modal (empty Run = plain
+	// run) so per-run custom instructions keep their entry point.
+	if (opts.llmEnabled !== false && onSummarize && states.summary !== "disabled") {
+		const badge = noteWrap.createEl("button", {cls: "whisper-cal-pill-corner-badge"});
+		// All corner badges use a "+" — the tooltip carries the meaning.
+		setIcon(badge, "plus");
+		if (states.summary === "running") {
+			badge.addClass("is-running");
+			badge.setAttribute("aria-label", "Summarizing…");
+			badge.disabled = true;
+		} else {
+			const regen = states.summary === "complete";
+			if (!regen) badge.addClass("is-ready");
+			badge.setAttribute("aria-label", regen ? "Re-run summarization with optional instructions" : "Summarize meeting");
+			badge.addEventListener("click", (e) => {
+				e.stopPropagation();
 				void (async () => {
 					const instructions = await new LlmInstructionsModal(app, {
-						title: "Tag speakers with instructions",
-						subtitle: "Single-mic recording — if more than one person spoke, say how many and who's who.",
-						placeholder: "e.g. \"Phone call held up to the mic: I am the local speaker, the other voice is Joe Jackson.\"",
+						title: regen ? "Regenerate summary with instructions" : "Summarize with instructions",
+						subtitle: event.subject,
 					}).prompt();
 					if (instructions === null) return; // cancelled
-					runTagSpeakers(instructions || undefined);
+					onSummarize(notePath, regen, instructions || undefined);
 				})();
 			});
-			renderInstructAffordance(
-				speakersWrap, app,
-				"Tag speakers with custom instructions",
-				"Tag speakers with instructions", event.subject,
-				runTagSpeakers,
-			);
-		} else if (states.speakers === "complete") {
-			speakersPill.addEventListener("click", () => {
+		}
+	}
+
+	// Transcript pill — opens the transcript file; disabled until one exists.
+	// Speaker tagging lives in the corner badge (mirroring the Note pill's
+	// summary badge), so the transcript stays reachable while tagging runs.
+	{
+		const transcriptWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
+		const transcriptPillState: PillState = states.speakers === "disabled" ? "disabled"
+			: states.speakers === "complete" ? "complete"
+			: "incomplete";
+		const transcriptPill = renderPill(transcriptWrap, "scroll-text", "Transcript", transcriptPillState);
+		if (transcriptPillState !== "disabled") {
+			transcriptPill.addEventListener("click", () => {
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 				if (tf) void app.workspace.openLinkText(tf.path, "", false);
 			});
+		}
+
+		// Speakers corner badge: visible call-to-action while tagging is
+		// pending (dot overlay when cached candidates await review), pulsing
+		// while running, hover-revealed "+" re-run once tags are applied.
+		if (opts.llmEnabled !== false && states.speakers !== "disabled") {
+			const badge = transcriptWrap.createEl("button", {cls: "whisper-cal-pill-corner-badge"});
+			// All corner badges use a "+" — the tooltip carries the meaning.
+			setIcon(badge, "plus");
+			if (states.speakers === "running") {
+				badge.addClass("is-running");
+				badge.setAttribute("aria-label", "Tagging speakers…");
+				badge.disabled = true;
+			} else if (states.speakers === "complete") {
+				// Re-tag an already-tagged transcript (hover-revealed, like the
+				// summary badge's regenerate)
+				badge.setAttribute("aria-label", "Re-run speaker tagging with optional instructions");
+				badge.addEventListener("click", (e) => {
+					e.stopPropagation();
+					void (async () => {
+						const instructions = await new LlmInstructionsModal(app, {
+							title: "Re-tag speakers with instructions",
+							subtitle: event.subject,
+						}).prompt();
+						if (instructions === null) return; // cancelled
+						opts.onRetagSpeakers?.(notePath, instructions || undefined);
+					})();
+				});
+			} else if (states.speakersCandidatesReady) {
+				// Unapproved candidates cached: green badge, click resumes the
+				// review directly. Re-run becomes available after approval.
+				badge.addClass("is-ready");
+				badge.addClass("has-candidates");
+				badge.setAttribute("aria-label", "Review speaker candidates");
+				badge.addEventListener("click", (e) => {
+					e.stopPropagation();
+					opts.onReviewSpeakerCandidates?.(notePath);
+				});
+			} else if (onTagSpeakers) {
+				badge.addClass("is-ready");
+				badge.setAttribute("aria-label", "Tag speakers");
+				badge.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
+					if (!tf) return;
+					const transcriptFm = (app.metadataCache.getFileCache(tf)?.frontmatter ?? {}) as Record<string, unknown>;
+					// Single-source recordings (voice memos, single-speaker
+					// diarization) often capture more people than the mic
+					// suggests — the instructions modal carries the hint prompt.
+					// Empty Run proceeds normally; cancel aborts.
+					const singleSource = isSingleSourceTranscript(transcriptFm);
+					void (async () => {
+						const instructions = await new LlmInstructionsModal(app, {
+							title: "Tag speakers with instructions",
+							subtitle: singleSource
+								? "Single-mic recording — if more than one person spoke, say how many and who's who."
+								: event.subject,
+							...(singleSource
+								? {placeholder: "e.g. \"Phone call held up to the mic: I am the local speaker, the other voice is Joe Jackson.\""}
+								: {}),
+						}).prompt();
+						if (instructions === null) return; // cancelled
+						onTagSpeakers(tf, transcriptFm, notePath, instructions || undefined);
+					})();
+				});
+			}
 		}
 	}
 

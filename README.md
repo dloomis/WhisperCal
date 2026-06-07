@@ -104,7 +104,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
 - **Speaker tagging** — Run an LLM in the background to identify speakers, review proposals with per-speaker transcript excerpts, and approve names in an in-Obsidian modal.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
-- **Per-run custom instructions** — Hover the Speakers pill to reveal a **+** button, or click the Note pill's sparkles summary badge, to add one-off instructions for that LLM run (e.g., "focus on action items").
+- **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -269,7 +269,7 @@ Each calendar event is displayed as a two-column card:
   - **Subject** — The meeting title.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
   - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
-  - **Workflow pills** — Note (with a sparkles summary badge), Record/Transcript, Speakers, Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)).
+  - **Workflow pills** — in order: Record (or Link recording for MacWhisper), Note (with a **+** summarize badge), Transcript (with a **+** speaker-tagging badge), Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)). Hover a badge for the tooltip naming its action.
 
 Cards can be [collapsed](#collapsible-cards) to hide their action pills. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
@@ -427,27 +427,28 @@ Once the transcript exists, clicking the pill opens it.
 
 ### Stage 3 — Speakers
 
-**Click the "Speakers" pill** to run LLM speaker tagging in the background.
+**Click the + corner badge on the Transcript pill** to run LLM speaker tagging in the background. (The Transcript pill itself opens the transcript file — it's disabled until one exists. Once tags are applied, the badge becomes hover-revealed and re-runs speaker tagging: it resets the pipeline to `titled`, re-tags, and the normal review/apply flow — including auto-summarize in automatic mode — picks up from there.)
 
+- The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or add one-off hints. Single-mic recordings get a tailored prompt asking who's who.
 - The LLM reads your speaker tagging prompt and the transcript, then outputs proposed speaker identities.
 - A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, evidence, and [transcript excerpts](#per-speaker-transcript-excerpts).
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
-The pill shows a spinning indicator while the LLM is running. If you dismiss the confirmation modal without applying, the proposals stay cached and the pill shows a small **accent dot** — click it later to resume the review. Once speakers are tagged, the pill swaps to a **transcript (scroll) icon** and clicking it opens the transcript.
+The badge pulses while the LLM is running (the transcript stays openable in the meantime). If you dismiss the confirmation modal without applying, the proposals stay cached and the badge turns **green** — clicking it resumes the review directly. Once tags are applied, the badge returns to the normal hover-revealed **+** that re-runs speaker tagging with optional instructions.
 
-**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no pill click needed. The run stops after caching the proposals: **tags are never applied without your review**. The Speakers pill shows a small **accent dot** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
+**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no badge click needed. The run stops after caching the proposals: **tags are never applied without your review**. The badge turns **green** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
 
 ### Stage 4 — Summary
 
-**Click the sparkles corner badge on the Note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Note pill's open-note click.)
+**Click the + corner badge on the Note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Note pill's open-note click.)
 
 - The badge appears once speakers are tagged and stays visible as a call-to-action; clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
 - While running, the badge pulses and a "Summarizing…" banner appears at the top of the meeting note editor.
 - The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
 - When finished, the plugin sets `pipeline_state: summarized` and the banner disappears.
 
-Once the summary is complete, the badge becomes hover-revealed on the Note pill and re-runs summarization (regenerate), with the same optional instructions dialog.
+Once the summary is complete, the badge becomes hover-revealed on the Note pill and re-runs summarization (regenerate), with the same optional instructions dialog. All corner badges use the **+** icon — hover tooltips name each action (e.g. "Summarize meeting", "Re-run speaker tagging with optional instructions").
 
 ### Stage 5 — Research
 
@@ -549,7 +550,7 @@ The default source. WhisperCal reads directly from [MacWhisper](https://goodsnoo
 
 A **microphone ribbon icon** is provided to quickly launch MacWhisper.
 
-**How recording matching works:** When you click the Transcript pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
+**How recording matching works:** When you click the Link recording pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
 
 - **Default window:** 15 minutes before or after the meeting start.
 - **Unscheduled meetings:** 720-minute window (12 hours).
@@ -582,7 +583,7 @@ An alternative source that records meetings directly via a REST API. The Record 
 
 ### Re-Recording
 
-If a meeting already has a linked transcript, clicking the Record/Transcript pill shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
+If a meeting already has a linked transcript, clicking the Record (or Link recording) pill shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
 
 ---
 
@@ -677,7 +678,7 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 **Usage:**
 
-1. Click the **Speakers pill** on a meeting card, or run the **"Tag speakers in transcript"** command. Hovering the pill reveals a small **+** button — click it to enter one-off custom instructions for this run (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
+1. Click the **+ badge on the Transcript pill** of a meeting card, or run the **"Tag speakers in transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
 2. The pill shows a spinning indicator while the LLM runs in the background.
 3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
 4. Review the proposed mappings, edit any names, and click **Apply**.
@@ -803,7 +804,7 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Click the **sparkles badge on the Note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
+1. Click the **+ badge on the Note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
 4. The banner disappears and the card gutter shows the completed (accent) highlight.
@@ -876,7 +877,7 @@ If any check fails, an Obsidian notice explains the problem.
 | **Research model** | *(default)* | Claude model to use for meeting research. |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
-| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Speakers pill shows a dot when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
+| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Transcript pill's badge turns green when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
 | **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
 | **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
