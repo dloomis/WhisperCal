@@ -871,12 +871,13 @@
 	height: 26px;
 	padding: 0;
 	border-radius: var(--radius-s);
-	/* Same color and weight as the meeting card border (.whisper-cal-card) */
-	border: 2px solid var(--background-modifier-border);
+	/* Same color as the meeting card border (.whisper-cal-card), one pixel
+	   thinner — 2px read too heavy at pill scale. No drop shadow — its halo
+	   softened the border so it read lighter than the card frame. */
+	border: 1px solid var(--background-modifier-border);
 	background: var(--interactive-normal);
 	color: var(--icon-color);
 	cursor: pointer;
-	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 40%, transparent);
 	box-sizing: border-box;
 	font-size: var(--font-ui-smaller);
 	line-height: 1;

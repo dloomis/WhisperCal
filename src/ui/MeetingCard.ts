@@ -753,7 +753,7 @@ function renderCardDynamic(
 	}
 
 	// Note pill — notebook-pen (vs generic file-text) keeps it visually
-	// distinct from the Transcript pill's scroll-text icon.
+	// distinct from the Transcript pill.
 	// The accent "complete" border means the meeting is fully summarized —
 	// an existing-but-unsummarized note is still in progress, so it keeps
 	// the neutral border.
@@ -830,7 +830,7 @@ function renderCardDynamic(
 		const transcriptPillState: PillState = states.speakers === "disabled" ? "disabled"
 			: states.speakers === "complete" ? "complete"
 			: "incomplete";
-		const transcriptPill = renderPill(transcriptWrap, "scroll-text", "Transcript", transcriptPillState);
+		const transcriptPill = renderPill(transcriptWrap, "users-round", "Transcript", transcriptPillState);
 		// Pulsing accent border while tagging runs (pill stays clickable)
 		if (states.speakers === "running") transcriptPill.addClass("whisper-cal-pill-busy");
 		if (transcriptPillState !== "disabled") {
