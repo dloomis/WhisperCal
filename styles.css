@@ -1021,6 +1021,50 @@
 	pointer-events: auto;
 }
 
+/* Summary badge on the Note pill — replaces the old Summary pill.
+   Default (summary complete): hover-revealed like the instruct affordance.
+   .is-ready (tagged, awaiting summary): always visible as a call-to-action.
+   .is-running: always visible, pulsing. */
+.whisper-cal-pill-summary-badge {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 13px;
+	height: 13px;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.15s ease;
+}
+
+.whisper-cal-pill-summary-badge svg {
+	width: 9px;
+	height: 9px;
+}
+
+.whisper-cal-pill-wrap:hover .whisper-cal-pill-summary-badge,
+.whisper-cal-pill-summary-badge:focus-visible,
+.whisper-cal-pill-summary-badge.is-ready,
+.whisper-cal-pill-summary-badge.is-running {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.whisper-cal-pill-summary-badge.is-running {
+	pointer-events: none;
+	cursor: wait;
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
 @keyframes whisper-cal-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.4; }
@@ -1141,11 +1185,15 @@
 }
 
 .whisper-cal-unlinked-card {
-	background: var(--background-secondary);
-	border-radius: var(--radius-s);
+	/* Match the card style of scheduled meeting cards (.whisper-cal-card):
+	   same background, border, corner radius, spacing, and left-edge width —
+	   only the left-edge color (warning) marks it as unlinked. */
+	background: var(--background-primary-alt);
+	border: 2px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
 	padding: 8px 12px;
-	margin-bottom: 6px;
-	border-left: 3px solid var(--text-warning);
+	margin-bottom: 8px;
+	border-left: 5px solid var(--text-warning);
 }
 
 .whisper-cal-unlinked-card.whisper-cal-card-note-open {

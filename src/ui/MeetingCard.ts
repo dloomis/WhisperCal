@@ -10,7 +10,6 @@ import type {JobTracker} from "../services/JobTracker";
 import {type CardStatusVariant, type CardUiState} from "../services/CardUiState";
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
-import {RegenerateSummaryModal} from "./RegenerateSummaryModal";
 import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
@@ -573,9 +572,11 @@ function renderCardDynamic(
 	const actionsWrap = zone.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Note pill
-	const noteIcon = states.note === "complete" ? "file-text" : "file-plus-2";
-	const notePill = renderPill(actions, noteIcon, "Note", states.note);
+	// Note pill — notebook-pen (vs generic file-text) keeps it visually
+	// distinct from the Speakers pill's scroll-text transcript icon
+	const noteIcon = states.note === "complete" ? "notebook-pen" : "file-plus-2";
+	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
+	const notePill = renderPill(noteWrap, noteIcon, "Note", states.note);
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
@@ -602,6 +603,36 @@ function renderCardDynamic(
 		};
 		void handleClick();
 	});
+
+	// Summary corner badge — replaces the old Summary pill (a completed
+	// summary's pill was just a second "open note" button). Ready state is a
+	// visible call-to-action; complete state is hover-revealed for the rare
+	// regenerate. Clicks go through the instructions modal (empty Run = plain
+	// run) so per-run custom instructions keep their entry point.
+	if (opts.llmEnabled !== false && onSummarize && states.summary !== "disabled") {
+		const badge = noteWrap.createEl("button", {cls: "whisper-cal-pill-summary-badge"});
+		setIcon(badge, "sparkles");
+		if (states.summary === "running") {
+			badge.addClass("is-running");
+			badge.setAttribute("aria-label", "Summarizing…");
+			badge.disabled = true;
+		} else {
+			const regen = states.summary === "complete";
+			if (!regen) badge.addClass("is-ready");
+			badge.setAttribute("aria-label", regen ? "Regenerate summary" : "Summarize meeting");
+			badge.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void (async () => {
+					const instructions = await new LlmInstructionsModal(app, {
+						title: regen ? "Regenerate summary with instructions" : "Summarize with instructions",
+						subtitle: event.subject,
+					}).prompt();
+					if (instructions === null) return; // cancelled
+					onSummarize(notePath, regen, instructions || undefined);
+				})();
+			});
+		}
+	}
 
 	// Record pill (REST API recording — right after Note, before Research)
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
@@ -865,43 +896,6 @@ function renderCardDynamic(
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 				if (tf) void app.workspace.openLinkText(tf.path, "", false);
 			});
-		}
-	}
-
-	// Summary pill (LLM feature)
-	if (opts.llmEnabled !== false) {
-		const summaryWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-		const summaryPill = renderPill(summaryWrap, "sparkles", "Summary", states.summary);
-		if (states.summary === "incomplete" && onSummarize) {
-			summaryPill.addEventListener("click", () => {
-				onSummarize(notePath);
-			});
-			renderInstructAffordance(
-				summaryWrap, app,
-				"Summarize with custom instructions",
-				"Summarize with instructions", event.subject,
-				(customInstructions) => onSummarize(notePath, false, customInstructions),
-			);
-		} else if (states.summary === "complete") {
-			summaryPill.addEventListener("click", () => {
-				void (async () => {
-					const choice = await new RegenerateSummaryModal(app).prompt();
-					if (choice === "open") {
-						void app.workspace.openLinkText(notePath, "", false);
-					} else if (choice === "regenerate" && onSummarize) {
-						onSummarize(notePath, true);
-					}
-				})();
-			});
-			if (onSummarize) {
-				// Skip the regenerate confirmation — entering instructions makes the intent clear
-				renderInstructAffordance(
-					summaryWrap, app,
-					"Regenerate summary with custom instructions",
-					"Regenerate summary with instructions", event.subject,
-					(customInstructions) => onSummarize(notePath, true, customInstructions),
-				);
-			}
 		}
 	}
 

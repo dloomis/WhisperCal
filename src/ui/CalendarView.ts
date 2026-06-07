@@ -907,14 +907,7 @@ export class CalendarView extends ItemView {
 
 		const btns = meta.createSpan({cls: "whisper-cal-unlinked-btns"});
 
-		const linkBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
-		linkBtn.addEventListener("click", () => {
-			linkBtn.disabled = true;
-			void this.handleLinkUnlinked(recording, card).finally(() => {
-				linkBtn.disabled = false;
-			});
-		});
-
+		// View first — reviewing a recording before linking it is the common flow
 		if (recording.transcriptPath) {
 			const viewBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
 			viewBtn.addEventListener("click", (e) => {
@@ -922,6 +915,14 @@ export class CalendarView extends ItemView {
 				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
 			});
 		}
+
+		const linkBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
+		linkBtn.addEventListener("click", () => {
+			linkBtn.disabled = true;
+			void this.handleLinkUnlinked(recording, card).finally(() => {
+				linkBtn.disabled = false;
+			});
+		});
 
 		const deleteBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small whisper-cal-btn-danger", text: "Delete"});
 		deleteBtn.addEventListener("click", (e) => {

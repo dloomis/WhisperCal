@@ -104,7 +104,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
 - **Speaker tagging** — Run an LLM in the background to identify speakers, review proposals with per-speaker transcript excerpts, and approve names in an in-Obsidian modal.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
-- **Per-run custom instructions** — Hover any Speakers or Summary pill to reveal a **+** button that lets you add one-off instructions for that LLM run (e.g., "focus on action items").
+- **Per-run custom instructions** — Hover the Speakers pill to reveal a **+** button, or click the Note pill's sparkles summary badge, to add one-off instructions for that LLM run (e.g., "focus on action items").
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -269,7 +269,7 @@ Each calendar event is displayed as a two-column card:
   - **Subject** — The meeting title.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
   - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
-  - **Workflow pills** — Note, Record/Transcript, Speakers, Summary, Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)).
+  - **Workflow pills** — Note (with a sparkles summary badge), Record/Transcript, Speakers, Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)).
 
 Cards can be [collapsed](#collapsible-cards) to hide their action pills. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
@@ -379,7 +379,7 @@ A collapsible **"Unlinked recordings"** section appears at the bottom of the cal
 - Cross-references against vault notes. Any recording not found linked to a note is shown as unlinked.
 
 **Linking an unlinked recording:**
-1. Click the **Link** button on an unlinked recording card. A **View** button also lets you open the transcript directly.
+1. Use the buttons on an unlinked recording card — **View** (first, since reviewing before linking is the common flow) opens the transcript directly, and **Link** starts the linking flow.
 2. WhisperCal checks the calendar cache for events near the recording's start time (using the same recording match window).
 3. If matching calendar events are found, a picker shows them along with a **"Create unscheduled note"** fallback. Events whose notes already have a recording linked are filtered out.
 4. If no matches are found, an unscheduled note is created directly, dated to the recording's actual start time.
@@ -434,19 +434,20 @@ Once the transcript exists, clicking the pill opens it.
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
-The pill shows a spinning indicator while the LLM is running. Once speakers are tagged, clicking the pill opens the transcript.
+The pill shows a spinning indicator while the LLM is running. If you dismiss the confirmation modal without applying, the proposals stay cached and the pill shows a small **accent dot** — click it later to resume the review. Once speakers are tagged, the pill swaps to a **transcript (scroll) icon** and clicking it opens the transcript.
 
 **Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no pill click needed. The run stops after caching the proposals: **tags are never applied without your review**. The Speakers pill shows a small **accent dot** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
 
 ### Stage 4 — Summary
 
-**Click the "Summary" pill** to run LLM summarization in the background.
+**Click the sparkles corner badge on the Note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Note pill's open-note click.)
 
-- A "Summarizing…" banner appears at the top of the meeting note editor.
+- The badge appears once speakers are tagged and stays visible as a call-to-action; clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
+- While running, the badge pulses and a "Summarizing…" banner appears at the top of the meeting note editor.
 - The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
-- When finished, the LLM sets `pipeline_state: summarized` and the banner disappears.
+- When finished, the plugin sets `pipeline_state: summarized` and the banner disappears.
 
-Once the summary is complete, clicking the pill opens the meeting note.
+Once the summary is complete, the badge becomes hover-revealed on the Note pill and re-runs summarization (regenerate), with the same optional instructions dialog.
 
 ### Stage 5 — Research
 
@@ -802,14 +803,14 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Click the **Summary pill** on a meeting card, or run the **"Summarize meeting transcript"** command. Hovering the pill reveals a small **+** button — click it to enter one-off custom instructions for this run (e.g., "focus on the budget discussion"). On an already-summarized meeting, the **+** button regenerates the summary with your instructions, skipping the regenerate confirmation.
+1. Click the **sparkles badge on the Note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
-4. The banner disappears and the Summary pill fills in.
+4. The banner disappears and the card gutter shows the completed (accent) highlight.
 
 The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
 
-**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no need to click the Summary pill. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
+**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no badge click needed. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
 
 ### Meeting Research
 
