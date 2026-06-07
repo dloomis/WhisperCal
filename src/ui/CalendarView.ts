@@ -20,6 +20,7 @@ import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {resolveRecordingApiBaseUrl} from "../services/RecordingApi";
+import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
@@ -439,19 +440,21 @@ export class CalendarView extends ItemView {
 		this.renderAndStoreCard(this.contentContainer, unscheduledEvent);
 		this.contentContainer.createDiv({cls: "whisper-cal-adhoc-divider"});
 
-		if (events.length === 0) {
+		// Merge notes not backed by a Graph API event into the timeline
+		// (covers "unscheduled", "macwhisper-*", and any other local-only notes).
+		// Merged before the empty check so ad-hoc notes still render on days
+		// with no calendar events (e.g. weekends).
+		const calendarEventIds = new Set(events.map(e => e.id));
+		const localNotes = this.findLocalNotes(calendarEventIds);
+		const merged = [...events, ...localNotes];
+
+		if (merged.length === 0) {
 			this.contentContainer.createDiv({
 				cls: "whisper-cal-empty",
 				text: isToday ? "No meetings today" : "No meetings",
 			});
 			return;
 		}
-
-		// Merge notes not backed by a Graph API event into the timeline
-		// (covers "unscheduled", "macwhisper-*", and any other local-only notes)
-		const calendarEventIds = new Set(events.map(e => e.id));
-		const localNotes = this.findLocalNotes(calendarEventIds);
-		const merged = [...events, ...localNotes];
 
 		const allDay = this.settings.showAllDayEvents ? merged.filter(e => e.isAllDay) : [];
 		const timed = merged.filter(e => !e.isAllDay);
@@ -1063,7 +1066,13 @@ export class CalendarView extends ItemView {
 		if (!(file instanceof TFile)) return "";
 		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		if (!fm) return "";
-		return CalendarView.FM_KEYS.map(k => `${k}=${fm[k] ?? ""}`).join("|");
+		const base = CalendarView.FM_KEYS.map(k => `${k}=${fm[k] ?? ""}`).join("|");
+		// Proposal presence isn't a flat fm key (it lives on the attendees
+		// array) but drives the Speakers-pill candidates dot. Including it
+		// here means the dot renders when the metadataCache catches up with
+		// writeSpeakerProposals — the explicit refresh right after the write
+		// can land before the cache reflects it.
+		return `${base}|proposals=${hasCachedProposals(this.app, path)}`;
 	}
 
 	/** Snapshot frontmatter for all notes relevant to the current card set. */

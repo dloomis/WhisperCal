@@ -813,7 +813,13 @@ function renderCardDynamic(
 	// Speakers pill (LLM feature)
 	if (opts.llmEnabled !== false) {
 		const speakersWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-		const speakersPill = renderPill(speakersWrap, "users-round", "Speakers", states.speakers);
+		// Once tags are applied the pill is just a link to the transcript —
+		// swap to a transcript icon so it reads as one.
+		const speakersIcon = states.speakers === "complete" ? "scroll-text" : "users-round";
+		const speakersPill = renderPill(speakersWrap, speakersIcon, "Speakers", states.speakers);
+		if (states.speakers === "complete") {
+			speakersPill.setAttribute("aria-label", "Speakers tagged — open transcript");
+		}
 		if (states.speakersCandidatesReady) {
 			// Cached LLM candidates await review — clicking the pill already
 			// routes to CachedProposalModal, so the dot is purely a cue.
