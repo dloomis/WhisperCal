@@ -753,10 +753,17 @@ function renderCardDynamic(
 	}
 
 	// Note pill — notebook-pen (vs generic file-text) keeps it visually
-	// distinct from the Transcript pill's scroll-text icon
+	// distinct from the Transcript pill's scroll-text icon.
+	// The accent "complete" border means the meeting is fully summarized —
+	// an existing-but-unsummarized note is still in progress, so it keeps
+	// the neutral border.
 	const noteIcon = states.note === "complete" ? "notebook-pen" : "file-plus-2";
+	const notePillState: PillState =
+		states.note === "complete" && states.summary === "complete" ? "complete" : "incomplete";
 	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-	const notePill = renderPill(noteWrap, noteIcon, "Note", states.note);
+	const notePill = renderPill(noteWrap, noteIcon, "Note", notePillState);
+	// Pulsing accent border while summarization runs (pill stays clickable)
+	if (states.summary === "running") notePill.addClass("whisper-cal-pill-busy");
 	notePill.addEventListener("click", () => {
 		notePill.disabled = true;
 		const handleClick = async () => {
@@ -824,6 +831,8 @@ function renderCardDynamic(
 			: states.speakers === "complete" ? "complete"
 			: "incomplete";
 		const transcriptPill = renderPill(transcriptWrap, "scroll-text", "Transcript", transcriptPillState);
+		// Pulsing accent border while tagging runs (pill stays clickable)
+		if (states.speakers === "running") transcriptPill.addClass("whisper-cal-pill-busy");
 		if (transcriptPillState !== "disabled") {
 			transcriptPill.addEventListener("click", () => {
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);

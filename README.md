@@ -355,6 +355,8 @@ The four pipeline pill buttons show their completion state via border color:
 | **Hover** | Accent-tinted background and border. |
 | **Running** | Pulsing accent background, disabled. |
 
+The Note pill shows its accent border only once the meeting is **summarized** — an existing-but-unsummarized note keeps the neutral border (its notebook icon marks that the note exists; the warning-tinted gutter marks the remaining work). The Transcript pill's accent border means speaker tagging is applied.
+
 ### Non-Accepted Meeting Indicator
 
 Meetings you haven't accepted (tentative, not responded, or declined) show a **dashed category bar** on the time gutter, alternating between the category color and the primary background color, making them visually distinct from accepted meetings.

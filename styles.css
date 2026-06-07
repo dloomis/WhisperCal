@@ -871,7 +871,9 @@
 	height: 26px;
 	padding: 0;
 	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
+	/* border-hover tier: one step darker than --background-modifier-border,
+	   which reads too faint for the default "not done" state */
+	border: 1px solid var(--background-modifier-border-hover);
 	background: var(--interactive-normal);
 	color: var(--icon-color);
 	cursor: pointer;
@@ -959,6 +961,16 @@
 /* Recording pill in running state is clickable (stop) — override wait cursor */
 .whisper-cal-pill-running:not(:disabled) {
 	cursor: pointer;
+}
+
+/* Busy pill: the LLM job for this pill's stage is running — same pulsing
+   accent look as the running state, but the pill stays clickable (e.g.
+   open the transcript while tagging runs). */
+.whisper-cal-pill-busy {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
 /* Wrapper positioning context for the hover instruction affordance */
