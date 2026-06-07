@@ -871,9 +871,8 @@
 	height: 26px;
 	padding: 0;
 	border-radius: var(--radius-s);
-	/* border-hover tier: one step darker than --background-modifier-border,
-	   which reads too faint for the default "not done" state */
-	border: 1px solid var(--background-modifier-border-hover);
+	/* Same color and weight as the meeting card border (.whisper-cal-card) */
+	border: 2px solid var(--background-modifier-border);
 	background: var(--interactive-normal);
 	color: var(--icon-color);
 	cursor: pointer;
