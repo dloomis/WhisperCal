@@ -636,6 +636,40 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
+		// Automatic mode — repurposes the autoSummarizeAfterTagging key (same
+		// key, existing installs keep their value) as the switch for the whole
+		// automatic workflow: background auto-tag + auto-summarize after apply.
+		const autoTagSubSettings = containerEl.createDiv();
+		const autoModeSetting = new Setting(containerEl)
+			.setName("Automatic mode")
+			.setDesc(
+				"Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
+				"tag speakers in the background and cache the candidates (the Transcript pill's badge turns green " +
+				"when they're ready to review — tags are never applied without your confirmation), then " +
+				"start summarization after you apply them. Single-mic recordings are skipped. " +
+				"Off = run each stage manually from the pill badges.",
+			)
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
+				.onChange(async (value) => {
+					this.plugin.settings.autoSummarizeAfterTagging = value;
+					await this.plugin.saveSettings();
+					autoTagSubSettings.toggle(value);
+				}));
+		// Move the toggle above its sub-setting container
+		containerEl.insertBefore(autoModeSetting.settingEl, autoTagSubSettings);
+
+		this.addNumberSetting({
+			container: autoTagSubSettings,
+			name: "Auto-tag catch-up window (hours)",
+			desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
+			placeholder: "48",
+			min: 0,
+			get: () => this.plugin.settings.autoTagLookbackHours,
+			set: v => { this.plugin.settings.autoTagLookbackHours = v; },
+		});
+		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
+
 		// ── CLI & runtime: shared invocation settings that apply to every prompt ──
 		this.addSubHeading(containerEl, "CLI & runtime");
 
@@ -774,40 +808,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"speakerTagModel",
 			"speakerTagFlags",
 		);
-
-		// Automatic mode — repurposes the autoSummarizeAfterTagging key (same
-		// key, existing installs keep their value) as the switch for the whole
-		// automatic workflow: background auto-tag + auto-summarize after apply.
-		const autoTagSubSettings = containerEl.createDiv();
-		const autoModeSetting = new Setting(containerEl)
-			.setName("Automatic mode")
-			.setDesc(
-				"Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
-				"tag speakers in the background and cache the candidates (the Speakers pill shows a dot " +
-				"when they're ready to review — tags are never applied without your confirmation), then " +
-				"start summarization after you apply them. Single-mic recordings are skipped. " +
-				"Off = run each stage manually from the pills.",
-			)
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
-				.onChange(async (value) => {
-					this.plugin.settings.autoSummarizeAfterTagging = value;
-					await this.plugin.saveSettings();
-					autoTagSubSettings.toggle(value);
-				}));
-		// Move the toggle above its sub-setting container
-		containerEl.insertBefore(autoModeSetting.settingEl, autoTagSubSettings);
-
-		this.addNumberSetting({
-			container: autoTagSubSettings,
-			name: "Auto-tag catch-up window (hours)",
-			desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
-			placeholder: "48",
-			min: 0,
-			get: () => this.plugin.settings.autoTagLookbackHours,
-			set: v => { this.plugin.settings.autoTagLookbackHours = v; },
-		});
-		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
 
 		this.addTextSetting({
 			container: containerEl,
