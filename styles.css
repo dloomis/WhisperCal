@@ -943,6 +943,25 @@
 	50% { opacity: 0.3; }
 }
 
+/* Accent dot badge on the Speakers pill — cached LLM candidates are ready
+   for review. Persistent cue, so no pulse; fades out on hover so the "+"
+   instruct affordance owns the corner. */
+.whisper-cal-pill-tag-dot {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	pointer-events: none;
+	transition: opacity 0.15s ease;
+}
+
+.whisper-cal-pill-wrap:hover .whisper-cal-pill-tag-dot {
+	opacity: 0;
+}
+
 /* Recording pill: solid red-tinted background, no pulse — looks clickable (stop) */
 .whisper-cal-pill-recording {
 	animation: none;

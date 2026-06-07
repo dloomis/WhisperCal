@@ -31,6 +31,7 @@ import {getLinkedTranscriptFile} from "./services/ApiRecording";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
+import {AutoSpeakerTagger} from "./services/AutoSpeakerTagger";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
 function formatModelName(modelId: string): string {
@@ -82,13 +83,29 @@ export default class WhisperCalPlugin extends Plugin {
 	private googleTokenCache: TokenCache | null = null;
 	private activeProviderType: CalendarProviderType = "microsoft";
 	private unlinkedProvider!: UnlinkedRecordingProvider;
+	private autoTagger!: AutoSpeakerTagger;
 
 	async onload() {
 		await this.loadSettings();
 
+		// Background auto-tagging of newly linked transcripts (automatic mode).
+		// Constructed before onLayoutReady so the callback can't race a layout
+		// that is already ready.
+		this.autoTagger = new AutoSpeakerTagger({
+			app: this.app,
+			getSettings: () => this.settings,
+			jobs: this.jobs,
+			canStartLlm: () => this.activeLlmCount < this.settings.llmMaxConcurrent,
+			runAutoTag: (file, fm, notePath) => {
+				void this.doTagSpeakers(file, fm, notePath, undefined, {auto: true});
+			},
+			registerEvent: (ref) => this.registerEvent(ref),
+		});
+
 		// Defer prompt installation until the vault layout is ready
 		this.app.workspace.onLayoutReady(() => {
 			void installBundledPrompts(this.app);
+			this.autoTagger.start();
 		});
 
 		this.activeProviderType = this.settings.calendarProvider;
@@ -306,6 +323,9 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		// Stop the auto-tag queue first so parked sleeps resolve and no new
+		// LLM jobs start during teardown.
+		this.autoTagger.stop();
 		this.auth.cancelSignIn();
 		// Stop UI timers and clear job/card state up front so handlers that fire
 		// during teardown don't see stale entries.
@@ -533,10 +553,17 @@ export default class WhisperCalPlugin extends Plugin {
 		transcriptFm: Record<string, unknown>,
 		notePath: string,
 		customInstructions?: string,
+		opts?: {auto?: boolean},
 	): Promise<void> {
+		// Auto mode (background run from AutoSpeakerTagger): no modals, no
+		// Notices at the guards — caching proposals is the end of the run.
+		// NOTE: this path must stay synchronous up to runLlmJob so the LLM
+		// slot pre-checked by the auto queue can't be raced away.
+		const auto = opts?.auto ?? false;
 		const transcriptPath = transcriptFile.path;
 		const state = readFmString(transcriptFm, FM.PIPELINE_STATE);
 		if (state && state !== "titled") {
+			if (auto) return;
 			new Notice("Speakers already tagged for this transcript");
 			// Heal: ensure the meeting note also reflects at least "tagged"
 			void updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
@@ -545,6 +572,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Check for cached LLM proposals from a previous run (e.g. modal was dismissed)
 		if (hasCachedProposals(this.app, transcriptPath)) {
+			if (auto) return;
 			const choice = await new CachedProposalModal(this.app).prompt();
 			if (choice === "view") {
 				const mappings = buildMappingsFromCache(this.app, transcriptPath);
@@ -559,6 +587,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		if (!this.settings.speakerTaggingPromptPath) {
+			if (auto) return;
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
 			return;
@@ -616,17 +645,30 @@ export default class WhisperCalPlugin extends Plugin {
 				debugMode: this.settings.llmDebugMode,
 				debugLogging: this.settings.llmDebugLogging,
 			}),
-			onSuccess: (result) => void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath),
+			onSuccess: (result) => {
+				// runLlmJob calls onSuccess even on nonzero exit (after logging the
+				// error to the note) — in auto mode surface a card status instead
+				// of parsing stdout that's likely empty.
+				if (auto && result.exitCode !== 0) {
+					this.setCardStatus(notePath, "Speaker tagging failed — see meeting note for details", "alert-circle", 8000, "warning");
+					return;
+				}
+				void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto);
+			},
 		});
 	}
 
-	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string): Promise<void> {
+	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string, auto = false): Promise<void> {
 		// Clear the "Tagging speakers…" progress status now that the LLM is done.
 		// Success/error paths below will set their own status as needed.
 		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
+			if (auto) {
+				this.setCardStatus(notePath, "Transcript was deleted while speaker tagging was running", "alert-circle", 8000, "warning");
+				return;
+			}
 			new Notice("Transcript was deleted while speaker tagging was running");
 			clearProgressStatus();
 			return;
@@ -637,16 +679,32 @@ export default class WhisperCalPlugin extends Plugin {
 			console.warn("[WhisperCal]", warning);
 		}
 		if (mappings.length === 0) {
+			if (auto) {
+				this.setCardStatus(notePath, warning || "LLM returned no speaker mappings — check the prompt and transcript", "alert-circle", 8000, "warning");
+				return;
+			}
 			new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
 			clearProgressStatus();
 			return;
 		}
-		if (warning) {
+		if (warning && !auto) {
 			new Notice(warning);
 		}
 
 		// Cache proposals in transcript frontmatter so they survive modal dismissal
 		await writeSpeakerProposals(this.app, transcriptPath, mappings);
+		// Proposals don't change any FM_KEYS the calendar listener dedupes on,
+		// so refresh explicitly to surface the candidates-ready dot (this also
+		// fixes the dot after a manual run's modal is dismissed).
+		this.refreshCalendarCards(transcriptPath);
+
+		if (auto) {
+			// Automatic mode stops here: candidates are cached, never applied.
+			// The user reviews via the Speakers pill, which is also what gates
+			// auto-summarize (inside presentSpeakerTagModal, after apply).
+			this.setCardStatus(notePath, "Speaker candidates ready — click Speakers to review", "users-round", 8000, "done");
+			return;
+		}
 
 		await this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
 	}

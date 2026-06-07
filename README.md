@@ -436,6 +436,8 @@ Once the transcript exists, clicking the pill opens it.
 
 The pill shows a spinning indicator while the LLM is running. Once speakers are tagged, clicking the pill opens the transcript.
 
+**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no pill click needed. The run stops after caching the proposals: **tags are never applied without your review**. The Speakers pill shows a small **accent dot** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
+
 ### Stage 4 — Summary
 
 **Click the "Summary" pill** to run LLM summarization in the background.
@@ -807,7 +809,7 @@ Shine Mountain,Cheyenne Mountain
 
 The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
 
-**Auto-summarize:** If **"Auto-summarize after tagging"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no need to click the Summary pill. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
+**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no need to click the Summary pill. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
 
 ### Meeting Research
 
@@ -873,7 +875,8 @@ If any check fails, an Obsidian notice explains the problem.
 | **Research model** | *(default)* | Claude model to use for meeting research. |
 | **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
-| **Auto-summarize after tagging** | Off | Automatically start summarization after speaker tagging completes. Requires a summarizer prompt to be configured. |
+| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Speakers pill shows a dot when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
+| **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
 | **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
 ---
@@ -955,7 +958,8 @@ All commands are available from the command palette (`Cmd+P`):
 | **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 | **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts after speaker tagging (one per line: `search,replace`). Click **Open** to create and edit. |
-| **Auto-summarize after tagging** | Off | Automatically start summarization when speaker tagging completes. |
+| **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review, never auto-applied) and auto-summarize after tags are applied. |
+| **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
 | **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
 
 ### Calendar

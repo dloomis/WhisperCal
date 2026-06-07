@@ -15,6 +15,7 @@ import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmat
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
+import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 function personnelTypeIcon(type: string): string | null {
 	switch (type.toLowerCase()) {
@@ -60,6 +61,8 @@ interface PillStates {
 	record: PillState;
 	speakers: PillState;
 	summary: PillState;
+	/** Cached LLM speaker proposals are waiting for review (accent dot on the pill). */
+	speakersCandidatesReady: boolean;
 	transcriptFile: TFile | null;
 	transcriptPath: string;
 	pipelineState: string | undefined;
@@ -303,13 +306,17 @@ function computePillStates(
 		: jobs.has("speakerTag", transcriptPath) ? "running"
 		: "incomplete";
 
+	const speakersCandidatesReady = speakers === "incomplete"
+		&& transcriptPath !== ""
+		&& hasCachedProposals(app, transcriptPath);
+
 	const summary: PillState = speakers !== "complete"
 		? "disabled"
 		: pipelineState === "summarized" ? "complete"
 		: jobs.has("summarize", notePath) ? "running"
 		: "incomplete";
 
-	return {note, research, transcript, record, speakers, summary, transcriptFile, transcriptPath, pipelineState};
+	return {note, research, transcript, record, speakers, summary, speakersCandidatesReady, transcriptFile, transcriptPath, pipelineState};
 }
 
 /**
@@ -807,6 +814,12 @@ function renderCardDynamic(
 	if (opts.llmEnabled !== false) {
 		const speakersWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
 		const speakersPill = renderPill(speakersWrap, "users-round", "Speakers", states.speakers);
+		if (states.speakersCandidatesReady) {
+			// Cached LLM candidates await review — clicking the pill already
+			// routes to CachedProposalModal, so the dot is purely a cue.
+			speakersPill.createSpan({cls: "whisper-cal-pill-tag-dot"});
+			speakersPill.setAttribute("aria-label", "Speakers (candidates ready for review)");
+		}
 		if (states.speakers === "incomplete" && onTagSpeakers) {
 			const runTagSpeakers = (customInstructions?: string) => {
 				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);

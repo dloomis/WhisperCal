@@ -53,7 +53,15 @@ export interface WhisperCalSettings {
 	llmMaxConcurrent: number;
 	llmDebugMode: boolean;
 	llmDebugLogging: boolean;
+	/**
+	 * "Automatic mode" switch. Despite the name (kept so existing installs keep
+	 * their value), this now gates the whole automatic workflow: background
+	 * auto-tagging of newly linked transcripts (AutoSpeakerTagger) AND
+	 * auto-summarize after the user applies tags — not just summarization.
+	 */
 	autoSummarizeAfterTagging: boolean;
+	/** Startup catch-up scan window for auto-tagging, in hours. 0 disables the scan. */
+	autoTagLookbackHours: number;
 	showAllDayEvents: boolean;
 	importantOrganizers: ImportantOrganizer[];
 	cacheFutureDays: number;
@@ -106,6 +114,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmDebugMode: false,
 	llmDebugLogging: false,
 	autoSummarizeAfterTagging: false,
+	autoTagLookbackHours: 48,
 	showAllDayEvents: false,
 	importantOrganizers: [],
 	cacheFutureDays: 5,
@@ -766,6 +775,40 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"speakerTagFlags",
 		);
 
+		// Automatic mode — repurposes the autoSummarizeAfterTagging key (same
+		// key, existing installs keep their value) as the switch for the whole
+		// automatic workflow: background auto-tag + auto-summarize after apply.
+		const autoTagSubSettings = containerEl.createDiv();
+		const autoModeSetting = new Setting(containerEl)
+			.setName("Automatic mode")
+			.setDesc(
+				"Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
+				"tag speakers in the background and cache the candidates (the Speakers pill shows a dot " +
+				"when they're ready to review — tags are never applied without your confirmation), then " +
+				"start summarization after you apply them. Single-mic recordings are skipped. " +
+				"Off = run each stage manually from the pills.",
+			)
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
+				.onChange(async (value) => {
+					this.plugin.settings.autoSummarizeAfterTagging = value;
+					await this.plugin.saveSettings();
+					autoTagSubSettings.toggle(value);
+				}));
+		// Move the toggle above its sub-setting container
+		containerEl.insertBefore(autoModeSetting.settingEl, autoTagSubSettings);
+
+		this.addNumberSetting({
+			container: autoTagSubSettings,
+			name: "Auto-tag catch-up window (hours)",
+			desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
+			placeholder: "48",
+			min: 0,
+			get: () => this.plugin.settings.autoTagLookbackHours,
+			set: v => { this.plugin.settings.autoTagLookbackHours = v; },
+		});
+		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
+
 		this.addTextSetting({
 			container: containerEl,
 			name: "Microphone user",
@@ -801,14 +844,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"summarizerModel",
 			"summarizerFlags",
 		);
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Auto-summarize after tagging",
-			desc: "Automatically start summarization after speaker tagging completes",
-			get: () => this.plugin.settings.autoSummarizeAfterTagging,
-			set: v => { this.plugin.settings.autoSummarizeAfterTagging = v; },
-		});
 
 		addPromptSetting(
 			"Research",
