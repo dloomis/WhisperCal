@@ -431,7 +431,7 @@ export function renderMeetingCard(
 	if (event.id === "unscheduled") {
 		const actionsWrap = content.createDiv({cls: "whisper-cal-card-actions-wrap"});
 		const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
-		const notePill = renderPill(actions, "file-plus-2", "Note", "incomplete");
+		const notePill = renderPill(actions, "file-plus-2", "Meeting summary", "incomplete");
 		notePill.addEventListener("click", () => {
 			notePill.disabled = true;
 			const handleClick = async () => {
@@ -761,7 +761,7 @@ function renderCardDynamic(
 	const notePillState: PillState =
 		states.note === "complete" && states.summary === "complete" ? "complete" : "incomplete";
 	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-	const notePill = renderPill(noteWrap, noteIcon, "Note", notePillState);
+	const notePill = renderPill(noteWrap, noteIcon, "Meeting summary", notePillState);
 	// Pulsing accent border while summarization runs (pill stays clickable)
 	if (states.summary === "running") notePill.addClass("whisper-cal-pill-busy");
 	notePill.addEventListener("click", () => {
