@@ -1181,4 +1181,13 @@ You can also backfill one at a time using the **Link** button in the unlinked re
 
 ## License
 
-[0-BSD](LICENSE)
+WhisperCal is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+
+You are free to use, copy, modify, and share WhisperCal for any
+**noncommercial** purpose — personal use, hobby projects, research, and
+use by nonprofits, educational institutions, and government bodies.
+**Commercial use is not permitted** without a separate license from the
+author.
+
+If you'd like to use WhisperCal commercially, contact
+[@dloomis](https://github.com/dloomis).

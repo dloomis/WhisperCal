@@ -22,7 +22,7 @@
 		"speaker-tagging",
 		"llm"
 	],
-	"license": "0-BSD",
+	"license": "PolyForm-Noncommercial-1.0.0",
 	"devDependencies": {
 		"@types/node": "^18.0.0",
 		"esbuild": "0.25.5",
