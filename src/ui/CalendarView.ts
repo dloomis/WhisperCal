@@ -11,7 +11,7 @@ import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {MergeConfirmModal} from "./MergeConfirmModal";
 import {computeSmartMergeName, mergeMeetings, resolveMergeParts} from "../services/MeetingMerger";
 import {NoteCreator} from "./NoteCreator";
-import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import {renderAllDayCard, renderMeetingCard, setCardCollapsed, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
 import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -19,7 +19,7 @@ import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
-import {resolveRecordingApiBaseUrl} from "../services/RecordingApi";
+import {resolveRecordingApiBaseUrl, recordingStatus} from "../services/RecordingApi";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 export interface CalendarViewCallbacks {
@@ -275,6 +275,11 @@ export class CalendarView extends ItemView {
 		// Track generation so concurrent refreshes don't interleave
 		const gen = ++this.refreshGeneration;
 
+		// Release any stale recording lock before rendering so a leaked in-memory
+		// entry doesn't keep every other card's record pill disabled.
+		await this.reconcileRecordingLock();
+		if (gen !== this.refreshGeneration) return;
+
 		this.renderLoading();
 
 		try {
@@ -322,6 +327,53 @@ export class CalendarView extends ItemView {
 		void this.loadAndRenderUnlinkedSection();
 	}
 
+	/**
+	 * Self-heal a leaked recording lock. WhisperCal tracks active captures in an
+	 * in-memory map (`cardUi.recordings`); a non-empty map disables the record
+	 * pill on every *other* card so two captures can't fight over the one mic.
+	 * The watch loop normally deletes an entry the instant Tome leaves the
+	 * "recording" state, but if that loop dies (or never cleaned up) the entry
+	 * leaks and locks all other cards until the plugin reloads.
+	 *
+	 * Tome's `/status` is authoritative for "is a capture active". When it reports
+	 * anything other than "recording" but we still hold entries, those entries are
+	 * stale — prune them. A short startup grace skips just-started recordings whose
+	 * capture hasn't flipped Tome to "recording" yet.
+	 */
+	private async reconcileRecordingLock(): Promise<void> {
+		if (this.settings.recordingSource !== "api") return;
+		const cardUi = this.callbacks.cardUi;
+		if (cardUi.recordingCount === 0) return;
+
+		const baseUrl = resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl);
+		if (!baseUrl) return;
+
+		let state: string;
+		try {
+			({state} = await recordingStatus(baseUrl));
+		} catch {
+			return; // Tome unreachable — leave entries; the watch loop owns that case
+		}
+		if (state === "recording") return; // genuine active capture — lock is valid
+
+		const STARTUP_GRACE_MS = 10000;
+		const now = Date.now();
+		const stale: string[] = [];
+		cardUi.forEachRecording((_info, notePath) => {
+			const startedAt = cardUi.getStartTime(notePath);
+			if (startedAt === undefined || now - startedAt > STARTUP_GRACE_MS) {
+				stale.push(notePath);
+			}
+		});
+		for (const notePath of stale) {
+			cardUi.stopDurationTimer(notePath);
+			cardUi.deleteStartTime(notePath);
+			cardUi.deleteStatus(notePath);
+			cardUi.deleteRecording(notePath);
+			console.warn(`[WhisperCal] Reconciled stale recording lock for ${notePath} (Tome state=${state})`);
+		}
+	}
+
 	updateSettings(settings: WhisperCalSettings, provider: CalendarProvider): void {
 		this.settings = settings;
 		this.provider = provider;
@@ -341,6 +393,16 @@ export class CalendarView extends ItemView {
 
 	rerenderCard(notePath: string): void {
 		this.rerenderCardByPath(notePath);
+	}
+
+	/** Collapse the card backing a note path (e.g. once its summary completes). */
+	collapseCard(notePath: string): void {
+		for (const [eventId, {el}] of this.cards) {
+			if (el.dataset.notePath === notePath) {
+				setCardCollapsed(el, eventId, this.callbacks.cardUi, true);
+				return;
+			}
+		}
 	}
 
 	private renderLoading(): void {

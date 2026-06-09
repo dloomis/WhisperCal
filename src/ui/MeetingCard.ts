@@ -53,6 +53,19 @@ export interface MeetingCardOpts {
 	onToggleMergeSelect?: (selected: boolean) => void;
 }
 
+/**
+ * Apply expand/collapse state to a meeting card: updates the DOM class and
+ * toggle aria-label, and persists the choice in cardUi. Shared by the carat
+ * click handler and the auto-collapse-on-summary trigger.
+ */
+export function setCardCollapsed(card: HTMLElement, eventId: string, cardUi: CardUiState, collapsed: boolean): void {
+	card.toggleClass("whisper-cal-card-collapsed", collapsed);
+	const toggle = card.querySelector<HTMLElement>(".whisper-cal-card-toggle");
+	if (toggle) toggle.ariaLabel = collapsed ? "Expand actions" : "Collapse actions";
+	if (collapsed) cardUi.collapse(eventId);
+	else cardUi.expand(eventId);
+}
+
 type PillState = "incomplete" | "complete" | "disabled" | "running";
 
 interface PillStates {
@@ -250,9 +263,9 @@ function computePillStates(
 		: {};
 
 	const note: PillState = noteExists ? "complete" : "incomplete";
-	const research: PillState = !noteExists
-		? "disabled"
-		: jobs.has("research", notePath) ? "running"
+	// Research stays enabled even without a parent note — clicking it
+	// auto-creates the note first (via NoteCreator.ensureNote).
+	const research: PillState = jobs.has("research", notePath) ? "running"
 		: noteFm["research_notes"] ? "complete"
 		: "incomplete";
 	const transcript: PillState = !noteExists
@@ -418,13 +431,8 @@ export function renderMeetingCard(
 	setIcon(toggle, "chevron-right");
 	toggle.addEventListener("click", (e) => {
 		e.stopPropagation();
-		const nowCollapsed = card.classList.toggle("whisper-cal-card-collapsed");
-		toggle.ariaLabel = nowCollapsed ? "Expand actions" : "Collapse actions";
-		if (nowCollapsed) {
-			opts.cardUi.collapse(opts.event.id);
-		} else {
-			opts.cardUi.expand(opts.event.id);
-		}
+		const willCollapse = !card.hasClass("whisper-cal-card-collapsed");
+		setCardCollapsed(card, opts.event.id, opts.cardUi, willCollapse);
 	});
 
 	// Top-level unscheduled placeholder — just a Note pill, no state lookup
@@ -548,6 +556,7 @@ function renderCardDynamic(
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
 	if (recordingApiBaseUrl) {
 		const recordPill = renderPill(actions, "mic", "Record", states.record);
+		recordPill.addClass("whisper-cal-pill-mic");
 
 		const addRecDot = () => {
 			if (!recordPill.querySelector(".whisper-cal-pill-rec-dot")) {
@@ -606,9 +615,7 @@ function renderCardDynamic(
 							FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 						]);
 						// Ensure note exists then start recording
-						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
-							await noteCreator.createNote(event);
-						}
+						await noteCreator.ensureNote(event);
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 						reRecording = true;
 						setRecording();
@@ -689,9 +696,7 @@ function renderCardDynamic(
 								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 							]);
 						}
-						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
-							await noteCreator.createNote(event);
-						}
+						await noteCreator.ensureNote(event);
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 						recording = true;
 						recordPill.disabled = false;
@@ -716,6 +721,7 @@ function renderCardDynamic(
 	// Occupies the record slot: it attaches a recording to the note.
 	if (!recordingApiBaseUrl) {
 		const linkPill = renderPill(actions, "mic", "Link recording", states.transcript);
+		linkPill.addClass("whisper-cal-pill-mic");
 		if (states.transcript !== "disabled") {
 			linkPill.addEventListener("click", () => {
 				if (states.transcript === "complete") {
@@ -727,9 +733,7 @@ function renderCardDynamic(
 				const handleMic = async () => {
 					let linked = false;
 					try {
-						if (!(app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
-							await noteCreator.createNote(event);
-						}
+						await noteCreator.ensureNote(event);
 						const isUnscheduled = event.id.startsWith("unscheduled");
 						linked = await linkRecording({
 							app,
@@ -751,6 +755,10 @@ function renderCardDynamic(
 			});
 		}
 	}
+
+	// Spacer + delimiter separating the recording pill from the rest of the
+	// row, so the mic is harder to hit by accident.
+	actions.createDiv({cls: "whisper-cal-pill-divider"});
 
 	// Note pill — notebook-pen (vs generic file-text) keeps it visually
 	// distinct from the Transcript pill.
@@ -912,7 +920,18 @@ function renderCardDynamic(
 		const researchPill = renderPill(actions, "book-open", "Research", states.research);
 		if (states.research === "incomplete" && onResearch) {
 			researchPill.addEventListener("click", () => {
-				onResearch(notePath);
+				researchPill.disabled = true;
+				void (async () => {
+					try {
+						// Auto-create the parent note if it's missing, then research.
+						const hadNote = noteFile !== null;
+						const path = await noteCreator.ensureNote(event);
+						if (!hadNote && onNoteCreated) onNoteCreated(event.id);
+						onResearch(path);
+					} finally {
+						researchPill.disabled = false;
+					}
+				})();
 			});
 		} else if (states.research === "complete") {
 			researchPill.addEventListener("click", () => {

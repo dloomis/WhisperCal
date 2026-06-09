@@ -117,7 +117,7 @@ export class NoteCreator {
 		}
 	}
 
-	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean; filenameOverride?: string}): Promise<void> {
+	async createNote(event: CalendarEvent, opts?: {preserveTimestamps?: boolean; filenameOverride?: string}): Promise<TFile | null> {
 		const noteCreated = new Date();
 
 		// For unscheduled events, stamp the actual creation time so
@@ -136,18 +136,33 @@ export class NoteCreator {
 		if (existing instanceof TFile) {
 			const leaf = this.getLeafForFile(existing);
 			await leaf.openFile(existing);
-			return;
+			return existing;
 		}
 
 		// Ensure folder exists
 		await ensureFolder(this.app, this.settings.noteFolderPath);
 
 		const content = await this.buildNoteContent(effectiveEvent, noteCreated);
-		if (!content) return;
+		if (!content) return null;
 		const file = await this.app.vault.create(path, content);
 		const leaf = this.app.workspace.getLeaf("tab");
 		await leaf.openFile(file);
 		this.setCursorToNotesSection(leaf, content);
+		return file;
+	}
+
+	/**
+	 * Ensure the meeting note exists, creating it from template if missing, and
+	 * return its path. Shared by every trigger that needs the parent note to be
+	 * present before acting on it (record, link recording, research). Unlike
+	 * createNote(), an already-existing note is left untouched and not re-opened,
+	 * so these background triggers don't steal editor focus.
+	 */
+	async ensureNote(event: CalendarEvent): Promise<string> {
+		const existing = this.findNote(event);
+		if (existing) return existing.path;
+		const created = await this.createNote(event);
+		return created?.path ?? this.getNotePath(event);
 	}
 
 	/** Reuse an existing leaf showing this file, or open a new tab. */

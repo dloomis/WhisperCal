@@ -919,6 +919,16 @@
 	box-shadow: 0 0 0 1px var(--interactive-accent), 0 2px 4px color-mix(in srgb, var(--interactive-accent) 25%, transparent);
 }
 
+/* Mic (record) pill hovers red — a destructive/attention accent that makes an
+   accidental mouse-over visually obvious before a click lands. Double-class +
+   placement after the .pill-complete rules so it wins for every record state. */
+.whisper-cal-pill.whisper-cal-pill-mic:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--text-error) 15%, var(--interactive-normal));
+	color: var(--text-error);
+	border-color: var(--text-error);
+	box-shadow: 0 2px 4px color-mix(in srgb, var(--text-error) 25%, transparent);
+}
+
 .whisper-cal-pill-running {
 	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
 	border-color: var(--interactive-accent);
@@ -977,6 +987,17 @@
 .whisper-cal-pill-wrap {
 	position: relative;
 	display: inline-flex;
+}
+
+/* Vertical delimiter between the recording (mic) pill and the rest of the
+   row — extra horizontal margin (on top of the row's 4px gap) widens the
+   gap so the mic is harder to hit by accident. */
+.whisper-cal-pill-divider {
+	align-self: center;
+	width: 1px;
+	height: 16px;
+	margin: 0 4px;
+	background: var(--background-modifier-border);
 }
 
 /* Corner action badge on a pill's top-right — hosts the LLM actions

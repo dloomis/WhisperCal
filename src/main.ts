@@ -946,6 +946,9 @@ export default class WhisperCalPlugin extends Plugin {
 							await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "summarized");
 						}
 						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done");
+						// Meeting is fully processed — collapse the card to hide its
+						// action buttons, mirroring a manual carat collapse.
+						this.collapseCalendarCard(notePath);
 					}
 				} else {
 					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -1202,6 +1205,16 @@ export default class WhisperCalPlugin extends Plugin {
 				} else {
 					view.rerenderCards();
 				}
+			}
+		}
+	}
+
+	/** Collapse a meeting's calendar card across all open calendar leaves. */
+	private collapseCalendarCard(notePath: string): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+			const view = leaf.view;
+			if (view instanceof CalendarView) {
+				view.collapseCard(notePath);
 			}
 		}
 	}
