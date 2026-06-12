@@ -69,6 +69,7 @@ export class CalendarView extends ItemView {
 	private refreshGeneration = 0;
 	private peopleMatchService: PeopleMatchService | null = null;
 	private unsubscribeAuth: (() => void) | null = null;
+	private unsubscribeRecordings: (() => void) | null = null;
 	private authStatusEl: HTMLElement | null = null;
 
 	constructor(
@@ -221,6 +222,14 @@ export class CalendarView extends ItemView {
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.onActiveFileChanged()));
 		this.registerEvent(this.app.workspace.on("layout-change", () => this.updateNoteOpenHighlight()));
 
+		// A capture starting/ending changes whether *other* cards' record pills
+		// are locked (one active capture at a time). Re-render every card so
+		// sibling pills unlock the moment Tome leaves "recording" — otherwise
+		// they stay greyed for the whole post-processing window. Driven off the
+		// recordings map itself so every mutation path is covered, including
+		// captures stopped from Tome's own UI or via the watch loop.
+		this.unsubscribeRecordings = this.callbacks.cardUi.onRecordingsChange(() => this.rerenderCards());
+
 		// Start auto-refresh
 		this.startAutoRefresh();
 
@@ -233,6 +242,8 @@ export class CalendarView extends ItemView {
 		this.stopNowLineTimer();
 		this.unsubscribeAuth?.();
 		this.unsubscribeAuth = null;
+		this.unsubscribeRecordings?.();
+		this.unsubscribeRecordings = null;
 		this.authStatusEl = null;
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;

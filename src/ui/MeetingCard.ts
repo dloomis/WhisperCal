@@ -595,11 +595,15 @@ function renderCardDynamic(
 			let reRecording = false;
 			recordPill.addEventListener("click", () => {
 				if (reRecording) {
-					// Stop the re-recording
+					// Stop the re-recording. stopApiRecording deletes the recording
+					// entry first (synchronously, before its first await), which fires
+					// the recordings-change subscriber → re-render. clearRecording runs
+					// after so the final render sees fully torn-down state and can't
+					// resurrect the recording status/timer.
 					recordPill.disabled = true;
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				void (async () => {
@@ -610,22 +614,31 @@ function renderCardDynamic(
 						const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
 						if (tf) void app.workspace.openLinkText(tf.path, "", false);
 					} else if (choice === "re-record") {
-						// Reset transcript-related frontmatter
-						await removeFrontmatterKeys(app, notePath, [
-							FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
-						]);
-						// Ensure note exists then start recording
-						await noteCreator.ensureNote(event);
-						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
-						reRecording = true;
-						setRecording();
-						addRecDot();
-						recordPill.disabled = false;
-						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
-							reRecording = false;
-							recordPill.disabled = true;
-							removeRecDot();
-						}, onStatus: onStatusForCard(notePath, opts)});
+						recordPill.disabled = true;
+						try {
+							// Ensure note exists, then start recording. startApiRecording
+							// runs its readiness/already-recording checks before any state
+							// mutates, so reset the transcript frontmatter only once the
+							// capture is underway — a failed start leaves the note's
+							// existing transcript link intact.
+							await noteCreator.ensureNote(event);
+							await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
+							await removeFrontmatterKeys(app, notePath, [
+								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
+							]);
+							reRecording = true;
+							setRecording();
+							addRecDot();
+							recordPill.disabled = false;
+							watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
+								reRecording = false;
+								recordPill.disabled = true;
+								removeRecDot();
+							}, onStatus: onStatusForCard(notePath, opts)});
+						} catch (err) {
+							new Notice(err instanceof Error ? err.message : "Failed to start recording");
+							recordPill.disabled = false;
+						}
 					}
 				})();
 			});
@@ -633,19 +646,22 @@ function renderCardDynamic(
 			recordPill.disabled = false; // override — running pill is clickable to stop
 			recordPill.addEventListener("click", () => {
 				recordPill.disabled = true;
+				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 				clearRecording();
 				removeRecDot();
-				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 			});
 		} else if (states.record === "incomplete") {
 			let recording = false;
 			recordPill.addEventListener("click", () => {
 				if (recording) {
-					// Stop
+					// Stop. stopApiRecording deletes the recording entry first
+					// (synchronously, before its first await) so the final re-render
+					// from clearRecording sees torn-down state — see the re-record
+					// stop path above.
 					recordPill.disabled = true;
+					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					clearRecording();
 					removeRecDot();
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
 					return;
 				}
 				// Start

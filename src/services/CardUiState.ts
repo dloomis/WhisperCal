@@ -42,15 +42,37 @@ export class CardUiState {
 	private readonly expanded = new Set<string>();
 	private readonly startTimes = new Map<string, number>();
 	private readonly durationTimers = new Map<string, ReturnType<typeof setInterval>>();
+	private readonly recordingsChangeListeners = new Set<() => void>();
 
 	// --- recordings ---
 	getRecording(notePath: string): RecordingInfo | undefined { return this.recordings.get(notePath); }
-	setRecording(notePath: string, info: RecordingInfo): void { this.recordings.set(notePath, info); }
-	deleteRecording(notePath: string): void { this.recordings.delete(notePath); }
+	setRecording(notePath: string, info: RecordingInfo): void {
+		this.recordings.set(notePath, info);
+		this.notifyRecordingsChange();
+	}
+	deleteRecording(notePath: string): void {
+		if (this.recordings.delete(notePath)) this.notifyRecordingsChange();
+	}
 	hasRecording(notePath: string): boolean { return this.recordings.has(notePath); }
 	get recordingCount(): number { return this.recordings.size; }
 	forEachRecording(fn: (info: RecordingInfo, notePath: string) => void): void {
 		this.recordings.forEach(fn);
+	}
+
+	/**
+	 * Subscribe to recordings-map mutations. Whether *any* capture is active is
+	 * the sole input to every card's record-pill lock (computePillStates), so the
+	 * one place that owns the mutation is the right place to fan out a re-render —
+	 * callers no longer hand-place a notify after each start/stop. Returns an
+	 * unsubscribe fn.
+	 */
+	onRecordingsChange(fn: () => void): () => void {
+		this.recordingsChangeListeners.add(fn);
+		return () => this.recordingsChangeListeners.delete(fn);
+	}
+
+	private notifyRecordingsChange(): void {
+		this.recordingsChangeListeners.forEach(fn => fn());
 	}
 
 	// --- card status ---
