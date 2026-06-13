@@ -21,10 +21,15 @@ export async function applySpeakerTags(
 		throw new Error(`Transcript file not found: ${transcriptPath}`);
 	}
 
-	// Build lookup from speakerId to decision
-	const decisionMap = new Map<string, SpeakerTagDecision>();
+	// Build lookups from decisions. Match by speaker id (precise) and fall back to the
+	// original/diarizer name — the embeddings-first path keys decisions off the body label,
+	// which may not equal a pre-existing frontmatter id (e.g. a transcript first tagged under
+	// the old LLM flow, where ids were MacWhisper hex).
+	const decisionById = new Map<string, SpeakerTagDecision>();
+	const decisionByName = new Map<string, SpeakerTagDecision>();
 	for (const d of decisions) {
-		if (d.speakerId) decisionMap.set(d.speakerId, d);
+		if (d.speakerId) decisionById.set(d.speakerId, d);
+		if (d.originalName) decisionByName.set(d.originalName.toLowerCase(), d);
 	}
 
 	// 1. Update frontmatter
@@ -33,7 +38,9 @@ export async function applySpeakerTags(
 		if (Array.isArray(attendees)) {
 			for (const speaker of attendees as FrontmatterSpeaker[]) {
 				delete speaker.proposed_name;
-				const decision = speaker.id ? decisionMap.get(speaker.id) : undefined;
+				// Read speaker.name before any rename below — it's still the original label here.
+				const decision = (speaker.id ? decisionById.get(speaker.id) : undefined)
+					?? (speaker.name ? decisionByName.get(speaker.name.toLowerCase()) : undefined);
 				if (!decision || !decision.confirmedName) continue;
 				speaker.original_name = speaker.name;
 				speaker.name = decision.confirmedName;
