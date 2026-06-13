@@ -7,12 +7,14 @@ import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
-import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
+import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {CachedProposalModal} from "./ui/CachedProposalModal";
 import {ResearchModal} from "./ui/ResearchModal";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
+import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
+import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
 import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter, readFmString} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
@@ -592,6 +594,37 @@ export default class WhisperCalPlugin extends Plugin {
 			if (!choice) return; // Cancelled
 		}
 
+		// Embeddings-first: build the speaker list from the transcript body and match it
+		// against the enrolled voiceprint libraries. By default (fallback off) we never call
+		// the LLM — known people are pre-filled and unknowns are confirmed by ear in the
+		// modal. The LLM runs only as a fallback for unmatched speakers when enabled.
+		try {
+			const content = await this.app.vault.cachedRead(transcriptFile);
+			const baseMappings = buildMappingsFromBody(content);
+			const vp = baseMappings.length > 0
+				? await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, baseMappings)
+				: new Map<string, VoiceprintMatch>();
+			const unmatched = baseMappings.filter(m => !m.proposedName);
+			const useLlm = this.settings.llmSpeakerTagFallback && (baseMappings.length === 0 || unmatched.length > 0);
+			if (!useLlm) {
+				if (baseMappings.length > 0) await writeSpeakerProposals(this.app, transcriptPath, baseMappings);
+				if (auto) {
+					if (vp.size > 0) this.setCardStatus(notePath, `${vp.size} speaker(s) matched by voiceprint — review`, "users-round", 6000, "done");
+					return;
+				}
+				if (baseMappings.length === 0) {
+					new Notice("No speakers found in the transcript");
+					return;
+				}
+				void this.presentSpeakerTagModal(baseMappings, transcriptFile, transcriptPath, notePath);
+				return;
+			}
+			// Fallback enabled with unmatched speakers: fall through to the LLM below. The
+			// modal re-matches voiceprints afterward, so acoustic matches still win.
+		} catch (e) {
+			console.warn("[WhisperCal] embeddings-first tagging failed; falling back to LLM", e);
+		}
+
 		if (!this.settings.speakerTaggingPromptPath) {
 			if (auto) return;
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -736,6 +769,15 @@ export default class WhisperCalPlugin extends Plugin {
 			enrichLineCountsFromBody(mappings, transcriptContent);
 		}
 
+		// Match speakers against enrolled voiceprints and pre-fill confident hits as CERTAIN.
+		// Captured so a user override of a match can heal the library on apply. Best-effort.
+		let vpProposals = new Map<string, VoiceprintMatch>();
+		try {
+			vpProposals = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings);
+		} catch (e) {
+			console.warn("[WhisperCal] voiceprint matching failed", e);
+		}
+
 		// Queue the modal so parallel completions are presented one at a time.
 		// Wrap in try/catch so one failure doesn't break the chain for subsequent modals.
 		this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
@@ -773,6 +815,32 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 
 				await applySpeakerTags(this.app, transcriptPath, decisions);
+
+				// Enroll acoustic voiceprints for the confirmed speakers when Tome wrote a
+				// sidecar next to this transcript. Best-effort — never blocks tagging.
+				try {
+					const enroll = await enrollVoiceprints(
+						this.app,
+						this.settings.voiceprintFolderPath,
+						transcriptPath,
+						decisions,
+						new Date().toISOString().slice(0, 10),
+					);
+					if (enroll.enrolled.length > 0) {
+						new Notice(`Enrolled voiceprint for ${enroll.enrolled.length} speaker(s)`);
+					}
+				} catch (e) {
+					console.warn("[WhisperCal] voiceprint enrollment failed", e);
+				}
+
+				// Self-heal: if you overrode a voiceprint match, drop the culprit sample from
+				// the wrongly-matched person's library so it stops causing false matches.
+				try {
+					const healed = await healVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, decisions, vpProposals);
+					if (healed > 0) new Notice(`Corrected ${healed} voiceprint${healed === 1 ? "" : "s"}`);
+				} catch (e) {
+					console.warn("[WhisperCal] voiceprint heal failed", e);
+				}
 
 				// Apply word replacements to transcript now that speaker tags are in place
 				if (this.settings.replacementFilePath) {

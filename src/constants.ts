@@ -31,6 +31,7 @@ export const FM = {
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",
 	CONFIRMED_SPEAKERS: "confirmed_speakers",
+	VOICEPRINTS: "voiceprints",
 } as const;
 
 /** Valid values written to `pipeline_state` across the pipeline. */

@@ -62,6 +62,12 @@ export interface WhisperCalSettings {
 	autoSummarizeAfterTagging: boolean;
 	/** Startup catch-up scan window for auto-tagging, in hours. 0 disables the scan. */
 	autoTagLookbackHours: number;
+	/**
+	 * When true, speaker tagging falls back to the LLM for speakers that voiceprints
+	 * didn't match. Default false — embeddings-first and LLM-free: known people are
+	 * tagged acoustically, unknowns are confirmed by ear (click-to-play) in the modal.
+	 */
+	llmSpeakerTagFallback: boolean;
 	showAllDayEvents: boolean;
 	importantOrganizers: ImportantOrganizer[];
 	cacheFutureDays: number;
@@ -74,6 +80,7 @@ export interface WhisperCalSettings {
 	recordingApiBaseUrl: string;
 	skipWordReplacementConfirm: boolean;
 	mergeArchiveFolderPath: string;
+	voiceprintFolderPath: string;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -115,6 +122,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	llmDebugLogging: false,
 	autoSummarizeAfterTagging: false,
 	autoTagLookbackHours: 48,
+	llmSpeakerTagFallback: false,
 	showAllDayEvents: false,
 	importantOrganizers: [],
 	cacheFutureDays: 5,
@@ -127,6 +135,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	recordingApiBaseUrl: "",
 	skipWordReplacementConfirm: false,
 	mergeArchiveFolderPath: "WhisperCal Archive",
+	voiceprintFolderPath: "Caches/Voiceprints",
 };
 
 class LlmConsentModal extends Modal {
@@ -367,6 +376,16 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			placeholder: "WhisperCal Archive",
 			get: () => this.plugin.settings.mergeArchiveFolderPath,
 			set: v => { this.plugin.settings.mergeArchiveFolderPath = v; },
+			suggest: "folder",
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Speaker voiceprints folder",
+			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
+			placeholder: "Caches/Voiceprints",
+			get: () => this.plugin.settings.voiceprintFolderPath,
+			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
 			suggest: "folder",
 		});
 
@@ -669,6 +688,14 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			set: v => { this.plugin.settings.autoTagLookbackHours = v; },
 		});
 		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
+
+		this.addToggleSetting({
+			container: containerEl,
+			name: "LLM fallback for unknown speakers",
+			desc: "Off (default): tag known people by voiceprint and confirm unknowns by ear in the modal — no LLM, nothing leaves your machine. On: run the LLM as a last resort to name speakers the voiceprints didn't match.",
+			get: () => this.plugin.settings.llmSpeakerTagFallback,
+			set: v => { this.plugin.settings.llmSpeakerTagFallback = v; },
+		});
 
 		// ── CLI & runtime: shared invocation settings that apply to every prompt ──
 		this.addSubHeading(containerEl, "CLI & runtime");

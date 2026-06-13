@@ -248,6 +248,36 @@ export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], con
 	}
 }
 
+/**
+ * Build speaker mappings directly from the transcript body's `**Label**` lines, with no
+ * LLM. Used by the embeddings-first path so voiceprint matching can run before (or
+ * instead of) the LLM. Handles Tome transcripts whose frontmatter `attendees` is a flat
+ * string list (no per-speaker objects). Speakers appear in first-spoken order.
+ */
+export function buildMappingsFromBody(content: string): ProposedSpeakerMapping[] {
+	const start = content.indexOf("## Transcript");
+	const body = start >= 0 ? content.slice(start) : content;
+	const counts = new Map<string, number>();
+	const order: string[] = [];
+	const re = /^\*\*(.+?)\*\*/gm;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(body)) !== null) {
+		const name = m[1]!.trim();
+		if (!name || name.endsWith(":") || /^Duration\b/.test(name)) continue;
+		if (!counts.has(name)) order.push(name);
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	return order.map((name, i) => ({
+		index: i,
+		originalName: name,
+		proposedName: "",
+		confidence: "",
+		evidence: "",
+		speakerId: name,
+		lineCount: counts.get(name) ?? 0,
+	}));
+}
+
 /** Returns true if any speaker in the transcript frontmatter has a cached `proposed_name`. */
 export function hasCachedProposals(app: App, transcriptPath: string): boolean {
 	const speakers = getFrontmatterSpeakers(app, transcriptPath);
