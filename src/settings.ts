@@ -713,14 +713,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		});
 		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
 
-		this.addToggleSetting({
-			container: containerEl,
-			name: "LLM fallback for unknown speakers",
-			desc: "Off (default): tag known people by voiceprint and confirm unknowns by ear in the modal — no LLM, nothing leaves your machine. On: run the LLM as a last resort to name speakers the voiceprints didn't match.",
-			get: () => this.plugin.settings.llmSpeakerTagFallback,
-			set: v => { this.plugin.settings.llmSpeakerTagFallback = v; },
-		});
-
 		// ── CLI & runtime: shared invocation settings that apply to every prompt ──
 		this.addSubHeading(containerEl, "CLI & runtime");
 
@@ -808,8 +800,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
 			modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
 			flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
+			// Rendered right after the subheading, before the Prompt field — for a
+			// section-specific setting that gates the rest (e.g. the LLM fallback toggle).
+			extraTop?: () => void,
 		) => {
 			this.addSubHeading(containerEl, name);
+			extraTop?.();
 
 			new Setting(containerEl)
 				.setName("Prompt")
@@ -858,6 +854,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"speakerTaggingPromptPath",
 			"speakerTagModel",
 			"speakerTagFlags",
+			() => {
+				this.addToggleSetting({
+					container: containerEl,
+					name: "LLM fallback for unknown speakers",
+					desc: "Off (default): tag known people by voiceprint and confirm unknowns by ear in the modal — no LLM, nothing leaves your machine. On: run the LLM as a last resort to name speakers the voiceprints didn't match.",
+					get: () => this.plugin.settings.llmSpeakerTagFallback,
+					set: v => { this.plugin.settings.llmSpeakerTagFallback = v; },
+				});
+			},
 		);
 
 		this.addTextSetting({
