@@ -292,6 +292,12 @@ export class SpeakerTagModal extends Modal {
 
 			// Confidence + evidence below input
 			const detail = row.createDiv({cls: "whisper-cal-speaker-tag-detail"});
+			if (mapping.source) {
+				detail.createSpan({
+					cls: `whisper-cal-speaker-tag-badge whisper-cal-badge-source-${mapping.source}`,
+					text: mapping.source === "cache" ? "cache" : "LLM",
+				});
+			}
 			if (mapping.confidence) {
 				const badgeCls = `whisper-cal-badge-${mapping.confidence.toLowerCase()}`;
 				detail.createSpan({

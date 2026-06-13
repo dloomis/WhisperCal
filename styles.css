@@ -1465,6 +1465,17 @@
 	color: var(--text-muted);
 }
 
+/* Source of the proposed name: cache = acoustic voiceprint, llm = LLM guess. */
+.whisper-cal-badge-source-cache {
+	background: color-mix(in srgb, var(--interactive-accent) 20%, transparent);
+	color: var(--interactive-accent);
+}
+
+.whisper-cal-badge-source-llm {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
 .whisper-cal-speaker-tag-evidence {
 	color: var(--text-faint);
 }

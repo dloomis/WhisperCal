@@ -9,6 +9,8 @@ export interface ProposedSpeakerMapping {
 	evidence: string;
 	speakerId: string;
 	lineCount: number;
+	/** Where proposedName came from: "cache" (voiceprint) or "llm". Empty when unresolved. */
+	source?: string;
 }
 
 interface ParseResult {
@@ -116,6 +118,7 @@ function extractJsonSpeakers(
 			index: entry.index,
 			originalName: entry.original_name,
 			proposedName: entry.proposed_name ?? "",
+			source: entry.proposed_name ? "llm" : "",
 			confidence: entry.confidence?.toUpperCase() ?? "",
 			evidence: entry.evidence ?? "",
 			speakerId: speaker?.id ?? "",
@@ -148,6 +151,7 @@ function extractLegacySpeakers(
 			index,
 			originalName,
 			proposedName,
+			source: proposedName ? "llm" : "",
 			confidence: confidence.toUpperCase(),
 			evidence,
 			speakerId: speaker?.id ?? "",

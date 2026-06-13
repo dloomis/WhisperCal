@@ -90,7 +90,8 @@ export async function matchVoiceprints(
 		if (best >= MATCH_THRESHOLD && best - second >= MATCH_MARGIN) {
 			m.proposedName = bestName;
 			m.confidence = "CERTAIN";
-			m.evidence = `voiceprint match (cosine ${best.toFixed(3)})`;
+			m.source = "cache";
+			m.evidence = `cosine ${best.toFixed(3)}`;
 			result.set(m.originalName, {name: bestName, cosine: best});
 		}
 	}
