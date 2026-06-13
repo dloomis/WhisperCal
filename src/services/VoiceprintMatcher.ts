@@ -14,10 +14,18 @@ import {cosine, meanNorm} from "../utils/vec";
  * Thresholds are conservative and may need tuning on the first real forward recordings:
  * libraries were seeded from mono-mix backfill, while live sidecars come from the cleaner
  * isolated system stream, so absolute cosines may shift. The margin-over-runner-up
- * requirement is the robust part (validation matches separated by 2-3x).
+ * requirement is the robust part (validation matches separated by 2-3x). With a single
+ * enrolled library there is no runner-up, so a stricter absolute floor (MATCH_THRESHOLD_SOLO)
+ * stands in for the margin; centroids backed by very little speech are skipped entirely.
  */
 const MATCH_THRESHOLD = 0.40; // min cosine similarity to the best library to accept
 const MATCH_MARGIN = 0.08;    // best must beat the runner-up by at least this much
+// With only one enrolled library the margin guard is inert (no runner-up to clear), so
+// demand a stricter absolute similarity before trusting a solo match.
+const MATCH_THRESHOLD_SOLO = 0.55;
+// Skip matching a centroid backed by less than this much diarized speech — too thin/noisy
+// to trust a CERTAIN match against (mirrors the enroller's MIN_ENROLL_SECONDS).
+const MATCH_MIN_SECONDS = 5;
 
 export interface VoiceprintMatch {
 	name: string;
@@ -73,12 +81,20 @@ export async function matchVoiceprints(
 	const result = new Map<string, VoiceprintMatch>();
 	const sidecar = await loadSidecar(app, transcriptPath);
 	if (!sidecar) return result;
+	// Embeddings from different models live in different spaces — comparing a sidecar from
+	// another model against these libraries would produce meaningless cosines. (The enroller
+	// guards enrollment the same way.)
+	if (sidecar.model !== VOICEPRINT_MODEL) {
+		console.warn(`[WhisperCal] voiceprint sidecar model "${sidecar.model}" != "${VOICEPRINT_MODEL}" — skipping match`);
+		return result;
+	}
 	const libs = await loadLibraries(app, voiceprintFolderPath);
 	if (libs.length === 0) return result;
 
 	for (const m of mappings) {
 		const sp = sidecar.speakers[m.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
+		if ((sp.activeSeconds ?? 0) < MATCH_MIN_SECONDS) continue;
 
 		let best = -1, second = -1, bestName = "";
 		for (const lib of libs) {
@@ -87,7 +103,10 @@ export async function matchVoiceprints(
 			else if (c > second) { second = c; }
 		}
 
-		if (best >= MATCH_THRESHOLD && best - second >= MATCH_MARGIN) {
+		// second stays at its -1 sentinel when there is no usable runner-up (a single
+		// library, or others that failed to compare) — fall back to the stricter solo floor.
+		const floor = second > -1 ? MATCH_THRESHOLD : MATCH_THRESHOLD_SOLO;
+		if (best >= floor && best - second >= MATCH_MARGIN) {
 			m.proposedName = bestName;
 			m.confidence = "CERTAIN";
 			m.source = "cache";
