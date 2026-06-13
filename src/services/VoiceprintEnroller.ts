@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import {FM} from "../constants";
-import {ensureFolder} from "../utils/vault";
+import {ensureFolder, resolveWikiLink} from "../utils/vault";
 import {sanitizeFilename} from "../utils/sanitize";
 import {cosine, meanNorm} from "../utils/vec";
 import type {VoiceprintMatch} from "./VoiceprintMatcher";
@@ -72,16 +72,16 @@ export interface EnrollResult {
 
 /** Resolve and parse the voiceprint sidecar for a transcript, or null if absent/invalid. */
 export async function loadSidecar(app: App, transcriptPath: string): Promise<VoiceprintSidecar | null> {
-	const dir = transcriptPath.includes("/") ? transcriptPath.slice(0, transcriptPath.lastIndexOf("/")) : "";
 	const candidates: string[] = [];
 
-	// Prefer the `voiceprints:` frontmatter pointer (survives a transcript rename).
+	// Prefer the `voiceprints:` frontmatter pointer — resolved by name anywhere in the
+	// vault (Obsidian link resolution), so the sidecar can live in whatever folder Tome
+	// writes it to, not just next to the transcript.
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (file instanceof TFile) {
-		const ptr = app.metadataCache.getFileCache(file)?.frontmatter?.[FM.VOICEPRINTS];
-		if (typeof ptr === "string" && ptr.trim()) {
-			candidates.push(dir ? `${dir}/${ptr.trim()}` : ptr.trim());
-		}
+		const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+		const linked = resolveWikiLink(app, fm, FM.VOICEPRINTS, transcriptPath);
+		if (linked) candidates.push(linked.path);
 	}
 	// Fall back to the sibling convention.
 	candidates.push(transcriptPath.replace(/\.md$/, ".voiceprints.json"));
