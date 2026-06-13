@@ -1,4 +1,4 @@
-import {App, Modal, Platform, PluginSettingTab, Setting, requestUrl} from "obsidian";
+import {App, Modal, Platform, PluginSettingTab, Setting, TextComponent, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -6,6 +6,7 @@ import type {CalendarProviderType} from "./types";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
+import {FolderSelectModal} from "./ui/FolderSelectModal";
 import type {PeopleSearchResult} from "./services/PeopleSearchProvider";
 
 export interface ImportantOrganizer {
@@ -236,9 +237,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		trim?: boolean;
 		/** Mount a FileSuggest or FolderSuggest on the input element. */
 		suggest?: "file" | "folder";
+		/** Add a "Browse" button that opens a vault-folder picker. */
+		browse?: boolean;
 	}): Setting {
 		const s = new Setting(opts.container).setName(opts.name).setDesc(opts.desc);
+		let textComp: TextComponent | null = null;
 		s.addText(text => {
+			textComp = text;
 			if (opts.placeholder) text.setPlaceholder(opts.placeholder);
 			text.setValue(opts.get())
 				.onChange((value) => {
@@ -248,6 +253,20 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			if (opts.suggest === "folder") new FolderSuggest(this.app, text.inputEl);
 			else if (opts.suggest === "file") new FileSuggest(this.app, text.inputEl);
 		});
+		if (opts.browse) {
+			s.addButton(btn => btn
+				.setButtonText("Browse")
+				.setTooltip("Choose a vault folder")
+				.onClick(async () => {
+					const folder = await new FolderSelectModal(this.app).pick();
+					if (folder !== null) {
+						const v = opts.trim ? folder.trim() : folder;
+						opts.set(v);
+						textComp?.setValue(v);
+						this.debouncedSave();
+					}
+				}));
+		}
 		return s;
 	}
 
@@ -387,6 +406,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.voiceprintFolderPath,
 			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
 			suggest: "folder",
+			browse: true,
 		});
 
 		this.addTextSetting({
