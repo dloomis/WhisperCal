@@ -348,6 +348,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.peopleFolderPath,
 			set: v => { this.plugin.settings.peopleFolderPath = v; },
 			suggest: "folder",
+			browse: true,
 		});
 
 		this.addToggleSetting({
@@ -376,6 +377,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.noteFolderPath,
 			set: v => { this.plugin.settings.noteFolderPath = v; },
 			suggest: "folder",
+			browse: true,
 		});
 
 		this.addTextSetting({
@@ -386,6 +388,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.transcriptFolderPath,
 			set: v => { this.plugin.settings.transcriptFolderPath = v; },
 			suggest: "folder",
+			browse: true,
 		});
 
 		this.addTextSetting({
@@ -396,6 +399,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.mergeArchiveFolderPath,
 			set: v => { this.plugin.settings.mergeArchiveFolderPath = v; },
 			suggest: "folder",
+			browse: true,
 		});
 
 		this.addTextSetting({
