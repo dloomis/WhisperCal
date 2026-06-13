@@ -209,7 +209,9 @@ export async function healVoiceprints(
 	for (const d of decisions) {
 		const proposed = proposals.get(d.originalName)?.name;
 		if (!proposed) continue;                            // not a voiceprint match
-		if (d.confirmedName?.trim() === proposed) continue; // match accepted — nothing to heal
+		const confirmed = d.confirmedName?.trim();
+		if (!confirmed) continue;                           // cleared/skipped — not a "wrong match" signal
+		if (confirmed === proposed) continue;               // match accepted — nothing to heal
 		const sp = sidecar.speakers[d.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if (await removeCulpritSample(app, voiceprintFolderPath, proposed, sp.embedding)) healed++;
