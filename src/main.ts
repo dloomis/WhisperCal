@@ -598,6 +598,9 @@ export default class WhisperCalPlugin extends Plugin {
 		// against the enrolled voiceprint libraries. By default (fallback off) we never call
 		// the LLM — known people are pre-filled and unknowns are confirmed by ear in the
 		// modal. The LLM runs only as a fallback for unmatched speakers when enabled.
+		// Confident voiceprint hits (label = name) are handed to that fallback so the prompt
+		// anchors on them and only spends effort on the still-unidentified labels.
+		let voiceprintMatches: string | undefined;
 		try {
 			const content = await this.app.vault.cachedRead(transcriptFile);
 			const baseMappings = buildMappingsFromBody(content);
@@ -619,8 +622,15 @@ export default class WhisperCalPlugin extends Plugin {
 				void this.presentSpeakerTagModal(baseMappings, transcriptFile, transcriptPath, notePath, vp);
 				return;
 			}
-			// Fallback enabled with unmatched speakers: fall through to the LLM below. The
-			// modal re-matches voiceprints afterward, so acoustic matches still win.
+			// Fallback enabled with unmatched speakers: fall through to the LLM below. Pass the
+			// confident voiceprint hits so the prompt treats them as fixed CERTAIN anchors and
+			// only works the unmatched labels; the modal re-matches afterward, so acoustic
+			// matches still win regardless.
+			if (vp.size > 0) {
+				voiceprintMatches = Array.from(vp.entries())
+					.map(([label, match]) => `${label} = ${match.name}`)
+					.join("; ");
+			}
 		} catch (e) {
 			console.warn("[WhisperCal] embeddings-first tagging failed; falling back to LLM", e);
 		}
@@ -678,6 +688,7 @@ export default class WhisperCalPlugin extends Plugin {
 				peopleFolderPath: this.settings.peopleFolderPath || undefined,
 				calendarAttendees,
 				peopleRoster,
+				voiceprintMatches,
 				additionalInstructions: customInstructions,
 				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,

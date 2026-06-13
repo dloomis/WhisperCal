@@ -1,16 +1,14 @@
 
 
-Performance-optimized version of Speaker Auto-Tag Prompt with batched People note resolution and context-based confidence refinement.
+Tags unidentified speakers in one transcript stub using vault data (People notes, calendar attendees, signature/history caches). Returns proposed speaker mappings, plus optional conservative diarization-hygiene cleanups detected in the same read. The caller reviews and writes; this prompt only proposes.
 
-Self-contained prompt for tagging unidentified speakers in one transcript stub using vault data (People notes, calendar attendees). Returns proposed speaker mappings — plus optional, conservative diarization-hygiene cleanups detected during the same read. The caller handles review and writes.
+The plugin caller now identifies enrolled people acoustically (voiceprints) before invoking this prompt, and runs it only as a fallback. When it passes **Voiceprint Matches**, those labels are already confirmed — treat them as fixed CERTAIN anchors and concentrate the analysis on the labels that remain unidentified.
 
 **CRITICAL:** Never read the full transcript in a single Read call. Transcripts exceed the 10k token file-read limit. Use chunked reads (limit=500 per chunk). See Step 2.
 
-**OPTIMIZATION FOCUS:** Read People notes deterministically from the parent meeting invitees list (no broad name-based glob), batch all invitee reads in parallel, build a comprehensive context table before analysis, and use role/context matching for confidence refinement.
+**Optimization focus:** read People notes deterministically from the parent meeting invitees (no broad name-based glob), batch reads in parallel, and build the People context table before analysis.
 
-**DIARIZATION HYGIENE (no added cost):** Open-source diarizers (e.g. those used by transcription apps) make predictable mistakes — they split one person across several labels, collapse several people into one catch-all label, and stamp overlapping speech onto multiple labels. The transcript body is already fully in context for speaker tagging, so Step 6.5 catches the highest-confidence, lowest-risk of these in the **same pass** — **zero extra tool calls, no re-reading, no transcript rewrites on a guess.** This step is bounded and gated (see the `Diarization cleanup` input); it never dominates the run.
-
-**No PII in this prompt.** All names below are fictional placeholders for illustration only. Keep it that way — never paste real attendee names, aliases, or org-specific identifiers into this file.
+**No PII in this prompt.** All names below are fictional placeholders for illustration only. Never paste real attendee names, aliases, or org-specific identifiers into this file.
 
 ---
 
@@ -21,387 +19,283 @@ If Read, Glob, Grep, and Bash are not already available, load them: ToolSearch("
 Extract from the calling message:
 - Transcript — path to the transcript stub file
 - Microphone user — full name of the person at the microphone
-- Calendar Attendees — pre-fetched attendee context (optional; skips Step 4 if provided)
-- People Roster — pre-built People context table (optional; skips Step 3 if provided — use as the People context table directly)
+- Transcripts Folder — folder containing transcript files (optional); use for path resolution instead of guessing
 - People Folder — folder name for People notes (default: People)
-- Output format — expected output format for the mapping
-- Diarization cleanup — `off` | `flag` | `apply` (default: `flag`). Controls Step 6.5. `off` = mapping only, skip hygiene entirely (fastest). `flag` = detect and return cleanup suggestions but propose no edits. `apply` = additionally emit apply-ready edit ops for the **HIGH-confidence, low-risk** classes only (echo de-dup, label-variant unification); merges/splits remain flag-only at every setting.
+- Calendar Attendees — pre-fetched attendee context (optional; skips Step 4 if provided)
+- People Roster — pre-built People context table (optional; skips the Step 3 invitee reads — use as the People context table directly). Columns: `| Full Name | Nickname | Context | People Note Filename | Source |`
+- Prior Speakers — names confirmed in prior transcripts of the same meeting (optional, Processor 20). Add each to the People context table with Source="prior_speaker".
+- Voiceprint Matches — label→full-name pairs the plugin already confirmed acoustically (optional, plugin fallback path only). Format: `Speaker 2 = Sarah Patel; Speaker 5 = Mike Cho`. Each is CERTAIN and fixed: never re-derive or override its identity (Rule 0). Add each to the People context table as an anchor (Source="voiceprint"), use those names to help pin the unmatched labels, and concentrate the identification analysis on the labels NOT in this list. Still emit a row for each matched label in the output (see Step 7).
+- Additional instructions — free-text hints from the user (optional, manual runs), e.g. who was present. Treat as high-priority evidence.
+- batch — when true (Processor 20), run non-interactively and return proposals only.
+- Output format — expected output schema for the mapping (see Step 7).
+- Diarization cleanup — `off` | `flag` | `apply` (default: `off`). Controls Step 6.5. `off` = mapping only, skip hygiene entirely. `flag` = detect and return cleanup suggestions but propose no edits. `apply` = additionally emit apply-ready edit ops for the HIGH-confidence, low-risk classes only (echo de-dup, label-variant unification); merges/splits stay flag-only at every setting. Rule 7 (mixed labels) stays active regardless of this setting, since it affects the mapping itself.
 
 Path resolution: try the Transcript path as-is. If not found, error with the path.
 
-Vault root derivation: extract vault root from the transcript path by removing the transcript folder suffix. Use this root combined with People Folder for all lookups.
+Vault root derivation: strip the transcript folder suffix from the transcript path. Combine that root with People Folder for all lookups.
 
 Derived values (from filename, no read needed):
 - MEETING_TITLE — strip date prefix (first 13 chars for "YYYY-MM-DD - " or first 11 chars for "YYYY-MM-DD ") and " - Transcript" suffix
-- SANITIZED_SUBJECT — take MEETING_TITLE, replace /, \, : with hyphens. Used for cache Glob in Step 2.
+- SANITIZED_SUBJECT — MEETING_TITLE with /, \, : replaced by hyphens. Used for the Tagging History cache Glob in Step 2.
 
 ---
 
-## Step 2: Read Transcript + Glob Roster Cache + Glob People Notes
+## Step 2: Read Transcript + Caches
 
 **Round 1 — issue in a single parallel batch:**
-- Read(transcript_path, limit=60) — frontmatter only
-- Bash: wc -l transcript_path — total line count
-- Glob("Caches/Speaker Rosters/SANITIZED_SUBJECT.md") — roster cache for Step 5
+- Read(transcript_path, limit=200) — frontmatter (real frontmatter regularly exceeds 60 lines; the fields needed most, `meeting_note`/`pipeline_state`/`meeting_subject`/`is_recurring`/`meeting_invitees`/`tags`, sit at the bottom)
+- Bash: `awk '/^---$/{c++; if(c==2) print "fm_end=" NR} END{print "total=" NR}' transcript_path` — returns the frontmatter boundary (`fm_end`) and total line count (`total`) in one call
 - Glob("Caches/Tagging History/SANITIZED_SUBJECT.md") — historical priors cache for Rule 2.5
+- (Processor 20 path only, and only when no People Roster was provided) Read the parent meeting note — see Step 3a; folding it here saves a round trip.
 
-If the tagging-history Glob hits, schedule a Read of it (limit=120) alongside the body chunks in Round 2. Extract the per-person table (Person, Transcripts, Common Stubs) and the meeting-level fields (transcripts_observed, first_speaker_tendency). Pass to Step 6 as the **tagging history prior**.
+If the closing `---` is past line 200, issue a follow-up Read for the remainder using `fm_end` before parsing the speaker block.
+
+If the tagging-history Glob hits, schedule a Read of it (limit=120) alongside the Round 2 body chunks. Extract the per-person table (Person, Transcripts, Common Stubs) and the meeting-level fields (transcripts_observed, first_speaker_tendency). Pass to Step 6 as the **tagging history prior**.
 
 Extract from frontmatter:
 - session_id (or macwhisper_session_id for WhisperCal stubs)
-- **speaker block** — array of speaker objects with name, id, stub flag, line_count. Read from `speakers:` (MacWhisper-era schema) OR `attendees:` (TOME-era schema), whichever is present as a nested-object list. The two are equivalent — TOME just renamed the field. Note: some TOME files use a *flat-list* `attendees:` (just `- Speaker 2`, `- You` strings); treat that as "no speaker metadata available" and rely on body parsing in Step 2 Round 2.
+- **speaker block** — array of speaker objects with name, id, stub flag, line_count. Read from `speakers:` (MacWhisper-era schema) OR `attendees:` (TOME-era schema), whichever is present as a nested-object list. The two are equivalent — TOME renamed the field. Some TOME files use a *flat-list* `attendees:` (just `- Speaker 2`, `- You` strings); treat that as "no speaker metadata available" and rely on body parsing from Round 2.
 - meeting_note — wiki-link to parent meeting note (used in Step 3a)
 - calendar_event — event title, "none", or absent
-- calendar_attendees — array of plain string names (or invitees for WhisperCal, or meeting_invitees for wiki-link format like "- [[Name]]")
-- meeting_subject — used to validate cache match
-- is_recurring — enables roster cache path
-- pipeline_state — current pipeline state
-- tags — detect WhisperCal stubs (tags: [transcript])
+- calendar_attendees — array of plain string names (or `invitees` for WhisperCal, or `meeting_invitees` for wiki-link format like "- [[Name]]")
+- meeting_subject, is_recurring, pipeline_state, tags (tags: [transcript] marks a WhisperCal stub)
 
-**Body delimiter format depends on era:** MacWhisper transcripts use `**Name** [HH:MM:SS]` (square brackets); TOME transcripts use `**Name** (HH:MM:SS)` (parens). When scanning the body in Step 5 or counting lines per speaker, accept either: `^\*\*([^*]+)\*\*\s*[\[(](\d{1,2}:\d{2}(?::\d{2})?)[\])]`.
+**Body delimiter formats (three eras, accept all):** MacWhisper `**Name** [HH:MM:SS]` (square brackets); TOME meeting `**Name** (HH:MM:SS)` and `(M:SS)` (parens); TOME call `**Name** (seconds.millis)`, e.g. `(13.515)`. When scanning the body or counting lines per speaker, use:
+```
+^\*\*([^*]+)\*\*\s*[\[(](\d{1,2}:\d{2}(?::\d{2})?|\d+\.\d+)[\])]
+```
 
 Pipeline state: any value (tagged, extracted, summarized, titled) or absent means proceed.
 
-**Round 2 — transcript body chunks in a single parallel batch.** Use the line count from Round 1. Read in chunks of 500 lines, starting after the frontmatter:
-- Read(transcript_path, offset=61, limit=500) — chunk 1
-- Read(transcript_path, offset=561, limit=500) — chunk 2
-- Read(transcript_path, offset=1061, limit=500) — chunk 3 if needed
-- Continue until total lines are covered.
+**Round 2 — transcript body chunks in a single parallel batch.** Read in chunks of 500 lines, starting after the frontmatter at `fm_end + 1`, computing each subsequent offset from `total`:
+- Read(transcript_path, offset=fm_end+1, limit=500) — chunk 1
+- Read(transcript_path, offset=fm_end+501, limit=500) — chunk 2
+- continue until `total` lines are covered
 
 Most transcripts need 1 to 3 chunks. The full body across all chunks is the primary input for Step 6.
 
+**Fold into Round 2 (same batch, no extra round trip):**
+- the Tagging History Read (if its Glob hit)
+- the signature-cache Read batch — see Step 3b. When a People Roster is provided this is the ONLY way signature caches get read, so do not skip it; key the Reads off the roster's "People Note Filename" column.
+
 ---
 
-## Step 3: Read Invitees from Parent Meeting Note (OPTIMIZED)
+## Step 3: Build People Context Table
 
-**Skip this entire step if** `People Roster` was provided in the invocation parameters. Use the provided roster as the People context table directly and proceed to Step 4.
+**If `People Roster` was provided:** use it directly as the People context table. Skip 3a and the invitee Reads in 3b. Still issue the signature-cache Read batch (folded into Round 2 above) keyed off the roster filenames, and still run 3c to fold in Prior Speakers and any other sources. Then go to Step 4.
 
-**CRITICAL:** If not skipped, do NOT skip this step. Complete it before Step 4 to maximize cache hits and build context early.
+Otherwise build the table from the parent meeting note.
 
-### 3a. Read Parent Meeting Note
+### 3a. Parent meeting note
 
-The transcript frontmatter contains `meeting_note` field with a wiki-link to the parent meeting note (e.g., `[[2026-04-04 - Test Transcript]]`).
-
-- Extract the meeting note path from the wiki-link
-- Read the meeting note (limit=100 to capture frontmatter + invitees section)
-- Extract the `meeting_invitees` field — this contains an array of People note wiki-links or plain attendee names
-
-Example invitees field:
+The transcript frontmatter's `meeting_note` field holds a wiki-link to the parent note (e.g. `[[2026-04-04 - Test Transcript]]`).
+- Derive the meeting note path by stripping " - Transcript" from the transcript filename; every observed `meeting_note` matches this. On the Processor 20 path, Read it (limit=120) in Round 1 speculatively. If it misses or the frontmatter `meeting_note` disagrees, Read the correct file in Round 2.
+- Extract `meeting_invitees` — an array of People note wiki-links or plain names. Example:
 ```
 meeting_invitees:
-  - "[[People/Jordan Rivers]]"
+  - "[[People/Jordan Rivers]]"   # or plain: - Jordan Rivers
   - "[[People/Sam Patel]]"
-  - "[[People/Alex Chen]]"
   - "[[People/Mara Lopez]]"
 ```
 
-Or plain names:
-```
-meeting_invitees:
-  - Jordan Rivers
-  - Sam Patel
-  - Alex Chen
-```
+### 3b. Read invitee People notes + signature caches (one parallel batch)
 
-### 3b. Parse Invitees & Build File Paths (DETERMINISTIC)
+For each invitee, build a path: wiki-link `[[People/Name]]` → `People/Name.md`; plain name → `People Folder/{name}.md`. Issue all invitee Reads (limit=60) plus all signature-cache Reads in a single parallel batch — the signature filenames equal the People-note basenames and are known before any People note is read, so they cost no extra round trip.
 
-For each invitee:
-- If wiki-link format `[[People/Name]]`: extract the path as `People/Name.md`
-- If plain name: construct path as `People/{name}.md`
-
-Issue **ALL** Read calls in a single parallel batch. This is deterministic — no glob phase.
-
-Example (if 4 invitees):
 ```
 Read(People/Jordan Rivers.md, limit=60)
 Read(People/Sam Patel.md, limit=60)
-Read(People/Alex Chen.md, limit=60)
-Read(People/Mara Lopez.md, limit=60)
+Read(Caches/Speaker Signatures/Jordan Rivers.md, limit=80)
+Read(Caches/Speaker Signatures/Sam Patel.md, limit=80)
 ```
 
-### 3c. Build People Context Table (Phase 2)
+**Recover People-note read misses.** Calendar display names often differ from People note filenames (formal first names, middle initials), and invitee lists can include non-person entries (team/group wikilinks). Collect every failed People-note Read, then issue one parallel Glob batch `People Folder/*{LastName}*.md` for the misses, then one parallel Read batch for the Glob hits. Names that still miss get a context-less row (no error).
 
-From each People note read in Phase 3b, extract:
-- full_name
-- nickname (if present)
-- role_title
-- company/org
+Signature-cache misses are silently skipped (not every person has one yet). For each signature-cache hit, extract aliases, the top signature phrases (bullets under `## Signature phrases`), and typical_meetings.
 
-Build a Context value per person as:
-- `"role_title, company/org"` (both present)
-- `"role_title"` (org empty)
-- `"company/org"` (role empty)
-- `""` (both empty)
+### 3c. Assemble the table
 
-Build a People context table with these fields per person:
-| Full Name | Nickname | Role/Context | People Note Filename | Source |
-
-Source values: "meeting_invitee", "calendar", "microphone_user", "vocative_recovery"
-
-**This table is the foundation for Step 6 confidence refinement. Do not skip to Step 4 until this is complete.**
-
-### 3e. Signature Cache Reads (Parallel Batch)
-
-After Phase 3c builds the People context table, issue a single parallel batch:
-
-```
-Read("Caches/Speaker Signatures/{Full Name}.md", limit=80)
-```
-
-— one Read per invitee in the People context table. Misses are silently skipped (not every invitee will have a signature cache yet). For each hit, extract:
-- aliases
-- top signature phrases (the bulleted list under `## Signature phrases`)
-- typical_meetings
-
-Attach this data to the corresponding row in the People context table as new columns:
+From each People note extract full_name, nickname, role_title, company/org. Build a Context value: `"role_title, company/org"`, or whichever single field is present, or `""` if both empty. Build the table:
 
 | Full Name | Nickname | Role/Context | People Note Filename | Source | Aliases | Signature Phrases |
 
-This data feeds Rule 5.5 in Step 6.
-
-### 3d. Roster Cache Merge (If Cache Hit)
-
-If a cache was found in Step 2:
-- Compare table from Phase 3c against cached roster
-- If all invitees are present in cache: use cached full context
-- If new names found: merge Phase 3c results into cache, update cache generated date
+Source values: "meeting_invitee", "calendar", "microphone_user", "prior_speaker", "vocative_recovery", "voiceprint". Add any Prior Speakers passed in as Source="prior_speaker" rows, and any Voiceprint Matches as Source="voiceprint" anchor rows (the label bound to its confirmed full name) so those names are available to vocative and response mapping. The Aliases/Signature Phrases columns come from 3b and feed Rules 3 and 5.5. This table is the foundation for Step 6 confidence refinement — complete it before Step 4.
 
 ---
 
 ## Step 4: Calendar Attendees
 
-Skip if Calendar Attendees was provided in invocation (use it directly). Also skip if People Roster was provided.
+Skip if Calendar Attendees was provided in the invocation (use it directly), or if People Roster was provided.
+- `calendar_event: none` → skip calendar lookups entirely (ad-hoc meeting)
+- `calendar_attendees` / `invitees` / `meeting_invitees` populated → use directly (strip `[[ ]]` wrappers)
+- no calendar data → proceed without; calendar context improves confidence but is not required
 
-- calendar_event is "none" — skip calendar lookups entirely (ad-hoc meeting)
-- calendar_attendees, invitees, or meeting_invitees populated — use directly (strip [[ ]] wrappers if present)
-- No calendar data — proceed without. Calendar context improves confidence but is not required.
-
-Add all calendar attendees to the People context table from Step 3c with Source="calendar".
+Dedupe calendar attendees case-insensitively (nickname-aware) against names already in the table — invitees and calendar attendees are largely the same people — then add only the new ones with Source="calendar".
 
 ---
 
 ## Step 5: Vocative-to-Speaker Mapping
 
-### 5a. Vocative Scanning (Pre-Step 6)
+### 5a. Vocative scanning
 
-Scan the full transcript body (from Step 2) for direct address patterns:
-- "[Name], go ahead"
-- "Thanks, [Name]"
-- "[Name], what do you think?"
-- "[Name], can you..."
-- "Over to you, [Name]"
-- "[Name]?" (standalone calling)
+Scan the full transcript body (Step 2) for direct-address patterns: "[Name], go ahead", "Thanks, [Name]", "[Name], what do you think?", "[Name], can you…", "Over to you, [Name]", standalone "[Name]?".
 
-### 5b. Match Against People Context
+### 5b. Match against People context
 
-For each vocative detected, check the People context table (Step 3c):
-- Match against Full Name (exact or first word)
-- Match against Nickname
-- Multiple detections for the same name strengthen signal
+For each vocative, check the People context table: match against Full Name (exact or first word), Nickname, or Aliases. Multiple detections for the same name strengthen the signal.
 
-### 5c. Unmatched Vocative Recovery Batch (OPTIMIZED)
+### 5c. Unmatched vocative recovery batch
 
-If any vocative names do not match People context:
-
-Collect all unmatched names (e.g., "Kai", "Mara", "Nico", "Jo").
-
-Issue recovery Globs in a single parallel batch:
+For vocatives that match nothing, collect the unmatched names. **Only attempt recovery for names of at least 3 characters** — shorter fragments over-match the folder badly; skip them and just flag. Issue recovery Globs in a single parallel batch:
 ```
-Glob(People Folder/*Kai*.md)
 Glob(People Folder/*Mara*.md)
 Glob(People Folder/*Nico*.md)
-Glob(People Folder/*Jo*.md)
 ```
-
-For each glob hit:
-- Issue a Read in a single parallel batch (Phase 2 repeat)
-- Extract full_name, nickname, role_title, company/org
-- Add to People context table with Source="vocative_recovery"
-
-For misses: flag the unmatched_vocative in the final evidence field for that speaker.
+For each hit, Read it (single parallel batch), extract full_name/nickname/role_title/company-org, and add to the table with Source="vocative_recovery". For misses (and for skipped short fragments): flag the unmatched_vocative in that speaker's evidence field.
 
 ---
 
 ## Step 6: Speaker Identification Analysis
 
-Analyze the full transcript body (from Step 2), speaker stubs (frontmatter), and **complete** People context table (from Step 3c + 5c) using the rules below. Higher-priority rules override lower ones.
+Analyze the full transcript body (Step 2), the speaker stubs (frontmatter), and the complete People context table (Steps 3 + 5c) using the rules below. Higher-priority rules override lower ones.
 
-**CRITICAL — duplicate assignments are expected and correct.** Transcription engines frequently split one real person across multiple speaker tags (e.g., Speaker 1 and Speaker 3 are both the same person). Propose the best match for each tag independently. Do NOT enforce a one-to-one constraint between people and tags. If the evidence says Speaker 1 is "Jane Doe" and Speaker 3 is also "Jane Doe", propose "Jane Doe" for both.
+**Duplicate assignments are expected and correct.** Diarizers frequently split one real person across multiple labels (Speaker 1 and Speaker 3 are the same person). Propose the best match for each label independently; do NOT enforce one-to-one. If the evidence says both are "Jane Doe", propose "Jane Doe" for both.
 
-**CRITICAL — the inverse also happens: several people collapsed into one label.** A single label — often a low-content "Speaker N", or a catch-all that accumulates many short acknowledgments — may contain turns from two or more real people. When a label is mixed, do NOT cement the collapse by stamping a confident single name on it (see Rule 7). Forcing a wrong single name is worse than leaving it `mixed`/`null`: downstream summaries will misattribute everything under that label.
+**The inverse also happens — several people collapsed into one label.** A low-content "Speaker N" or a catch-all of short acknowledgments may hold turns from two or more people. When a label is mixed, do not cement the collapse with a confident single name; see Rule 7. A wrong single name is worse than `null`, because downstream summaries misattribute everything under it.
 
-**Label-variant unification.** Two *different* labels that are obviously the same person — name-spelling variants ("Steve"/"Steven", "Alex"/"Alexander", "Mike"/"Michael"), or a generic "Speaker N" that the evidence ties to a person already named under another label — should resolve to ONE canonical full name. Pick the fullest correct form (prefer the People-note `full_name`) and map every variant label to it. Record the variants unified (the `canonical` field in Build Proposed Mapping) so the caller can normalize the body. This is free — the labels are already in front of you — and it is the single most common diarization defect.
+**Label-variant unification.** Two *different* labels that are obviously the same person (spelling variants like "Steve"/"Steven", or a generic "Speaker N" the evidence ties to a person already named under another label) resolve to ONE canonical full name (prefer the People-note `full_name`). Record the variants unified so the caller can normalize the body. This is the single most common diarization defect and is free to catch.
 
-### Rule 1: Microphone Speaker — CERTAIN
+### Rule 0: Voiceprint-confirmed labels — CERTAIN, fixed
+When **Voiceprint Matches** are provided, each listed label is already confirmed acoustically by the caller. Treat it as CERTAIN and immutable: never re-derive, downgrade, or override its identity, and spend no analysis budget on it. Use these confirmed names as anchors for every rule below — a confirmed label's vocatives, handoffs ("go ahead, Mike"), and responses help pin the *unmatched* labels (Rules 3-5). A confirmed label is also a valid canonical target for Label-variant unification: an unmatched "Speaker N" the evidence ties to a confirmed person resolves to that person. Concentrate all identification effort on the labels NOT in this list. (Absent the field — Processor 20, manual runs — this rule is inert and everything proceeds as before.)
 
-Assign the Microphone user only when there is an explicit "Microphone" speaker stub (MacWhisper transcripts have this — the mic channel is a separate speaker). Evidence: "microphone". Never overridden.
+### Rule 1: Microphone speaker — CERTAIN
+- An explicit "Microphone" stub (MacWhisper mic channel) → the Microphone user. Evidence: "microphone". Never overridden.
+- A stub named "You" (TOME call recordings label the recording user's channel `**You**`) → the Microphone user, CERTAIN. Evidence: "microphone (You = recording user)". Output `original_name: "You"` unchanged (name-based merge).
+- For any other label (generic "Speaker N", etc.) do NOT guess the microphone user from line count or any heuristic. Identify them only via Rules 2-6; the most talkative speaker is often the host or a vendor, not the recorder.
 
-If no "Microphone" stub exists (TOME, Call Recording, generic "Speaker N" stubs), do NOT guess the microphone user from line count or any other heuristic. Identify the microphone user only through the same signals used for any other invitee (Rules 2–6). Line count is not evidence of microphone identity — the most talkative speaker is often the host or a vendor, not the recorder.
-
-### Rule 2: Calendar Attendees — CERTAIN or HIGH
-
-- Calendar + vocative match (see Rule 3) = CERTAIN
+### Rule 2: Calendar attendees — CERTAIN or HIGH
+- Calendar + vocative match (Rule 3) = CERTAIN
 - Calendar + one other transcript signal (style, topic expertise, vocative response) = HIGH
-- Calendar alone with no transcript evidence = do not assign. Invitees may be absent.
+- Calendar alone, no transcript evidence = do not assign (invitees may be absent)
 
-### Rule 2.5: Historical Stub Continuity — CERTAIN or HIGH
+### Rule 2.5: Historical stub continuity — CERTAIN or HIGH
+When a Tagging History cache is provided for this meeting subject (Step 2):
+- A stub matches a person in that cache's `Common Stubs` column with **≥80%** frequency (count for that stub ÷ that person's `Transcripts`) AND that person is in the People context table → **CERTAIN**. Evidence: `"history: <person> in N/M prior <subject>"`.
+- **60-79%** + that person in the table → **HIGH**, same evidence shape.
+- **<60%** → weak; do not upgrade alone, may corroborate other rules.
 
-When a Tagging History cache is provided for this meeting subject (loaded in Step 2):
+Special case: if `first_speaker_tendency` names a person in the People context table, treat as supporting evidence for the speaker who appears first chronologically.
 
-- If a stub (e.g., "Speaker 1") matches a person in that cache's `Common Stubs` column with **≥80%** frequency (count for that stub ÷ that person's `Transcripts`) AND that person is in the People context table (calendar or invitee): **CERTAIN**. Evidence: `"history: <person> in N/M prior <subject>"`.
-- **60–79%** frequency + that person is in the People context table: **HIGH**. Evidence: same shape.
-- **<60%** frequency: weak signal — do not upgrade on this alone. May still corroborate other rules.
+### Rule 3: Vocative scanning & matching
+Vocatives matched in Step 5 resolve to full names via the People context table (including the Aliases column — a vocative matching an alias resolves as if it matched the Full Name).
+- Vocative matches a single People note = CERTAIN or HIGH
+- Multiple independent vocatives → same person = CERTAIN
+- Unmatched vocative (recovery failed) = flag, do not assign
 
-Special case: if `first_speaker_tendency` in the cache names a person and that person is in the People context table, treat as supporting evidence for the Speaker who appears first chronologically in the transcript body.
-
-### Rule 3: Vocative Scanning & Matching
-
-Vocatives matched in Step 5 now resolve to full names via the People context table.
-
-- Vocative directly matches a single People note = CERTAIN or HIGH
-- Multiple independent vocatives resolve to same person = CERTAIN
-- Unmatched vocative (recovery failed) = flag but do not assign
-
-### Rule 4: Vocative-to-Response Mapping
-
-The speaker who talks immediately after being called by name is likely that person. If Speaker A says "Mara, go ahead" and Speaker 3 speaks next, Speaker 3 is likely Mara.
-
+### Rule 4: Vocative-to-response mapping
+The speaker who talks immediately after being called by name is likely that person (Speaker A says "Mara, go ahead" and Speaker 3 speaks next → Speaker 3 is likely Mara).
 - Multiple vocative-responses for the same mapping = CERTAIN
 - Single vocative-response = HIGH
 - Conflicting mappings = LOW
 
-### Rule 5: First Name to Full Name Resolution + Context Matching (OPTIMIZED)
+### Rule 5: First name to full name + context matching
+Resolve first names: check calendar attendees (if exactly one matches, use them), then the table's Full Name and Nickname columns.
 
-Resolve first names to full names:
+On a first-name collision (multiple candidates), disambiguate in order:
+1. **Context match** — if the transcript topic matches one candidate's Role/Context value, resolve at HIGH with evidence "role/context match: [Context]" (e.g. a speaker discussing "observability deployment" matches "Sam Rivera - SRE, Platform Team" over "Sam Lin - Finance").
+2. **Calendar preference** — if exactly one candidate is a calendar attendee, use them.
+3. Neither resolves → LOW, listing all candidates and their Context values.
 
-1. Check calendar attendees — if exactly one has that first name, use them.
-2. Check People context Full Name and Nickname columns.
+### Rule 5.5: Signature phrase match — CERTAIN or HIGH
+When signature caches are loaded into the table (Step 3b):
+- A speaker's blocks contain a top signature phrase from an invitee's signature cache (case-insensitive substring) AND that invitee is in the table:
+  - **2+ distinct phrases → same invitee** = **CERTAIN**. Evidence: `"signature: <phrase1>, <phrase2>"`.
+  - **1 phrase** = **HIGH**. Evidence: `"signature: <phrase>"`.
+- Combine multiplicatively with Rule 2.5: a history prior (≥60%) + any signature-phrase match for the same person = **CERTAIN**, even without a vocative.
 
-**First-name collision (multiple candidates share first name): try disambiguation in order:**
-
-1. **Context match** (NEW) — if transcript topic/discussion matches one candidate's Role/Context value, resolve at HIGH confidence with evidence "role/context match: [Context]"
-   - Example: Speaker discusses "VMware patching" and context table has "Jordan Avery - VMware Administrator, Platform Team" → HIGH match
-   - Example: Speaker discusses "observability deployment" and context table has "Sam Rivera - SRE, Platform Team" and "Sam Lin - Finance" → HIGH match to Rivera
-
-2. Calendar preference — if exactly one candidate is a calendar attendee, use them.
-3. Neither resolves — flag as LOW with all candidates and their Context values listed.
-
-### Rule 5.5: Signature Phrase Match — CERTAIN or HIGH
-
-When Signature Caches are loaded into the People context table (Step 3e):
-
-- If a speaker's transcript blocks contain a top signature phrase from an invitee's signature cache (case-insensitive substring match) AND that invitee is in the People context table:
-  - **2+ distinct signature phrases match the same invitee**: **CERTAIN**. Evidence: `"signature: <phrase1>, <phrase2>"`.
-  - **1 signature phrase match**: **HIGH**. Evidence: `"signature: <phrase>"`.
-- Combine multiplicatively with Rule 2.5: a history-prior match (≥60%) + any signature-phrase match for the same person = **CERTAIN**, even without a vocative.
-
-The `Aliases` column from Step 3e can also resolve unmatched vocatives in Rule 3 — a vocative matching an alias resolves as if it matched the Full Name.
-
-### Rule 6: Alias / Transcription Error Handling
-
+### Rule 6: Alias / transcription-error handling
 For unresolved stubs, check Nicknames for phonetically similar matches to words spoken near that speaker. Confidence: LOW unless corroborated by Role/Context.
 
-### Rule 7: Mixed / Catch-all Labels — do not force a single identity
-
+### Rule 7: Mixed / catch-all labels — do not force a single identity
 A label is *mixed* when, within its own blocks, you see clear evidence of more than one real speaker:
-- a question and its own answer inside one block, or an answer to a question the same label just asked (self-Q&A)
+- a question and its own answer in one block, or an answer to a question the same label just asked (self-Q&A)
 - a greeting/response pair under one label ("you there?" → "yeah, I'm here")
-- "Thanks, <Name>" / "Go ahead, <Name>" / "Over to you, <Name>" followed by a *different* person continuing under the same label — **especially common at the START of a block in round-robin standups, where the host's handoff cue is baked onto the next speaker's first turn** (e.g. a block that opens "Thanks, sir. Dana." and then continues with Dana's actual update — the cue is the host, the rest is Dana)
+- "Thanks, <Name>" / "Over to you, <Name>" followed by a *different* person continuing under the same label — **especially at the START of a block in round-robin standups, where the host's handoff cue is baked onto the next speaker's first turn** (a block opening "Thanks, sir. Dana." then continuing with Dana's update — the cue is the host, the rest is Dana)
 - a first-person topic-ownership flip ("my team will…" → "well, from our side…")
-- the label is dominated by short backchannels ("yeah", "mm-hmm", "right", "okay") that plainly come from several different voices
+- the label is dominated by short backchannels ("yeah", "mm-hmm", "right", "okay") plainly from several voices
 
 Handling:
-- If one person clearly owns the *substantive* content and the remainder is short backchannel/overlap → map to that person, set `mixed: true`, confidence at most HIGH, evidence noting the contamination.
-- If two or more people genuinely share the substantive content → set `proposed_name: null`, `mixed: true`, confidence LOW, and emit a `flag_merge` cleanup (Step 6.5) with the suspected split point and candidate names. **Do NOT auto-split the body.**
+- One person clearly owns the *substantive* content, remainder is short backchannel/overlap → map to that person, set `mixed: true`, confidence at most HIGH, evidence noting the contamination.
+- Two or more genuinely share the substantive content → `proposed_name: null`, `mixed: true`, confidence LOW, and emit a `flag_merge` cleanup (Step 6.5) with the suspected split point and candidate names. **Do NOT auto-split the body.**
 
-This rule is the primary defense against the most damaging diarization failure (many speakers → one attribution): it refuses to launder a merge into a single confident name.
+This is the primary defense against the most damaging diarization failure (many speakers → one attribution): it refuses to launder a merge into a single confident name.
 
-### Confidence Levels (REFINED)
-
-- **CERTAIN:** microphone user, calendar + vocative, multiple vocative-responses, multiple independent signals agreeing, **history ≥80% + invitee present, 2+ signature phrases + invitee present, or history-prior (≥60%) + any signature phrase match**
-- **HIGH:** calendar + single signal, single vocative-response, vocative + context match, calendar + role/context alignment, **history 60–79% + invitee present, or single signature phrase + invitee present**
-- **LOW:** single weak signal, phonetic guess, ambiguous match, or unresolved collision
+### Confidence levels
+- **CERTAIN:** voiceprint-confirmed label (Rule 0), microphone user, calendar + vocative, multiple vocative-responses, multiple agreeing signals, history ≥80% + invitee present, 2+ signature phrases + invitee present, or history prior (≥60%) + any signature phrase
+- **HIGH:** calendar + single signal, single vocative-response, vocative + context match, calendar + role/context alignment, history 60-79% + invitee present, or single signature phrase + invitee present
+- **LOW:** single weak signal, phonetic guess, ambiguous match, unresolved collision
 - **null:** no evidence found
 
-### Build Proposed Mapping
-
-For each speaker, record:
-- index — 0 for Microphone, N for Speaker N
-- original_name — stub label from transcript
-- proposed_name — resolved full name, or null (the same person may appear for multiple tags — this is correct)
-- canonical — the unified full name when this label is a spelling/variant of another label (Label-variant unification); omit if the label stands alone
-- mixed — true when this label contains more than one real speaker (Rule 7); omit/false otherwise
-- confidence — CERTAIN, HIGH, LOW, or null if unresolved
-- evidence — brief signal description (include "role/context match: [matching field]" if used)
-
-Do not downgrade confidence or skip a match because the same person was already proposed for a different tag. Evaluate each tag on its own evidence.
+Do not downgrade or skip a match because the same person was already proposed for another label. Evaluate each label on its own evidence.
 
 ---
 
 ## Step 6.5: Diarization Hygiene (bounded, gated)
 
-**Skip entirely if `Diarization cleanup` = `off`.** Otherwise run this as part of the analysis you already did in Step 6 — **issue no new tool calls and do not re-read the transcript.** This is pattern-spotting over text already in context; spend a light pass, not a deep re-analysis.
+**Skip entirely if `Diarization cleanup` = `off` (the default).** Otherwise run this within the Step 6 analysis you already did — **issue no new tool calls and do not re-read the transcript.** This is pattern-spotting over text already in context: a light pass, not a deep re-analysis. **Never delete real speech, never rewrite block text, never split a block on a guess.**
 
-You are detecting predictable diarizer mistakes and proposing *conservative* fixes. Two classes are safe enough to auto-apply (when `apply`); the rest are advisory flags at every setting. **Never delete real speech, never rewrite block text, never split a body block on a guess.**
+Each detection becomes one entry in `diarization_cleanups`:
 
-**Detect these classes** (each becomes one entry in `diarization_cleanups`):
+1. **`unify_label`** *(auto-apply eligible — HIGH)* — Variant labels that are the same person (mirrors Label-variant unification in Step 6). Fields: `from_labels` (list), `to_name`, `reason`. Highest value, lowest risk.
+2. **`drop_echo`** *(auto-apply eligible — HIGH)* — The *same* short utterance (normalized text, ≤ ~6 words) appears in 2+ adjacent blocks within ~1.5s, usually across *different* labels (overlap bleed). Keep one occurrence (prefer the block whose label matches the surrounding turn), drop the rest. Fields: `lines`, `keep_line`, `text`, `confidence`, `reason`. Only exact/near-exact repeats; never collapse two people who both say "yeah".
+3. **`merge_block`** *(flag only by default; auto-apply only if both labels already resolve to the same `proposed_name`)* — One sentence split mid-clause across two adjacent blocks with *different* labels and a sub-second gap, clearly one speaker. Fields: `lines` (the two blocks), `to_label`, `confidence`, `reason`.
+4. **`flag_merge`** *(flag only — never auto-applied)* — A label containing two or more real speakers (Rule 7). Fields: `label`, `split_after`, `suspected_speakers` (candidates from the People context table), `reason`. A human or the caller decides.
+5. **`flag_backchannel_catchall`** *(flag only — informational)* — A label that is mostly short backchannels from several voices. One entry **per label**, not per block. Fields: `label`, `reason`. Backchannels are real speech and a signal for Rule 7, never content to delete.
 
-1. **`unify_label`** *(auto-apply eligible — HIGH)* — Variant labels that are the same person (mirrors Label-variant unification in Step 6). Fields: `from_labels` (list), `to_name`, `reason`. This is the highest-value, lowest-risk fix.
-
-2. **`drop_echo`** *(auto-apply eligible — HIGH)* — The *same* short utterance (normalized text, ≤ ~6 words) appears in 2+ adjacent blocks within ~1.5s, typically across *different* labels (overlap bleed, e.g. the same "sorry, can you repeat that?" stamped on three speakers). Keep one occurrence — prefer the block whose label matches the surrounding turn — and drop the duplicates. Fields: `lines` (lines to drop), `keep_line`, `text`, `confidence`, `reason`. Only flag exact/near-exact repeats; never collapse two people who happen to both say "yeah".
-
-3. **`merge_block`** *(flag only by default; auto-apply only if both labels already resolve to the same `proposed_name`)* — One sentence split mid-clause across two adjacent blocks with *different* labels and a sub-second gap, clearly one continuous speaker. Fields: `lines` (the two blocks), `to_label`, `confidence`, `reason`.
-
-4. **`flag_merge`** *(flag only — never auto-applied)* — A label that contains two or more real speakers (Rule 7). Fields: `label`, `split_after` (line after which the speaker appears to change), `suspected_speakers` (candidate names from the People context table), `reason`. The caller or a human decides; this prompt does not rewrite.
-
-5. **`flag_backchannel_catchall`** *(flag only — informational)* — A label that is mostly short backchannels from several voices. One entry **per label**, not per backchannel block. Fields: `label`, `reason`. Backchannels are real speech — they are a *signal* feeding Rule 7, never content to delete.
-
-**Bounding (protects speed + token budget):**
-- Do **not** enumerate individual backchannel blocks — report only the label-level `flag_backchannel_catchall`.
-- Cap the list at the ~20 highest-confidence entries. If more exist, return the total count and a one-line note instead of the full list.
-- If `Diarization cleanup` = `flag`, emit all classes but mark every entry advisory (no edits applied by the caller).
-- If a clean transcript yields nothing, return an empty `diarization_cleanups` list — do not invent issues.
+**Bounding:** do not enumerate individual backchannel blocks (report only the label-level flag); cap the list at the ~20 highest-confidence entries (if more exist, return the total count and a one-line note); under `flag`, mark every entry advisory; a clean transcript returns an empty list — do not invent issues.
 
 ---
 
 ## Step 7: Return Results
 
-Return the mapping in the output format specified by the caller. When `Diarization cleanup` ≠ `off`, also return a `diarization_cleanups` array (the Step 6.5 entries; empty if none). Keep the two outputs separate so a caller that only wants the mapping can ignore the cleanups.
+**When the caller specifies an Output format, return exactly that schema and nothing else** — no extra fields, no prose outside it.
 
-**Do not write changes to the transcript.** This prompt only *proposes* — the caller reviews and writes. Apply-eligible ops (`unify_label`, `drop_echo`, and `merge_block` only when both labels share one `proposed_name`) are safe for the caller to apply automatically under `apply`; `flag_merge` and `flag_backchannel_catchall` always require review.
+The plugin (primary caller) specifies:
+> Return ONLY a fenced JSON code block: `{"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}`. No other text.
+
+Honoring it:
+- `original_name` MUST be the frontmatter speaker name **verbatim** (e.g. "Speaker 2", "You", "Microphone") — never the unified or corrected form. The caller merges by `original_name`; a normalized value silently orphans the proposal.
+- For a label listed in **Voiceprint Matches**, still emit its row: `proposed_name` = the confirmed full name, `confidence: "CERTAIN"`, `evidence: "voiceprint"`. Do not omit it (the caller's modal builds its speaker list from this output, so an omitted label disappears) and do not re-analyze it.
+- Fold canonical/mixed/merge findings into the `evidence` text. A genuinely mixed label still gets `proposed_name: null`, LOW confidence (Rule 7).
+- Do not emit `canonical`, `mixed`, or `diarization_cleanups` under this schema — the plugin's parser ignores unknown fields and forbids extra output.
+
+**Default output (no Output format given, some Processor 20 runs):** a markdown table, one row per speaker:
+- index — 0 for Microphone, N for Speaker N
+- original_name — stub label from the transcript, verbatim
+- proposed_name — resolved full name, or null (the same person may appear for multiple labels — correct)
+- canonical — the unified full name when this label is a variant of another (Label-variant unification); omit if it stands alone
+- mixed — true when this label holds more than one real speaker (Rule 7); omit/false otherwise
+- confidence — CERTAIN, HIGH, LOW, or null
+- evidence — brief signal description (include "role/context match: [field]" if used)
+
+When `Diarization cleanup` ≠ `off`, also return a `diarization_cleanups` array (the Step 6.5 entries; empty if none), kept separate from the mapping so a caller that only wants the mapping can ignore it.
+
+**Do not write changes to the transcript.** This prompt only *proposes*; the caller reviews and writes. Apply-eligible ops (`unify_label`, `drop_echo`, and `merge_block` only when both labels share one `proposed_name`) are safe for the caller to apply automatically under `apply`; `flag_merge` and `flag_backchannel_catchall` always require review.
 
 ---
 
 ## Caching & Performance Notes
 
-**Roster Cache Strategy:**
-- Cache is eligible if meeting_subject exists AND is_recurring is true
-- Cached People context remains valid for 14 days
-- On cache hit: skip Step 3 Phase 2 reads entirely (major time savings)
-- On cache miss or new names: merge results into cache for future runs
+Caches read here are read-only in this prompt; both are built and refreshed by `Prompts/Speaker Cache Rebuild.md`.
 
-**Tagging History Cache (read-only here):**
-- Located at `Caches/Tagging History/{SANITIZED_SUBJECT}.md`
-- Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
-- Provides per-meeting behavioral priors: which person has occupied each stub historically, modal first speaker
-- Feeds Rule 2.5 in Step 6
+- **Tagging History** — `Caches/Tagging History/{SANITIZED_SUBJECT}.md`. Per-meeting behavioral priors (which person has occupied each stub historically, modal first speaker). Feeds Rule 2.5.
+- **Speaker Signatures** — `Caches/Speaker Signatures/{Full Name}.md` (basename matches the People note). Per-person linguistic priors: signature phrases, aliases (nickname/initials, e.g. "JR" for Jordan Rivers), typical meetings. Read in Step 3b in the Round 2 batch. Feeds Rule 5.5 and the alias bridge in Rule 3.
 
-**Speaker Signature Cache (read-only here):**
-- Located at `Caches/Speaker Signatures/{Full Name}.md` — basename matches the People note
-- Built and refreshed by `Prompts/Speaker Cache Rebuild.md` — this prompt only reads
-- Provides per-person linguistic priors: signature phrases, aliases, typical meetings. Aliases include the person's nickname or initials (e.g., "JR" for Jordan Rivers) — match these against names spoken in the transcript body as a primary identification signal.
-- Read in Step 3e in a single parallel batch keyed off the People context table
-- Feeds Rule 5.5 in Step 6 (and the alias bridge in Rule 3)
+**Tool-call batching:**
+- Round 1: frontmatter Read + awk (boundary + total) + Tagging History Glob (+ parent meeting note Read on the Processor 20 path).
+- Round 2: body chunks + invitee/signature Reads + Tagging History Read (one parallel batch).
+- Step 3b miss path: one Glob batch + one Read batch, only for People-note misses.
+- Step 5c: recovery Glob batch then Read batch, only when unmatched vocatives ≥3 chars exist.
+- Step 6.5: 0 tool calls — reuses the body already in context.
 
-**Tool Call Batching Summary:**
-- Step 2: 3 parallel calls (Read transcript frontmatter, wc, Glob roster cache) + transcript body chunks in parallel
-- Step 3: Read parent meeting note → Parse invitees → Read all invitee People notes in parallel (deterministic, no glob)
-- Step 5c: Recovery Glob batch (vocative recovery only) → Wait → Recovery Read batch (if needed)
-- Step 6.5: **0 tool calls** — reuses the transcript body already in context; never re-reads
-- Total batches: ~4-5 (vs ~10+ in non-optimized version; eliminates broad name-based glob phase)
-
-**Expected Impact:**
-- With fresh People context build: 1-2 minute baseline
-- With roster cache hit: 30-40% faster (skips Phase 2 reads)
-- With context matching: 15-20% fewer unresolved speakers vs. non-optimized
-- Diarization hygiene (Step 6.5): negligible time cost (no I/O); output stays small because backchannels are reported per-label and the list is capped. Set `Diarization cleanup: off` to remove even the reasoning cost.
+Typical run is 2 batches (Round 1, Round 2), plus the conditional recovery batches when needed.

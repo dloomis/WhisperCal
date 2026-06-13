@@ -23,6 +23,7 @@ interface LlmInvokerOpts {
 	outputFormat?: string;          // appended to trigger to specify expected output format
 	calendarAttendees?: string;     // full invitee name list — skips prompt Step 4/5
 	peopleRoster?: string;          // pre-built enriched Markdown table — skips prompt Step 3/6
+	voiceprintMatches?: string;     // label→name pairs already confirmed acoustically; prompt treats them as fixed CERTAIN and only identifies the rest
 	researchNotePaths?: string[];   // vault-relative paths to research context notes
 	additionalInstructions?: string; // free-text instructions appended to trigger
 	debugMode?: boolean;            // when true, opens in Terminal.app instead of background
@@ -150,6 +151,7 @@ function buildTrigger(opts: LlmInvokerOpts, promptInSystem = false): string {
 	if (opts.peopleFolderPath) parts.push(`People Folder: ${opts.peopleFolderPath}.`);
 	if (opts.calendarAttendees) parts.push(`Calendar Attendees: ${opts.calendarAttendees}.`);
 	if (opts.peopleRoster) parts.push(`People Roster:\n${opts.peopleRoster}`);
+	if (opts.voiceprintMatches) parts.push(`Voiceprint Matches: ${opts.voiceprintMatches}.`);
 	if (opts.researchNotePaths && opts.researchNotePaths.length > 0) parts.push(`Research notes: ${opts.researchNotePaths.join(", ")}.`);
 	if (opts.additionalInstructions) parts.push(`Additional instructions: ${opts.additionalInstructions}`);
 	if (opts.outputFormat) parts.push(opts.outputFormat);
