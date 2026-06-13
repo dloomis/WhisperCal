@@ -616,7 +616,7 @@ export default class WhisperCalPlugin extends Plugin {
 					new Notice("No speakers found in the transcript");
 					return;
 				}
-				void this.presentSpeakerTagModal(baseMappings, transcriptFile, transcriptPath, notePath);
+				void this.presentSpeakerTagModal(baseMappings, transcriptFile, transcriptPath, notePath, vp);
 				return;
 			}
 			// Fallback enabled with unmatched speakers: fall through to the LLM below. The
@@ -758,6 +758,7 @@ export default class WhisperCalPlugin extends Plugin {
 		transcriptFile: TFile,
 		transcriptPath: string,
 		notePath: string,
+		preMatched?: Map<string, VoiceprintMatch>,
 	): Promise<void> {
 		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
@@ -771,11 +772,15 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Match speakers against enrolled voiceprints and pre-fill confident hits as CERTAIN.
 		// Captured so a user override of a match can heal the library on apply. Best-effort.
-		let vpProposals = new Map<string, VoiceprintMatch>();
-		try {
-			vpProposals = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings);
-		} catch (e) {
-			console.warn("[WhisperCal] voiceprint matching failed", e);
+		// The default (LLM-off) path already matched these same mappings to decide whether
+		// the LLM was needed — reuse that result instead of scanning the libraries again.
+		let vpProposals = preMatched ?? new Map<string, VoiceprintMatch>();
+		if (!preMatched) {
+			try {
+				vpProposals = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings);
+			} catch (e) {
+				console.warn("[WhisperCal] voiceprint matching failed", e);
+			}
 		}
 
 		// Queue the modal so parallel completions are presented one at a time.
