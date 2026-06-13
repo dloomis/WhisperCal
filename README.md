@@ -102,7 +102,8 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh, offline caching, and conflict detection.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
-- **Speaker tagging** — Run an LLM in the background to identify speakers, review proposals with per-speaker transcript excerpts, and approve names in an in-Obsidian modal.
+- **Speaker tagging — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An LLM fallback is optional (off by default) for speakers the voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
+- **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
@@ -670,6 +671,8 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 ### Speaker Tagging
 
+WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library. The LLM flow described below runs **only as an optional fallback** for speakers the voiceprints didn't match — enable **"LLM fallback for unknown speakers"** in settings. With it off (the default), unknowns are left blank for you to confirm by ear in the modal, and no transcript leaves your machine.
+
 **Prerequisite:** A transcript file must exist (Stage 2 complete, `pipeline_state: titled`).
 
 **Setup:**
@@ -868,6 +871,8 @@ If any check fails, an Obsidian notice explains the problem.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
+| **LLM fallback for unknown speakers** | Off | Embeddings-first: with this **off** (default), speaker tagging never calls the LLM — known people are matched by voiceprint and unknowns are confirmed by ear. **On**, the LLM runs as a last resort to name speakers the voiceprints didn't match. |
+| **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
