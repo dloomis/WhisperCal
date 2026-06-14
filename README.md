@@ -683,6 +683,8 @@ The optional **transcript post-processing** LLM pass runs whenever LLM features 
 2. Set the **"Transcript post-processing"** prompt path in WhisperCal settings (leave it empty to disable the LLM pass).
 3. Set the **"Microphone user"** field to your full name as it appears in meetings.
 
+> **Upgrading?** If your speaker-tagging prompt was still set to the previous default (`Prompts/Speaker Auto-Tag Prompt.md`), WhisperCal repoints it to the new `Prompts/Transcript Post-Processing Prompt.md` automatically on load. A custom prompt path is left untouched.
+
 **Usage:**
 
 1. Click the **+ badge on the Transcript pill** of a meeting card, or run the **"Tag speakers in transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
@@ -769,6 +771,10 @@ When you click **Apply** in the modal, WhisperCal:
 3. Sets `pipeline_state: tagged` in the transcript frontmatter (and mirrors it to the meeting note).
 4. Replaces all occurrences of `**Original Name**` with `**Confirmed Name**` in the transcript body text.
 5. Applies word replacements from the configured replacement file (see [Word Replacements](#word-replacements) below).
+
+#### Reviewing or Editing Tags Later
+
+Once a transcript is tagged, the Transcript pill's **+ badge** re-opens the confirmation modal pre-filled with the current assignments — **no LLM re-runs**. Correct a name and click **Apply** to re-label the transcript body and update the tags. The names you already confirmed are kept as the starting point — a fresh voiceprint match won't silently overwrite them — and applying a correction reconciles the voiceprint libraries, so a fixed name teaches the library for next time.
 
 ### Word Replacements
 
