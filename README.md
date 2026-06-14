@@ -83,6 +83,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Word Replacements](#word-replacements)
   - [Summarization](#summarization)
   - [Meeting Research](#meeting-research)
+  - [Recurring Meetings & Series Prep](#recurring-meetings--series-prep)
   - [Per-Prompt Model Selection](#per-prompt-model-selection)
   - [How Invocation Works](#how-invocation-works)
   - [Concurrency and Timeouts](#concurrency-and-timeouts)
@@ -107,7 +108,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
-- **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline.
+- **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
 - **Per-prompt model selection** — Choose a different Claude model for each LLM prompt (speaker tagging, summarization, research).
 
@@ -457,8 +458,8 @@ Once the summary is complete, the badge becomes hover-revealed on the Note pill 
 
 **Click the "Research" pill** to run LLM-powered meeting research. This stage is **independent** of the transcript pipeline — you can run it anytime after creating a meeting note, even before a recording exists.
 
-- A modal lets you **search and select vault notes** as context (project plans, policies, prior meeting notes, etc.).
-- Add optional instructions or override the prompt entirely with a custom one.
+- For a **recurring meeting** with a [series note](#recurring-meetings--series-prep), the modal opens clean: a tag links to the series note whose prompt and default context notes are already pulled in, and you just click **Research**.
+- For everything else, expand **"Add context notes or customize the prompt"** to **search and select vault notes** as context (project plans, policies, prior meeting notes, etc.), add instructions, or override the prompt entirely.
 - The LLM reads your research prompt along with the selected notes and meeting context, then writes its findings into the meeting note.
 - When complete, `research_notes` is added to the meeting note's frontmatter and the Research pill fills in.
 
@@ -838,11 +839,28 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
 **Usage:**
 
 1. Click the **Research pill** on a meeting card, or run the **"Research meeting"** command.
-2. A modal opens where you can:
-   - **Search and select vault notes** to include as context (project plans, policies, prior notes, etc.).
-   - **Bypass the prompt file** entirely by checking "Use as direct prompt" and writing a custom prompt in the text area. The text area is disabled until the checkbox is enabled — it is the direct prompt input, not supplemental instructions.
+2. The modal adapts to the meeting:
+   - **Recurring meeting with series prep** — it opens minimal. A tag at the top links to the [series note](#recurring-meetings--series-prep) whose prompt and default context notes are pre-filled; just click **Research**.
+   - **Everything else** — expand **"Add context notes or customize the prompt"** (shown by default when there's no series prep) to reveal the advanced controls:
+     - **Search and select vault notes** to include as context (project plans, policies, prior notes, etc.). Selected notes appear as chips.
+     - **Additional instructions** typed in the text area are appended to the research prompt.
+     - **Bypass the prompt file** entirely by checking "Use as direct prompt"; the text area then becomes the direct prompt that replaces the prompt file.
 3. Click **Research** to run the LLM in the background.
 4. When complete, the research output is written into the meeting note and `research_notes` is set in frontmatter.
+
+### Recurring Meetings & Series Prep
+
+Recurring meetings often need the *same* preparation every time — the same standing context notes and the same "what should I look into before this one" instructions. A **series note** captures that prep once and applies it to every occurrence.
+
+**Setup:**
+
+1. Set the **"Meeting series notes folder"** path in WhisperCal settings (leave empty to disable the feature).
+2. The first time you click **Research** on a recurring meeting, WhisperCal auto-creates a series note in that folder (named after the meeting subject) if one doesn't exist yet.
+3. Open the series note and fill in its prep:
+   - **`research_notes`** in frontmatter — default context notes as wikilinks, e.g. `research_notes: "[[Project Plan]], [[Team Roster]]"`. These are pre-selected in the Research modal.
+   - A **`## Research instructions`** section — free-text instructions appended to the research prompt for every occurrence (e.g. "List open items from the project board and the action items from the previous occurrence"). Keep it to concise, scannable talking points.
+
+The series note is matched to an occurrence by its `series_id` (durable), then by subject. On every later Research click, its prompt and notes pre-fill the modal automatically, and the provenance tag links straight back to it so you can tweak the prep in one place.
 
 ### Per-Prompt Model Selection
 
@@ -889,6 +907,7 @@ If any check fails, an Obsidian notice explains the problem.
 | **Summarizer model** | *(default)* | Claude model to use for summarization. |
 | **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your meeting research prompt file. |
 | **Research model** | *(default)* | Claude model to use for meeting research. |
+| **Meeting series notes folder** | *(empty)* | Vault folder of per-series notes for recurring meetings. Each note holds default context notes (`research_notes`) and bespoke instructions (under a `## Research instructions` heading) that pre-fill the Research modal for that series. Leave empty to disable. See [Recurring Meetings & Series Prep](#recurring-meetings--series-prep). |
 | **LLM timeout (minutes)** | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Transcript pill's badge turns green when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
