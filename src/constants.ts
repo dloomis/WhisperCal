@@ -8,6 +8,7 @@ export const COMMAND_TAG_SPEAKERS = "tag-speakers";
 export const COMMAND_SUMMARIZE = "summarize-transcript";
 export const COMMAND_RESEARCH = "research-meeting";
 export const COMMAND_WORD_REPLACE = "run-word-replacements";
+export const COMMAND_OPEN_SERIES_NOTE = "open-meeting-series-note";
 
 export const RECORDING_API_PORT_FILE = join(homedir(), "Library", "Application Support", "Tome", "api-port");
 
@@ -30,6 +31,7 @@ export const FM = {
 	TRANSCRIPT: "transcript",
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",
+	MEETING_SERIES_ID: "meeting_series_id",
 	CONFIRMED_SPEAKERS: "confirmed_speakers",
 	VOICEPRINTS: "voiceprints",
 } as const;

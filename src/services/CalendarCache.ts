@@ -18,6 +18,7 @@ interface SerializedCalendarEvent {
 	organizerEmail: string;
 	isOrganizer?: boolean;
 	isRecurring: boolean;
+	seriesId?: string;
 	responseStatus?: string;
 	categories?: EventCategory[];
 }
@@ -271,6 +272,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 			endTime: new Date(e.endTime),
 			isOrganizer: e.isOrganizer ?? false,
 			isRecurring: e.isRecurring ?? false,
+			seriesId: e.seriesId ?? "",
 			responseStatus: (e.responseStatus ?? "none") as CalendarEvent["responseStatus"],
 			categories: e.categories ?? [],
 		}));

@@ -1,7 +1,7 @@
 import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, FM} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
@@ -12,6 +12,7 @@ import {access} from "fs/promises";
 import {SpeakerTagModal} from "./ui/SpeakerTagModal";
 import {CachedProposalModal} from "./ui/CachedProposalModal";
 import {ResearchModal} from "./ui/ResearchModal";
+import {resolveSeriesPrep, ensureSeriesNote} from "./services/SeriesPrep";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
 import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
@@ -306,6 +307,26 @@ export default class WhisperCalPlugin extends Plugin {
 				if (!fm?.[FM.CALENDAR_EVENT_ID]) return false;
 				if (checking) return true;
 				this.doResearch(file.path);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: COMMAND_OPEN_SERIES_NOTE,
+			name: "Open meeting series note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (!fm?.["meeting_subject"]) return false;       // requires a meeting note
+				if (!this.settings.seriesNotesFolderPath) return false; // feature must be configured
+				if (checking) return true;
+				void (async () => {
+					const seriesId = (fm[FM.MEETING_SERIES_ID] as string) ?? "";
+					const subject = (fm["meeting_subject"] as string) ?? "";
+					const path = await ensureSeriesNote(this.app, this.settings, seriesId, subject);
+					await this.app.workspace.openLinkText(path, "", false);
+				})();
 				return true;
 			},
 		});
@@ -1175,11 +1196,18 @@ export default class WhisperCalPlugin extends Plugin {
 		const subtitle = buildMeetingSubtitle(fm);
 
 		void (async () => {
-			const result = await new ResearchModal(this.app, title, subtitle).prompt();
+			// For a recurring meeting with a configured series note, pre-fill the
+			// modal with the bespoke instruction (appended to the research prompt)
+			// and the series' default context notes. Null when the feature is off
+			// or no series note exists — modal opens blank as before.
+			const seriesPrep = await resolveSeriesPrep(this.app, this.settings, fm);
+			const result = await new ResearchModal(
+				this.app, title, subtitle, seriesPrep?.paths, seriesPrep?.instruction,
+			).prompt();
 			if (!result) return;
 
-			// Normal mode: require notes; bypass mode: require prompt text (enforced by modal)
-			if (!result.bypassPrompt && result.paths.length === 0) return;
+			// Normal mode: require notes OR instructions; bypass mode: require prompt text (enforced by modal)
+			if (!result.bypassPrompt && result.paths.length === 0 && !result.instructions) return;
 			if (!result.bypassPrompt && !this.settings.researchPromptPath) {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				new Notice("Research prompt not configured \u2014 set it in WhisperCal settings");

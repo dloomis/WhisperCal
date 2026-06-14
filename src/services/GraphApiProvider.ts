@@ -47,6 +47,7 @@ interface GraphEvent {
 	attendees: GraphAttendee[];
 	organizer: { emailAddress: GraphEmailAddress };
 	type: string;
+	seriesMasterId?: string | null;
 	responseStatus: GraphResponseStatus;
 	categories?: string[];
 }
@@ -112,7 +113,7 @@ export class GraphApiProvider implements CalendarProvider {
 		}
 
 		const graphBase = this.auth.getGraphBaseUrl();
-		const baseUrl = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$top=50&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type,responseStatus,categories`;
+		const baseUrl = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$top=50&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type,seriesMasterId,responseStatus,categories`;
 
 		const allEvents: GraphEvent[] = [];
 		let url: string | null = baseUrl;
@@ -210,6 +211,7 @@ function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<str
 		organizerEmail: event.organizer?.emailAddress?.address ?? "",
 		isOrganizer: userEmail !== "" && (event.organizer?.emailAddress?.address ?? "").toLowerCase() === userEmail,
 		isRecurring: event.type !== "singleInstance",
+		seriesId: event.seriesMasterId ?? "",
 		responseStatus: (event.responseStatus?.response as CalendarEvent["responseStatus"]) ?? "none",
 		categories: (event.categories ?? []).reduce<EventCategory[]>((acc, name) => {
 			const color = colorMap.get(name);

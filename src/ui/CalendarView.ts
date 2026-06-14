@@ -508,6 +508,7 @@ export class CalendarView extends ItemView {
 			organizerEmail: "",
 			isOrganizer: false,
 			isRecurring: false,
+			seriesId: "",
 			responseStatus: "organizer",
 			categories: [],
 		};
@@ -759,6 +760,7 @@ export class CalendarView extends ItemView {
 				organizerEmail: "",
 				isOrganizer: false,
 				isRecurring: false,
+				seriesId: "",
 				responseStatus: "organizer",
 				categories: [],
 			});
@@ -1083,6 +1085,7 @@ export class CalendarView extends ItemView {
 					organizerEmail: "",
 					isOrganizer: false,
 					isRecurring: false,
+					seriesId: "",
 					responseStatus: "organizer",
 					categories: [],
 				};

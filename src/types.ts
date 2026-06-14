@@ -27,6 +27,7 @@ export interface CalendarEvent {
 	organizerEmail: string;
 	isOrganizer: boolean;
 	isRecurring: boolean;
+	seriesId: string;   // provider series id (seriesMasterId / recurringEventId); "" for non-recurring / single instances
 	responseStatus: ResponseStatus;
 	categories: EventCategory[];
 }

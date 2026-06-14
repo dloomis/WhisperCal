@@ -31,6 +31,7 @@ export interface WhisperCalSettings {
 	// Shared
 	peopleFolderPath: string;
 	transcriptFolderPath: string;
+	seriesNotesFolderPath: string;
 	unscheduledSubject: string;
 	recordingWindowMinutes: number;
 	unlinkedLookbackDays: number;
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	googleClientSecret: "",
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
+	seriesNotesFolderPath: "",
 	unscheduledSubject: "Unscheduled Meeting",
 	recordingWindowMinutes: 15,
 	unlinkedLookbackDays: 30,
@@ -889,6 +891,17 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			"researchModel",
 			"researchFlags",
 		);
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Meeting series notes folder",
+			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
+			placeholder: "Meeting Series",
+			get: () => this.plugin.settings.seriesNotesFolderPath,
+			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
 
 		// Populate all model dropdowns from the API
 		const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =

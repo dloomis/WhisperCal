@@ -195,6 +195,7 @@ function parseGoogleEvent(event: GoogleCalendarEvent, userEmail: string): Calend
 		organizerEmail: event.organizer?.email ?? "",
 		isOrganizer: event.organizer?.self ?? (userEmail !== "" && (event.organizer?.email ?? "").toLowerCase() === userEmail),
 		isRecurring: !!event.recurringEventId,
+		seriesId: event.recurringEventId ?? "",
 		responseStatus,
 		categories,
 	};

@@ -254,11 +254,16 @@ export class NoteCreator {
 			`calendar_event_id: "${yamlEscape(event.id)}"`,
 			`calendar_provider: ${this.settings.calendarProvider}`,
 			`is_recurring: ${event.isRecurring}`,
-		].join("\n");
+		];
+		// Only recurring events carry a series id; keep non-recurring notes clean.
+		if (event.seriesId) {
+			reserved.push(`${FM.MEETING_SERIES_ID}: "${yamlEscape(event.seriesId)}"`);
+		}
+		const reservedStr = reserved.join("\n");
 
 		// Insert before the closing --- of frontmatter
 		const closingIdx = content.indexOf("\n---", 1);
 		if (closingIdx === -1) return content;
-		return content.slice(0, closingIdx) + "\n" + reserved + content.slice(closingIdx);
+		return content.slice(0, closingIdx) + "\n" + reservedStr + content.slice(closingIdx);
 	}
 }
