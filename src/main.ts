@@ -324,7 +324,7 @@ export default class WhisperCalPlugin extends Plugin {
 				void (async () => {
 					const seriesId = (fm[FM.MEETING_SERIES_ID] as string) ?? "";
 					const subject = (fm["meeting_subject"] as string) ?? "";
-					const path = await ensureSeriesNote(this.app, this.settings, seriesId, subject);
+					const {path} = await ensureSeriesNote(this.app, this.settings, seriesId, subject);
 					await this.app.workspace.openLinkText(path, "", false);
 				})();
 				return true;
@@ -1196,11 +1196,29 @@ export default class WhisperCalPlugin extends Plugin {
 		const subtitle = buildMeetingSubtitle(fm);
 
 		void (async () => {
-			// For a recurring meeting with a configured series note, pre-fill the
-			// modal with the bespoke instruction (appended to the research prompt)
-			// and the series' default context notes. Null when the feature is off
-			// or no series note exists — modal opens blank as before.
-			const seriesPrep = await resolveSeriesPrep(this.app, this.settings, fm);
+			// For a recurring meeting, auto-create its series note (frontmatter +
+			// "## Research instructions" section) when one doesn't exist yet, so
+			// the user has a home for per-series prep. Recurring-only and gated on
+			// the feature being configured; silent find-or-create.
+			let justCreatedSeriesNote = false;
+			const isRecurringSeries = fm["is_recurring"] === true
+				|| fm["is_recurring"] === "true"
+				|| !!readFmString(fm, FM.MEETING_SERIES_ID);
+			if (this.settings.seriesNotesFolderPath && isRecurringSeries) {
+				const seriesId = readFmString(fm, FM.MEETING_SERIES_ID) ?? "";
+				const {path, created} = await ensureSeriesNote(this.app, this.settings, seriesId, title);
+				justCreatedSeriesNote = created;
+				if (created) new Notice(`Created meeting series note: ${path}`);
+			}
+
+			// Pre-fill the modal from the series note (bespoke instruction appended
+			// to the research prompt + default context notes). Skip when we just
+			// created the note: it has no prep yet and isn't in the metadata cache,
+			// so resolving would only re-stamp series_id and reformat its
+			// frontmatter. Existing notes still pre-fill; null = modal opens blank.
+			const seriesPrep = justCreatedSeriesNote
+				? null
+				: await resolveSeriesPrep(this.app, this.settings, fm);
 			const result = await new ResearchModal(
 				this.app, title, subtitle, seriesPrep?.paths, seriesPrep?.instruction,
 			).prompt();

@@ -77,17 +77,18 @@ export async function resolveSeriesPrep(
 	return {seriesNotePath: note.path, instruction, paths};
 }
 
-/** Create (or find+open) the series note for a meeting; returns its path. */
+/** Create (or find) the series note for a meeting; returns its path and whether
+ *  it was newly created (false = an existing note was found). */
 export async function ensureSeriesNote(
 	app: App, settings: WhisperCalSettings, seriesId: string, subject: string,
-): Promise<string> {
+): Promise<{path: string; created: boolean}> {
 	const existing = findSeriesNote(app, settings, seriesId, subject);
 	if (existing) {
 		const fm = app.metadataCache.getFileCache(existing)?.frontmatter ?? {};
 		if (seriesId && !readFmString(fm, SERIES_FM.SERIES_ID)) {
 			await updateFrontmatter(app, existing.path, SERIES_FM.SERIES_ID, seriesId);
 		}
-		return existing.path;
+		return {path: existing.path, created: false};
 	}
 	await ensureFolder(app, settings.seriesNotesFolderPath);
 	const path = normalizePath(`${settings.seriesNotesFolderPath}/${sanitizeFilename(subject)}.md`);
@@ -112,25 +113,37 @@ export async function ensureSeriesNote(
 		"",
 	].join("\n");
 	const file = await app.vault.create(path, body);
-	return file.path;
+	return {path: file.path, created: true};
 }
 
 /** Body under the first heading whose text == `heading` (case-insensitive, any level),
- *  up to the next heading of the same or higher level. */
+ *  up to the next heading of the same or higher level. Fenced code blocks (``` / ~~~)
+ *  are skipped, so a markdown example containing `## ...` inside a fence does not
+ *  prematurely terminate the section. */
 function extractMarkdownSection(content: string, heading: string): string {
 	const lines = content.split("\n");
 	const target = heading.trim().toLowerCase();
+	const isFence = (line: string): boolean => /^\s*(```|~~~)/.test(line);
 	let start = -1, level = 0;
+	let inFence = false;
 	for (let i = 0; i < lines.length; i++) {
-		const m = /^(#{1,6})\s+(.*\S)\s*$/.exec(lines[i] as string);
+		const line = lines[i] as string;
+		if (isFence(line)) { inFence = !inFence; continue; }
+		if (inFence) continue;
+		const m = /^(#{1,6})\s+(.*\S)\s*$/.exec(line);
 		if (m && (m[2] as string).trim().toLowerCase() === target) { start = i + 1; level = (m[1] as string).length; break; }
 	}
 	if (start === -1) return "";
 	const out: string[] = [];
+	inFence = false;
 	for (let i = start; i < lines.length; i++) {
-		const m = /^(#{1,6})\s+/.exec(lines[i] as string);
-		if (m && (m[1] as string).length <= level) break;
-		out.push(lines[i] as string);
+		const line = lines[i] as string;
+		if (isFence(line)) inFence = !inFence;
+		else if (!inFence) {
+			const m = /^(#{1,6})\s+/.exec(line);
+			if (m && (m[1] as string).length <= level) break;
+		}
+		out.push(line);
 	}
 	return out.join("\n").trim();
 }
