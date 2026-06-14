@@ -28,7 +28,6 @@ export interface CalendarViewCallbacks {
 	jobs: JobTracker;
 	cardUi: CardUiState;
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
-	onRetagSpeakers: (notePath: string, customInstructions?: string) => void;
 	onReviewSpeakerCandidates: (notePath: string) => void;
 	onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch: (notePath: string) => void;
@@ -641,7 +640,6 @@ export class CalendarView extends ItemView {
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
-			onRetagSpeakers: this.callbacks.onRetagSpeakers,
 			onReviewSpeakerCandidates: this.callbacks.onReviewSpeakerCandidates,
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,

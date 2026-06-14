@@ -92,7 +92,7 @@ export async function matchVoiceprints(
 	if (libs.length === 0) return result;
 
 	for (const m of mappings) {
-		const sp = sidecar.speakers[m.originalName];
+		const sp = sidecar.speakers[m.diarizerLabel || m.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if ((sp.activeSeconds ?? 0) < MATCH_MIN_SECONDS) continue;
 

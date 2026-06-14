@@ -4,6 +4,10 @@ import {TFile} from "obsidian";
 export interface ProposedSpeakerMapping {
 	index: number;
 	originalName: string;
+	/** Diarizer stub label / voiceprint-sidecar key (e.g. "Speaker 2", "You"). Differs from
+	 *  originalName on a re-tag review, where originalName is the current real-name body label.
+	 *  Falls back to originalName when unset. */
+	diarizerLabel?: string;
 	proposedName: string;
 	confidence: string;
 	evidence: string;
@@ -75,6 +79,26 @@ interface LlmSpeakerEntry {
 	evidence: string;
 }
 
+/**
+ * Coerce a model-supplied proposed name to "" when it's empty or a placeholder for "unknown".
+ * Some models emit the string "null"/"none"/"unknown" instead of JSON null; without this they
+ * would be treated as a real proposed name.
+ */
+function cleanProposedName(v: unknown): string {
+	if (typeof v !== "string") return "";
+	const t = v.trim();
+	if (!t || /^(null|none|unknown|unidentified|n\/?a)$/i.test(t)) return "";
+	return t;
+}
+
+/** Normalize a confidence value; treat a literal "null"/"none" string as no confidence. */
+function cleanConfidence(v: unknown): string {
+	if (typeof v !== "string") return "";
+	const t = v.trim();
+	if (!t || /^(null|none)$/i.test(t)) return "";
+	return t.toUpperCase();
+}
+
 function extractJsonSpeakers(
 	stdout: string,
 	speakers: FrontmatterSpeaker[],
@@ -114,12 +138,13 @@ function extractJsonSpeakers(
 	const llmMap = new Map<number, ProposedSpeakerMapping>();
 	for (const entry of parsed.speakers) {
 		const speaker = speakers[entry.index];
+		const proposed = cleanProposedName(entry.proposed_name);
 		llmMap.set(entry.index, {
 			index: entry.index,
 			originalName: entry.original_name,
-			proposedName: entry.proposed_name ?? "",
-			source: entry.proposed_name ? "llm" : "",
-			confidence: entry.confidence?.toUpperCase() ?? "",
+			proposedName: proposed,
+			source: proposed ? "llm" : "",
+			confidence: cleanConfidence(entry.confidence),
 			evidence: entry.evidence ?? "",
 			speakerId: speaker?.id ?? "",
 			lineCount: speaker?.line_count ?? 0,
@@ -296,10 +321,19 @@ export function buildMappingsFromCache(app: App, transcriptPath: string): Propos
 		// Extract speaker number from name for ordering (e.g. "Speaker 1" → 1)
 		const numMatch = name.match(/^Speaker\s+(\d+)$/i);
 		const index = numMatch ? parseInt(numMatch[1]!, 10) : i;
+		// Pre-fill the proposal: a cached LLM/voiceprint proposal if present; otherwise, for an
+		// already-confirmed speaker (re-tag review), the current name — so the modal shows and
+		// can correct the existing mapping. `originalName` stays the current body label, so
+		// applySpeakerTags re-labels the right text and preserves the diarizer stub.
+		const proposedName = s.proposed_name || (s.stub === false ? name : "");
+		// The diarizer stub (sidecar key) is in original_name once tagged; for an untagged stub
+		// the name itself is the stub. id is often empty, so prefer original_name then name.
+		const diarizerLabel = s.original_name || s.id || name;
 		return {
 			index,
 			originalName: name,
-			proposedName: s.proposed_name ?? "",
+			diarizerLabel,
+			proposedName,
 			confidence: s.confidence ?? "",
 			evidence: s.evidence ?? "",
 			speakerId: s.id ?? "",

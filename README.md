@@ -102,7 +102,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh, offline caching, and conflict detection.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
-- **Speaker tagging — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An LLM fallback is optional (off by default) for speakers the voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
+- **Transcript post-processing — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An optional LLM pass (enabled by setting a post-processing prompt) fixes transcription and diarization errors in the transcript itself and proposes names for speakers voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
 - **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
@@ -433,7 +433,7 @@ Once the transcript exists, clicking the pill opens it.
 **Click the + corner badge on the Transcript pill** to run LLM speaker tagging in the background. (The Transcript pill itself opens the transcript file — it's disabled until one exists. Once tags are applied, the badge becomes hover-revealed and re-runs speaker tagging: it resets the pipeline to `titled`, re-tags, and the normal review/apply flow — including auto-summarize in automatic mode — picks up from there.)
 
 - The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or add one-off hints. Single-mic recordings get a tailored prompt asking who's who.
-- The LLM reads your speaker tagging prompt and the transcript, then outputs proposed speaker identities.
+- The LLM reads your post-processing prompt and the transcript, **fixes transcription and diarization errors in place** (confirmed voiceprint matches are passed in as fixed anchors), then outputs proposed identities for the remaining speakers.
 - A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, evidence, and [transcript excerpts](#per-speaker-transcript-excerpts).
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
@@ -667,18 +667,20 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 **Enable LLM features:** LLM features are disabled by default. Toggle **"Enable LLM features"** in settings. On first enable, a consent modal explains that transcripts and note content may be sent to a cloud LLM provider, and asks you to confirm.
 
-**Included prompts:** The plugin ships with three ready-to-use prompt files in the `samples/` directory — speaker tagging, summarization, and meeting research. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
+**Included prompts:** The plugin ships with ready-to-use prompt files in the `samples/` directory — transcript post-processing, summarization, and meeting research. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
 
 ### Speaker Tagging
 
-WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library. The LLM flow described below runs **only as an optional fallback** for speakers the voiceprints didn't match — enable **"LLM fallback for unknown speakers"** in settings. With it off (the default), unknowns are left blank for you to confirm by ear in the modal, and no transcript leaves your machine.
+WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library.
+
+The optional **transcript post-processing** LLM pass runs whenever LLM features are on and a post-processing prompt is set (the prompt path is the on/off switch). In one pass it **fixes the transcript in place** — correcting transcription errors and diarization mistakes (mis-attributed lines, echo/overlap duplicates) — and **proposes identities only for the speakers voiceprints didn't match** (the confident voiceprint hits are passed in as fixed CERTAIN anchors). [Word replacements](#word-replacements) run first as the only deterministic, non-LLM fix. Leave the prompt path empty to stay fully LLM-free: known people are still matched by voiceprint and unknowns confirmed by ear in the modal, and no transcript leaves your machine.
 
 **Prerequisite:** A transcript file must exist (Stage 2 complete, `pipeline_state: titled`).
 
 **Setup:**
 
-1. Copy `samples/Speaker Auto-Tag Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Speaker Tagging.md`). This prompt works as a ready-to-use default — customize it if needed.
-2. Set the **"Speaker tagging prompt"** path in WhisperCal settings.
+1. The plugin installs `Prompts/Transcript Post-Processing Prompt.md` into your vault automatically — customize it if needed. (To install it by hand, copy `samples/Transcript Post-Processing Prompt.md` from the plugin's GitHub repo into your vault.)
+2. Set the **"Transcript post-processing"** prompt path in WhisperCal settings (leave it empty to disable the LLM pass).
 3. Set the **"Microphone user"** field to your full name as it appears in meetings.
 
 **Usage:**
@@ -795,7 +797,7 @@ Shine Mountain,Cheyenne Mountain
 
 **When replacements run:**
 
-- **Automatically** after speaker tagging — when you click Apply in the speaker tag modal, word replacements run on the transcript immediately after speaker names are applied.
+- **Automatically** during transcript post-processing — word replacements run first (before the LLM cleanup pass), and again when you click Apply in the speaker tag modal.
 - **Manually on any note** — use the replace-all icon (⇄) in the note toolbar or the **"Run word replacements"** command from the command palette. A confirmation modal lets you review the replacement list before running.
 
 ### Summarization
@@ -871,18 +873,17 @@ If any check fails, an Obsidian notice explains the problem.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
-| **LLM fallback for unknown speakers** | Off | Embeddings-first: with this **off** (default), speaker tagging never calls the LLM — known people are matched by voiceprint and unknowns are confirmed by ear. **On**, the LLM runs as a last resort to name speakers the voiceprints didn't match. |
 | **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
-| **Speaker tagging prompt** | `Prompts/Speaker Auto-Tag Prompt.md` | Path to your speaker tagging prompt file (vault-relative, absolute, or `~/`-relative). |
-| **Speaker tagging model** | *(default)* | Claude model to use for speaker tagging. |
+| **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the prompt that fixes transcription + diarization errors and proposes names for speakers voiceprints didn't match (vault-relative, absolute, or `~/`-relative). Leave empty to disable the LLM pass. |
+| **Transcript post-processing model** | *(default)* | Claude model to use for transcript post-processing. |
 | **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
 | **Summarizer model** | *(default)* | Claude model to use for summarization. |
 | **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your meeting research prompt file. |
 | **Research model** | *(default)* | Claude model to use for meeting research. |
-| **LLM timeout (minutes)** | `5` | Kill the LLM process if it runs longer than this. Set to `0` to disable the timeout. |
+| **LLM timeout (minutes)** | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Transcript pill's badge turns green when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
 | **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
@@ -958,15 +959,15 @@ All commands are available from the command palette (`Cmd+P`):
 | **CLI command** | `claude` | LLM CLI executable name or path. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
 | **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
-| **Speaker tagging prompt** | `Prompts/Speaker Auto-Tag Prompt.md` | Path to your speaker tagging prompt file. |
-| **Speaker tagging model** | *(default)* | Claude model for speaker tagging. |
+| **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the transcript post-processing prompt file. |
+| **Transcript post-processing model** | *(default)* | Claude model for transcript post-processing. |
 | **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
 | **Summarizer model** | *(default)* | Claude model for summarization. |
 | **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your research prompt file. |
 | **Research model** | *(default)* | Claude model for meeting research. |
-| **LLM timeout** | `5` min | Kill the LLM process after this duration (0 = no timeout). |
+| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
-| **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts after speaker tagging (one per line: `search,replace`). Click **Open** to create and edit. |
+| **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
 | **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review, never auto-applied) and auto-summarize after tags are applied. |
 | **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
 | **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
@@ -1040,7 +1041,7 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 
 ### LLM job fails immediately
 - Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
-- Ensure your **Speaker tagging prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
+- Ensure your **Transcript post-processing prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
 - Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail.
 
 ### Speaker tagging modal shows no AI suggestions
@@ -1051,7 +1052,7 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 - The default limit is 2 simultaneous LLM processes. Wait for a running job to finish, or increase **Max concurrent LLM processes** in settings.
 
 ### LLM process timed out
-- The default timeout is 5 minutes. For long transcripts, increase the **LLM timeout** setting. Set to `0` to disable the timeout entirely.
+- The default timeout is 10 minutes. For long transcripts, increase the **LLM timeout** setting. Set to `0` to disable the timeout entirely.
 
 ### Pipeline pills are grayed out
 Pills are disabled when their prerequisites aren't met:

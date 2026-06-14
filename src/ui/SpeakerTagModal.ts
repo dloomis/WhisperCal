@@ -6,6 +6,10 @@ import {renderModalHeader} from "./ModalHeader";
 export interface SpeakerTagDecision {
 	speakerId: string;
 	originalName: string;
+	/** Diarizer stub label / voiceprint-sidecar key (e.g. "Speaker 2", "You"). Differs from
+	 *  originalName on a re-tag review, where originalName is the current real-name body label.
+	 *  Falls back to originalName when unset. */
+	diarizerLabel?: string;
 	confirmedName: string;
 	confidence: string;
 	evidence: string;
@@ -519,6 +523,7 @@ export class SpeakerTagModal extends Modal {
 			? this.mappings.map((m, i) => ({
 				speakerId: m.speakerId,
 				originalName: m.originalName,
+				diarizerLabel: m.diarizerLabel,
 				confirmedName: this.inputs[i]?.value.trim() ?? "",
 				confidence: m.confidence,
 				evidence: m.evidence,

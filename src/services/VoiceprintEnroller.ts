@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import {FM} from "../constants";
-import {ensureFolder, resolveWikiLink} from "../utils/vault";
+import {ensureFolder, resolveWikiLink, stripWikiLink} from "../utils/vault";
 import {sanitizeFilename} from "../utils/sanitize";
 import {cosine, meanNorm} from "../utils/vec";
 import type {VoiceprintMatch} from "./VoiceprintMatcher";
@@ -68,22 +68,34 @@ export interface EnrollResult {
 	enrolled: string[];
 	/** Confirmed labels skipped (no sidecar entry, too short, etc.). */
 	skipped: number;
+	/** Libraries cleaned of a stale sample from this transcript after a corrected tag. */
+	corrected: number;
 }
 
 /** Resolve and parse the voiceprint sidecar for a transcript, or null if absent/invalid. */
 export async function loadSidecar(app: App, transcriptPath: string): Promise<VoiceprintSidecar | null> {
 	const candidates: string[] = [];
 
-	// Prefer the `voiceprints:` frontmatter pointer — resolved by name anywhere in the
-	// vault (Obsidian link resolution), so the sidecar can live in whatever folder Tome
-	// writes it to, not just next to the transcript.
+	// Resolve the `voiceprints:` frontmatter pointer, so the sidecar can live wherever Tome
+	// writes it (it's named after the recording, not the transcript).
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (file instanceof TFile) {
-		const fm = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+		const fm = (app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+		// 1. Obsidian link resolution — handles [[wikilinks]] and recognized attachment types.
 		const linked = resolveWikiLink(app, fm, FM.VOICEPRINTS, transcriptPath);
 		if (linked) candidates.push(linked.path);
+		// 2. Path resolution of the raw value. Tome writes a bare ".voiceprints.json" filename,
+		//    which Obsidian's link index does NOT resolve (".json" isn't a linkable extension),
+		//    so resolve it as a path relative to the transcript's own folder, then vault root.
+		const raw = fm[FM.VOICEPRINTS];
+		if (typeof raw === "string" && raw.trim()) {
+			const name = stripWikiLink(raw);
+			const dir = transcriptPath.includes("/") ? transcriptPath.slice(0, transcriptPath.lastIndexOf("/")) : "";
+			if (dir) candidates.push(`${dir}/${name}`);
+			candidates.push(name);
+		}
 	}
-	// Fall back to the sibling convention.
+	// 3. Fall back to the sibling convention (<transcript>.voiceprints.json).
 	candidates.push(transcriptPath.replace(/\.md$/, ".voiceprints.json"));
 
 	for (const path of candidates) {
@@ -109,6 +121,46 @@ async function loadLibrary(app: App, path: string): Promise<VoiceprintLibrary | 
 }
 
 /**
+ * Enforce the per-(transcript, diarizer-label) invariant: every voiceprint sample from this
+ * transcript must live ONLY in the library of the label's currently-confirmed speaker. Scans
+ * every library and drops samples from `source` whose label is now confirmed to someone else
+ * (or to no one — a cleared tag). This is what makes a corrected tag fix the library: changing
+ * Speaker 2 from "Dave" to "Bill" removes Dave's stale sample here, and Bill's is (re-)added by
+ * the enroll pass. Returns the number of libraries changed. Best-effort; never throws.
+ */
+async function reconcileTranscriptSamples(
+	app: App,
+	folder: string,
+	source: string,
+	labelToName: Map<string, string>,
+): Promise<number> {
+	let corrected = 0;
+	try {
+		if (!(await app.vault.adapter.exists(folder))) return 0;
+		const listing = await app.vault.adapter.list(folder);
+		for (const path of listing.files) {
+			if (!path.endsWith(".json")) continue;
+			const lib = await loadLibrary(app, path);
+			if (!lib || !lib.name || lib.samples.length === 0) continue;
+			const kept = lib.samples.filter(s =>
+				s.source !== source || labelToName.get(s.originalLabel) === lib.name
+			);
+			if (kept.length === lib.samples.length) continue; // nothing from this transcript to move
+			lib.samples = kept;
+			try {
+				if (lib.samples.length === 0) await app.vault.adapter.remove(path);
+				else await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
+				corrected++;
+				console.warn(`[WhisperCal] reconciled voiceprint "${lib.name}" — dropped a stale sample from ${source}`);
+			} catch { /* skip an unwritable library */ }
+		}
+	} catch {
+		// folder missing or unreadable — nothing to reconcile
+	}
+	return corrected;
+}
+
+/**
  * Enroll voiceprints from the user's confirmed speaker decisions. Best-effort and
  * idempotent (re-tagging the same transcript won't double-count). Never throws.
  */
@@ -119,7 +171,7 @@ export async function enrollVoiceprints(
 	decisions: SpeakerTagDecision[],
 	today: string,
 ): Promise<EnrollResult> {
-	const result: EnrollResult = {enrolled: [], skipped: 0};
+	const result: EnrollResult = {enrolled: [], skipped: 0, corrected: 0};
 
 	const sidecar = await loadSidecar(app, transcriptPath);
 	if (!sidecar) return result;
@@ -130,16 +182,30 @@ export async function enrollVoiceprints(
 
 	const source = transcriptPath.includes("/") ? transcriptPath.slice(transcriptPath.lastIndexOf("/") + 1) : transcriptPath;
 
+	// Reconcile first so a corrected tag fixes the library: this transcript's sample for each
+	// diarizer label must live only in that label's currently-confirmed speaker. Runs even when
+	// nothing new enrolls (e.g. a tag was cleared), so stale samples are always pruned.
+	const labelToName = new Map<string, string>();
+	for (const d of decisions) {
+		const nm = d.confirmedName?.trim();
+		const label = d.diarizerLabel || d.originalName;
+		if (nm && label) labelToName.set(label, nm);
+	}
+	result.corrected = await reconcileTranscriptSamples(app, voiceprintFolderPath, source, labelToName);
+
 	// A person may hold more than one diarizer label (a split cluster) — collect all.
 	const pending = new Map<string, VoiceprintSample[]>();
 	for (const d of decisions) {
 		const name = d.confirmedName?.trim();
 		if (!name) continue;
-		const sp = sidecar.speakers[d.originalName];
+		// Sidecar key is the diarizer stub. On a first tag originalName IS the stub; on a re-tag
+		// review originalName is the real-name body label, so use the explicit diarizerLabel.
+		const label = d.diarizerLabel || d.originalName;
+		const sp = sidecar.speakers[label];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) { result.skipped++; continue; }
 		if ((sp.activeSeconds ?? 0) < MIN_ENROLL_SECONDS) { result.skipped++; continue; }
 		const list = pending.get(name) ?? [];
-		list.push({embedding: sp.embedding, source, originalLabel: d.originalName, activeSeconds: sp.activeSeconds ?? 0, date: today});
+		list.push({embedding: sp.embedding, source, originalLabel: label, activeSeconds: sp.activeSeconds ?? 0, date: today});
 		pending.set(name, list);
 	}
 	if (pending.size === 0) return result;
@@ -212,7 +278,7 @@ export async function healVoiceprints(
 		const confirmed = d.confirmedName?.trim();
 		if (!confirmed) continue;                           // cleared/skipped — not a "wrong match" signal
 		if (confirmed === proposed) continue;               // match accepted — nothing to heal
-		const sp = sidecar.speakers[d.originalName];
+		const sp = sidecar.speakers[d.diarizerLabel || d.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if (await removeCulpritSample(app, voiceprintFolderPath, proposed, sp.embedding)) healed++;
 	}

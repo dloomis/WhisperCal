@@ -63,12 +63,6 @@ export interface WhisperCalSettings {
 	autoSummarizeAfterTagging: boolean;
 	/** Startup catch-up scan window for auto-tagging, in hours. 0 disables the scan. */
 	autoTagLookbackHours: number;
-	/**
-	 * When true, speaker tagging falls back to the LLM for speakers that voiceprints
-	 * didn't match. Default false — embeddings-first and LLM-free: known people are
-	 * tagged acoustically, unknowns are confirmed by ear (click-to-play) in the modal.
-	 */
-	llmSpeakerTagFallback: boolean;
 	showAllDayEvents: boolean;
 	importantOrganizers: ImportantOrganizer[];
 	cacheFutureDays: number;
@@ -101,7 +95,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	unscheduledSubject: "Unscheduled Meeting",
 	recordingWindowMinutes: 15,
 	unlinkedLookbackDays: 30,
-	speakerTaggingPromptPath: "Prompts/Speaker Auto-Tag Prompt.md",
+	speakerTaggingPromptPath: "Prompts/Transcript Post-Processing Prompt.md",
 	summarizerPromptPath: "Prompts/Meeting Transcript Summarizer Prompt.md",
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
@@ -117,13 +111,12 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	speakerTagFlags: "",
 	summarizerFlags: "",
 	researchFlags: "",
-	llmTimeoutMinutes: 5,
+	llmTimeoutMinutes: 10,
 	llmMaxConcurrent: 2,
 	llmDebugMode: false,
 	llmDebugLogging: false,
 	autoSummarizeAfterTagging: false,
 	autoTagLookbackHours: 48,
-	llmSpeakerTagFallback: false,
 	showAllDayEvents: false,
 	importantOrganizers: [],
 	cacheFutureDays: 5,
@@ -757,7 +750,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addNumberSetting({
 			container: containerEl,
 			name: "LLM timeout (minutes)",
-			desc: "Kill the LLM process if it runs longer than this (0 = no timeout)",
+			desc: "Kill the LLM process if it runs longer than this (0 = no timeout). Transcript post-processing reads and rewrites the whole transcript, so give it headroom.",
 			min: 0,
 			get: () => this.plugin.settings.llmTimeoutMinutes,
 			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
@@ -800,12 +793,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
 			modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
 			flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
-			// Rendered right after the subheading, before the Prompt field — for a
-			// section-specific setting that gates the rest (e.g. the LLM fallback toggle).
-			extraTop?: () => void,
 		) => {
 			this.addSubHeading(containerEl, name);
-			extraTop?.();
 
 			new Setting(containerEl)
 				.setName("Prompt")
@@ -848,21 +837,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		};
 
 		addPromptSetting(
-			"Speaker tagging",
-			"Vault-relative or absolute path to the Claude Code prompt file for tagging speakers (e.g. Prompts/Speaker Tagging.md)",
-			"Prompts/Speaker Tagging.md",
+			"Transcript post-processing",
+			"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
+			"Prompts/Transcript Post-Processing Prompt.md",
 			"speakerTaggingPromptPath",
 			"speakerTagModel",
 			"speakerTagFlags",
-			() => {
-				this.addToggleSetting({
-					container: containerEl,
-					name: "LLM fallback for unknown speakers",
-					desc: "Off (default): tag known people by voiceprint and confirm unknowns by ear in the modal — no LLM, nothing leaves your machine. On: run the LLM as a last resort to name speakers the voiceprints didn't match.",
-					get: () => this.plugin.settings.llmSpeakerTagFallback,
-					set: v => { this.plugin.settings.llmSpeakerTagFallback = v; },
-				});
-			},
 		);
 
 		this.addTextSetting({

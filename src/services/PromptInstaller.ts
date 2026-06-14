@@ -1,4 +1,5 @@
 import {App, normalizePath} from "obsidian";
+import postProcessingPrompt from "../../prompts/Transcript Post-Processing Prompt.md";
 import speakerTagPrompt from "../../prompts/Speaker Auto-Tag Prompt.md";
 import summarizerPrompt from "../../prompts/Meeting Transcript Summarizer Prompt.md";
 import researchPrompt from "../../prompts/Meeting Research Prompt.md";
@@ -9,6 +10,7 @@ interface PromptEntry {
 }
 
 const BUNDLED_PROMPTS: PromptEntry[] = [
+	{settingPath: "Prompts/Transcript Post-Processing Prompt.md", content: postProcessingPrompt},
 	{settingPath: "Prompts/Speaker Auto-Tag Prompt.md", content: speakerTagPrompt},
 	{settingPath: "Prompts/Meeting Transcript Summarizer Prompt.md", content: summarizerPrompt},
 	{settingPath: "Prompts/Meeting Research Prompt.md", content: researchPrompt},

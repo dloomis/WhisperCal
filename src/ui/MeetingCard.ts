@@ -42,7 +42,6 @@ export interface MeetingCardOpts {
 	importantOrganizerEmails?: readonly string[];
 	llmEnabled?: boolean;
 	onTagSpeakers?: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
-	onRetagSpeakers?: (notePath: string, customInstructions?: string) => void;
 	onReviewSpeakerCandidates?: (notePath: string) => void;
 	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
@@ -873,22 +872,16 @@ function renderCardDynamic(
 			setIcon(badge, "plus");
 			if (states.speakers === "running") {
 				badge.addClass("is-running");
-				badge.setAttribute("aria-label", "Tagging speakers…");
+				badge.setAttribute("aria-label", "Post-processing transcript…");
 				badge.disabled = true;
 			} else if (states.speakers === "complete") {
-				// Re-tag an already-tagged transcript (hover-revealed, like the
-				// summary badge's regenerate)
-				badge.setAttribute("aria-label", "Re-run speaker tagging with optional instructions");
+				// Review/edit the applied speaker tags (hover-revealed). No LLM re-run —
+				// opens the modal pre-filled with the current assignments so you can correct
+				// a name; Apply re-labels the body and re-writes the tags.
+				badge.setAttribute("aria-label", "Review and edit speaker tags");
 				badge.addEventListener("click", (e) => {
 					e.stopPropagation();
-					void (async () => {
-						const instructions = await new LlmInstructionsModal(app, {
-							title: "Re-tag speakers with instructions",
-							subtitle: event.subject,
-						}).prompt();
-						if (instructions === null) return; // cancelled
-						opts.onRetagSpeakers?.(notePath, instructions || undefined);
-					})();
+					opts.onReviewSpeakerCandidates?.(notePath);
 				});
 			} else if (states.speakersCandidatesReady) {
 				// Unapproved candidates cached: green badge, click resumes the

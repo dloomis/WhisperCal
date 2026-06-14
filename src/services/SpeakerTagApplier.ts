@@ -42,7 +42,10 @@ export async function applySpeakerTags(
 				const decision = (speaker.id ? decisionById.get(speaker.id) : undefined)
 					?? (speaker.name ? decisionByName.get(speaker.name.toLowerCase()) : undefined);
 				if (!decision || !decision.confirmedName) continue;
-				speaker.original_name = speaker.name;
+				// Preserve the diarizer stub: set original_name only on the first tag. On a
+				// re-tag review, speaker.name is already a real name, so overwriting would lose
+				// the stub that voiceprint match/enroll key off.
+				if (!speaker.original_name) speaker.original_name = speaker.name;
 				speaker.name = decision.confirmedName;
 				speaker.stub = false;
 				if (decision.confidence) speaker.confidence = decision.confidence;

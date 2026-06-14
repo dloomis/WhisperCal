@@ -62,6 +62,21 @@ function parseInviteeNames(fm: Record<string, unknown>): string[] {
 	return names;
 }
 
+/**
+ * Count whitespace-delimited words in a transcript's body (after frontmatter). Used to
+ * detect catastrophic deletion by an in-place post-processing edit. Mirrors the
+ * frontmatter/body split in WordReplacer.applyWordReplacements.
+ */
+function bodyWordCount(content: string): number {
+	let body = content;
+	const fmEnd = content.indexOf("\n---", 1);
+	if (fmEnd >= 0) {
+		const bodyStart = content.indexOf("\n", fmEnd + 4);
+		if (bodyStart >= 0) body = content.slice(bodyStart);
+	}
+	return body.match(/\S+/g)?.length ?? 0;
+}
+
 interface PluginData extends WhisperCalSettings {
 	// Legacy single token cache (migrated on load)
 	tokenCache?: TokenCache | null;
@@ -145,9 +160,6 @@ export default class WhisperCalPlugin extends Plugin {
 			cardUi: this.cardUi,
 			onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => {
 				void this.doTagSpeakers(transcriptFile, transcriptFm, notePath, customInstructions);
-			},
-			onRetagSpeakers: (notePath: string, customInstructions?: string) => {
-				void this.regenerateSpeakerTags(notePath, customInstructions);
 			},
 			onReviewSpeakerCandidates: (notePath: string) => {
 				this.reviewSpeakerCandidates(notePath);
@@ -413,6 +425,9 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!this.settings.llmExtraFlags) {
 			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
 		}
+		// Drop the removed llmSpeakerTagFallback toggle from older data files — the
+		// post-processing prompt path is now the LLM on/off switch.
+		delete (this.settings as unknown as Record<string, unknown>)["llmSpeakerTagFallback"];
 		// MacWhisper is macOS-only; coerce to Recording API on other platforms
 		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
 			this.settings.recordingSource = "api";
@@ -594,22 +609,32 @@ export default class WhisperCalPlugin extends Plugin {
 			if (!choice) return; // Cancelled
 		}
 
-		// Embeddings-first: build the speaker list from the transcript body and match it
-		// against the enrolled voiceprint libraries. By default (fallback off) we never call
-		// the LLM — known people are pre-filled and unknowns are confirmed by ear in the
-		// modal. The LLM runs only as a fallback for unmatched speakers when enabled.
-		// Confident voiceprint hits (label = name) are handed to that fallback so the prompt
-		// anchors on them and only spends effort on the still-unidentified labels.
+		// Native deterministic cleanup first: word replacements run before anything reads the
+		// body, so the LLM (and the modal) see the corrected text. The LLM then handles the
+		// context-dependent transcription + diarization fixes the replacement list can't.
+		// Then embeddings-first speaker identity: match each body label against the enrolled
+		// voiceprint libraries. The LLM post-processing pass runs whenever it's enabled and a
+		// prompt is configured (the prompt path is the on/off switch); confident voiceprint
+		// hits are passed as fixed CERTAIN anchors so the LLM only names the rest. With no
+		// prompt (or LLM off) we stay LLM-free: known people are pre-filled and unknowns are
+		// confirmed by ear in the modal.
 		let voiceprintMatches: string | undefined;
+		let preBody: string | undefined; // file snapshot taken just before the LLM edits it, for failure-restore
+		let runLlm = false;
 		try {
+			if (this.settings.replacementFilePath) {
+				const wr = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+				if (wr.totalCount > 0) console.debug(`[WhisperCal] Applied ${wr.totalCount} word replacement(s) before post-processing`);
+			}
 			const content = await this.app.vault.cachedRead(transcriptFile);
+			preBody = content;
 			const baseMappings = buildMappingsFromBody(content);
+			runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath;
 			const vp = baseMappings.length > 0
 				? await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, baseMappings)
 				: new Map<string, VoiceprintMatch>();
-			const unmatched = baseMappings.filter(m => !m.proposedName);
-			const useLlm = this.settings.llmSpeakerTagFallback && (baseMappings.length === 0 || unmatched.length > 0);
-			if (!useLlm) {
+			if (!runLlm) {
+				// LLM-free path: cache the voiceprint matches (if any) and confirm by ear.
 				if (baseMappings.length > 0) await writeSpeakerProposals(this.app, transcriptPath, baseMappings);
 				if (auto) {
 					if (vp.size > 0) this.setCardStatus(notePath, `${vp.size} speaker(s) matched by voiceprint — review`, "users-round", 6000, "done");
@@ -622,23 +647,23 @@ export default class WhisperCalPlugin extends Plugin {
 				void this.presentSpeakerTagModal(baseMappings, transcriptFile, transcriptPath, notePath, vp);
 				return;
 			}
-			// Fallback enabled with unmatched speakers: fall through to the LLM below. Pass the
-			// confident voiceprint hits so the prompt treats them as fixed CERTAIN anchors and
-			// only works the unmatched labels; the modal re-matches afterward, so acoustic
-			// matches still win regardless.
+			// LLM path: pass the confident voiceprint hits so the prompt treats them as fixed
+			// CERTAIN anchors and only works the unmatched labels; the modal re-matches
+			// afterward, so acoustic matches still win regardless.
 			if (vp.size > 0) {
 				voiceprintMatches = Array.from(vp.entries())
 					.map(([label, match]) => `${label} = ${match.name}`)
 					.join("; ");
 			}
 		} catch (e) {
-			console.warn("[WhisperCal] embeddings-first tagging failed; falling back to LLM", e);
+			console.warn("[WhisperCal] pre-LLM cleanup/voiceprint step failed", e);
 		}
 
-		if (!this.settings.speakerTaggingPromptPath) {
-			if (auto) return;
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			new Notice("Speaker tagging prompt not configured — set it in WhisperCal settings");
+		// Only spawn the LLM when we have a snapshot to restore from. runLlm is set only after a
+		// successful read; reaching here without it means the LLM-free path already handled the
+		// run (and returned) or the read failed — either way, don't run the LLM.
+		if (!runLlm || preBody === undefined) {
+			if (!auto) new Notice("Could not read the transcript for post-processing");
 			return;
 		}
 
@@ -667,7 +692,7 @@ export default class WhisperCalPlugin extends Plugin {
 		this.runLlmJob({
 			jobKind: "speakerTag",
 			filePath: transcriptPath,
-			label: "Tagging speakers",
+			label: "Post-processing transcript",
 			promptPath: this.settings.speakerTaggingPromptPath,
 			cardIcon: "users-round",
 			cardModel: this.settings.speakerTagModel || undefined,
@@ -690,38 +715,56 @@ export default class WhisperCalPlugin extends Plugin {
 				peopleRoster,
 				voiceprintMatches,
 				additionalInstructions: customInstructions,
-				outputFormat: 'Output format: Return ONLY a fenced JSON code block with this schema: {"speakers":[{"index":0,"original_name":"...","proposed_name":"...or null","confidence":"CERTAIN|HIGH|LOW|null","evidence":"..."}]}. Do not include any other text outside the JSON block.',
+				outputFormat: 'Output format: After your edits, end your final message with ONLY a fenced JSON code block in this schema: {"speakers":[{"index":0,"original_name":"<verbatim stub label>","proposed_name":"<full name, or JSON null>","confidence":"CERTAIN|HIGH|LOW, or JSON null","evidence":"..."}]}. Use the value null (never the string "null") when unknown. No other text after the JSON block.',
 				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
 				debugMode: this.settings.llmDebugMode,
 				debugLogging: this.settings.llmDebugLogging,
 			}),
 			onSuccess: (result) => {
-				// runLlmJob calls onSuccess even on nonzero exit (after logging the
-				// error to the note) — in auto mode surface a card status instead
-				// of parsing stdout that's likely empty.
-				if (auto && result.exitCode !== 0) {
-					this.setCardStatus(notePath, "Speaker tagging failed — see meeting note for details", "alert-circle", 8000, "warning");
+				// runLlmJob calls onSuccess even on nonzero exit (after logging the error to
+				// the note). Because the LLM now edits the transcript in place, a crash/timeout
+				// can leave a half-rewritten file — revert to the pre-LLM snapshot.
+				if (result.exitCode !== 0) {
+					void this.restoreTranscriptBody(transcriptPath, preBody, notePath, auto);
 					return;
 				}
-				void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto);
+				void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto, preBody);
 			},
 		});
 	}
 
-	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string, auto = false): Promise<void> {
-		// Clear the "Tagging speakers…" progress status now that the LLM is done.
+	private async handleSpeakerTagSuccess(stdout: string, transcriptFile: TFile, transcriptPath: string, notePath: string, auto = false, snapshot?: string): Promise<void> {
+		// Clear the "Post-processing transcript…" progress status now that the LLM is done.
 		// Success/error paths below will set their own status as needed.
 		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
 			if (auto) {
-				this.setCardStatus(notePath, "Transcript was deleted while speaker tagging was running", "alert-circle", 8000, "warning");
+				this.setCardStatus(notePath, "Transcript was deleted while post-processing was running", "alert-circle", 8000, "warning");
 				return;
 			}
-			new Notice("Transcript was deleted while speaker tagging was running");
+			new Notice("Transcript was deleted while post-processing was running");
 			clearProgressStatus();
 			return;
+		}
+
+		// Catastrophic-deletion tripwire: the LLM edits the body in place, so a rogue run could
+		// delete real speech. If the body shrank to a small fraction of the pre-LLM snapshot,
+		// revert rather than trust the edit. The floor is deliberately low — legitimate echo /
+		// catch-all cleanup can remove a large minority of words (e.g. a mic channel that echoed
+		// everyone), so only a near-total loss trips this.
+		if (snapshot !== undefined) {
+			try {
+				const current = await this.app.vault.read(transcriptFile);
+				const before = bodyWordCount(snapshot);
+				if (before > 0 && bodyWordCount(current) < before * 0.34) {
+					await this.restoreTranscriptBody(transcriptPath, snapshot, notePath, auto, "Transcript post-processing removed too much text — transcript restored");
+					return;
+				}
+			} catch (e) {
+				console.warn("[WhisperCal] post-processing deletion check failed", e);
+			}
 		}
 
 		const {mappings, warning} = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
@@ -757,6 +800,33 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		await this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
+	}
+
+	/**
+	 * Revert a transcript to a pre-LLM snapshot after a failed or over-aggressive
+	 * post-processing run, then surface the outcome. Best-effort — a missing file or
+	 * write error is logged, not thrown.
+	 */
+	private async restoreTranscriptBody(
+		transcriptPath: string,
+		snapshot: string | undefined,
+		notePath: string,
+		auto: boolean,
+		message = "Transcript post-processing failed — transcript restored",
+	): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(transcriptPath);
+		if (snapshot !== undefined && file instanceof TFile) {
+			try {
+				await this.app.vault.modify(file, snapshot);
+			} catch (e) {
+				console.error("[WhisperCal] failed to restore transcript snapshot", e);
+			}
+		}
+		if (auto) {
+			this.setCardStatus(notePath, message, "alert-circle", 8000, "warning");
+		} else {
+			new Notice(message);
+		}
 	}
 
 	/**
@@ -845,6 +915,9 @@ export default class WhisperCalPlugin extends Plugin {
 					if (enroll.enrolled.length > 0) {
 						new Notice(`Enrolled voiceprint for ${enroll.enrolled.length} speaker(s)`);
 					}
+					if (enroll.corrected > 0) {
+						new Notice(`Updated ${enroll.corrected} voiceprint librar${enroll.corrected === 1 ? "y" : "ies"} after re-tagging`);
+					}
 				} catch (e) {
 					console.warn("[WhisperCal] voiceprint enrollment failed", e);
 				}
@@ -888,8 +961,10 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	/**
-	 * Open the speaker review modal directly from cached proposals (badge
-	 * menu "Review speaker candidates" — no intermediate prompt).
+	 * Open the speaker review modal from the transcript's current frontmatter. Serves both the
+	 * green "candidates ready" badge (cached proposals) and the hover "+" on an already-tagged
+	 * transcript (existing assignments, pre-filled). No LLM runs — the modal's Apply re-labels
+	 * the body and re-writes the tags.
 	 */
 	private reviewSpeakerCandidates(notePath: string): void {
 		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
@@ -899,36 +974,10 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 		const mappings = buildMappingsFromCache(this.app, transcriptFile.path);
 		if (mappings.length === 0) {
-			new Notice("No cached speaker candidates found");
+			new Notice("No speakers found in the transcript");
 			return;
 		}
 		void this.presentSpeakerTagModal(mappings, transcriptFile, transcriptFile.path, notePath);
-	}
-
-	/**
-	 * Re-run speaker tagging on an already-tagged transcript. Mirrors
-	 * regenerateSummary: clear stale cached proposals, reset pipeline_state to
-	 * "titled" on transcript and note so doTagSpeakers' state guard passes,
-	 * then run the normal tagging flow. Applying the new tags advances the
-	 * state again (and re-triggers auto-summarize in automatic mode).
-	 */
-	private async regenerateSpeakerTags(notePath: string, customInstructions?: string): Promise<void> {
-		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
-		if (!transcriptFile) {
-			new Notice("No linked transcript found");
-			return;
-		}
-		if (this.jobs.has("speakerTag", transcriptFile.path)) {
-			new Notice("Speaker tagging already in progress");
-			return;
-		}
-		await clearSpeakerProposals(this.app, transcriptFile.path);
-		await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "titled");
-		await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "titled");
-		// The metadataCache may not have re-indexed the writes above yet —
-		// override the state in the fm we pass so the guard sees "titled".
-		const transcriptFm = (this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {}) as Record<string, unknown>;
-		await this.doTagSpeakers(transcriptFile, {...transcriptFm, [FM.PIPELINE_STATE]: "titled"}, notePath, customInstructions);
 	}
 
 	/**
@@ -1307,7 +1356,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	private static readonly BANNER_OPS: {kind: JobKind; op: string; label: string}[] = [
 		{kind: "summarize", op: "summarize", label: "Summarizing\u2026"},
-		{kind: "speakerTag", op: "speakers", label: "Tagging speakers\u2026"},
+		{kind: "speakerTag", op: "speakers", label: "Post-processing transcript\u2026"},
 		{kind: "research", op: "research", label: "Researching\u2026"},
 	];
 
