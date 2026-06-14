@@ -15,6 +15,9 @@ export interface ProposedSpeakerMapping {
 	lineCount: number;
 	/** Where proposedName came from: "cache" (voiceprint) or "llm". Empty when unresolved. */
 	source?: string;
+	/** True when originalName is already a user-confirmed real name (re-review of a tagged
+	 *  transcript). Acoustic matching must not overwrite a confirmed name with a fresh guess. */
+	confirmed?: boolean;
 }
 
 interface ParseResult {
@@ -338,6 +341,9 @@ export function buildMappingsFromCache(app: App, transcriptPath: string): Propos
 			evidence: s.evidence ?? "",
 			speakerId: s.id ?? "",
 			lineCount: s.line_count ?? 0,
+			// stub === false means the user already confirmed this name — protect it from
+			// being overwritten by a fresh acoustic match when the review modal re-matches.
+			confirmed: s.stub === false,
 		};
 	});
 }

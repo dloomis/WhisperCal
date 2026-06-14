@@ -71,6 +71,10 @@ async function loadLibraries(app: App, folder: string): Promise<LibrarySummary[]
  * Match each mapping's speaker against the libraries and, on a confident hit, set
  * proposedName + CERTAIN on the mapping (overriding any prior LLM guess). Returns a map
  * of originalName → the match, for override detection / healing on apply.
+ *
+ * Mappings flagged `confirmed` (a re-review of an already-tagged transcript) are skipped
+ * entirely: the user's prior decision is ground truth and must not be replaced by a fresh
+ * acoustic guess. Library corrections on a re-review still flow through enroll/reconcile.
  */
 export async function matchVoiceprints(
 	app: App,
@@ -92,6 +96,9 @@ export async function matchVoiceprints(
 	if (libs.length === 0) return result;
 
 	for (const m of mappings) {
+		// A name the user already confirmed wins over acoustics — don't re-derive or pre-fill
+		// over it. Unconfirmed stubs and cached candidates are still matched below.
+		if (m.confirmed) continue;
 		const sp = sidecar.speakers[m.diarizerLabel || m.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if ((sp.activeSeconds ?? 0) < MATCH_MIN_SECONDS) continue;

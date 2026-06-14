@@ -428,6 +428,14 @@ export default class WhisperCalPlugin extends Plugin {
 		// Drop the removed llmSpeakerTagFallback toggle from older data files — the
 		// post-processing prompt path is now the LLM on/off switch.
 		delete (this.settings as unknown as Record<string, unknown>)["llmSpeakerTagFallback"];
+		// Repoint installs still on the previous default speaker-tagging prompt to the new
+		// in-place post-processing prompt. The old "Speaker Auto-Tag" prompt only proposed
+		// names; the new default also fixes transcription/diarization errors in the body.
+		// Only the exact old default is migrated — a custom or deliberately-chosen path is
+		// left alone. installBundledPrompts (onLayoutReady) writes the new file if missing.
+		if (this.settings.speakerTaggingPromptPath === "Prompts/Speaker Auto-Tag Prompt.md") {
+			this.settings.speakerTaggingPromptPath = DEFAULT_SETTINGS.speakerTaggingPromptPath;
+		}
 		// MacWhisper is macOS-only; coerce to Recording API on other platforms
 		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
 			this.settings.recordingSource = "api";
@@ -618,9 +626,27 @@ export default class WhisperCalPlugin extends Plugin {
 		// hits are passed as fixed CERTAIN anchors so the LLM only names the rest. With no
 		// prompt (or LLM off) we stay LLM-free: known people are pre-filled and unknowns are
 		// confirmed by ear in the modal.
+		// Decide the LLM path up front (pure settings reads) and claim a concurrency slot
+		// *synchronously*, before the async pre-work below. The auto-tagger pre-checks a free
+		// slot and enters here with no await in between, so claiming now makes that
+		// check-then-use atomic. Without it, a manual job could take the last slot during the
+		// pre-work awaits, bouncing the auto run after it was already marked attempted — a
+		// silent drop. The LLM-free path claims nothing (no LLM runs); the claim is handed to
+		// runLlmJob (preClaimed) or released at the early return below.
+		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath;
+		let slotClaimed = false;
+		if (runLlm) {
+			if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				if (!auto) new Notice("LLM concurrency limit reached — try again when a running job finishes");
+				return;
+			}
+			this.activeLlmCount++;
+			slotClaimed = true;
+		}
+
 		let voiceprintMatches: string | undefined;
 		let preBody: string | undefined; // file snapshot taken just before the LLM edits it, for failure-restore
-		let runLlm = false;
 		try {
 			if (this.settings.replacementFilePath) {
 				const wr = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
@@ -629,7 +655,6 @@ export default class WhisperCalPlugin extends Plugin {
 			const content = await this.app.vault.cachedRead(transcriptFile);
 			preBody = content;
 			const baseMappings = buildMappingsFromBody(content);
-			runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath;
 			const vp = baseMappings.length > 0
 				? await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, baseMappings)
 				: new Map<string, VoiceprintMatch>();
@@ -659,10 +684,11 @@ export default class WhisperCalPlugin extends Plugin {
 			console.warn("[WhisperCal] pre-LLM cleanup/voiceprint step failed", e);
 		}
 
-		// Only spawn the LLM when we have a snapshot to restore from. runLlm is set only after a
-		// successful read; reaching here without it means the LLM-free path already handled the
-		// run (and returned) or the read failed — either way, don't run the LLM.
+		// Only spawn the LLM when we have a snapshot to restore from. Reaching here without
+		// runLlm means the LLM-free path already handled the run (and returned); without
+		// preBody means the read failed. Either way, release the claimed slot and stop.
 		if (!runLlm || preBody === undefined) {
+			if (slotClaimed) this.activeLlmCount--;
 			if (!auto) new Notice("Could not read the transcript for post-processing");
 			return;
 		}
@@ -694,6 +720,7 @@ export default class WhisperCalPlugin extends Plugin {
 			filePath: transcriptPath,
 			label: "Post-processing transcript",
 			promptPath: this.settings.speakerTaggingPromptPath,
+			preClaimed: slotClaimed,
 			cardIcon: "users-round",
 			cardModel: this.settings.speakerTagModel || undefined,
 			cardNotePath: notePath,
@@ -1209,27 +1236,37 @@ export default class WhisperCalPlugin extends Plugin {
 		cardModel?: string;
 		/** Note path for card status (defaults to filePath) */
 		cardNotePath?: string;
+		/** The caller already claimed an activeLlmCount slot (see doTagSpeakers).
+		 *  Skip the concurrency check/increment here, but release it on an early return. */
+		preClaimed?: boolean;
 	}): void {
-		const {jobKind, filePath, label, promptPath} = opts;
+		const {jobKind, filePath, label, promptPath, preClaimed} = opts;
+
+		// Release a caller-claimed slot when we bail before the async run (whose finally
+		// owns the matching decrement) takes over.
+		const releaseClaim = () => { if (preClaimed) this.activeLlmCount--; };
 
 		if (!this.settings.llmEnabled) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("LLM features are disabled — enable them in WhisperCal settings");
+			releaseClaim();
 			return;
 		}
 		if (this.jobs.has(jobKind, filePath)) {
 			new Notice(`${label} already in progress`);
+			releaseClaim();
 			return;
 		}
-		if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+		if (!preClaimed && this.activeLlmCount >= this.settings.llmMaxConcurrent) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("LLM concurrency limit reached — try again when a running job finishes");
 			return;
 		}
 
-		// Register job synchronously before any async work
+		// Register job synchronously before any async work. The slot was claimed either by
+		// the caller (preClaimed) or here; the run's finally block does the single decrement.
 		this.jobs.add(jobKind, filePath);
-		this.activeLlmCount++;
+		if (!preClaimed) this.activeLlmCount++;
 
 		// Set in-progress card status. The same path is used for routing
 		// LLM error logs — for speaker tagging that's the parent meeting note,
