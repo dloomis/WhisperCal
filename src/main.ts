@@ -63,18 +63,42 @@ function parseInviteeNames(fm: Record<string, unknown>): string[] {
 }
 
 /**
- * Count whitespace-delimited words in a transcript's body (after frontmatter). Used to
- * detect catastrophic deletion by an in-place post-processing edit. Mirrors the
+ * Return a transcript's body (everything after the frontmatter block). Mirrors the
  * frontmatter/body split in WordReplacer.applyWordReplacements.
  */
-function bodyWordCount(content: string): number {
-	let body = content;
+function transcriptBody(content: string): string {
 	const fmEnd = content.indexOf("\n---", 1);
 	if (fmEnd >= 0) {
 		const bodyStart = content.indexOf("\n", fmEnd + 4);
-		if (bodyStart >= 0) body = content.slice(bodyStart);
+		if (bodyStart >= 0) return content.slice(bodyStart);
 	}
-	return body.match(/\S+/g)?.length ?? 0;
+	return content;
+}
+
+/**
+ * Count whitespace-delimited words in a transcript's body. Paired with the distinct-label
+ * count to detect catastrophic deletion by an in-place post-processing edit.
+ */
+function bodyWordCount(content: string): number {
+	return transcriptBody(content).match(/\S+/g)?.length ?? 0;
+}
+
+/**
+ * Count the distinct speaker labels (`**Label**` at the start of a body line) in a transcript.
+ * Legitimate echo/catch-all cleanup drops duplicate *words* but keeps every real diarized
+ * *speaker*; a catastrophic deletion drops whole speakers. Comparing the distinct-label set
+ * before/after the edit tells the two apart (see the tripwire in handleSpeakerTagSuccess).
+ */
+function distinctSpeakerLabels(content: string): number {
+	const labels = new Set<string>();
+	const re = /^\*\*(.+?)\*\*/gm;
+	const body = transcriptBody(content);
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(body)) !== null) {
+		const name = m[1]!.trim();
+		if (name) labels.add(name);
+	}
+	return labels.size;
 }
 
 interface PluginData extends WhisperCalSettings {
@@ -777,15 +801,28 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		// Catastrophic-deletion tripwire: the LLM edits the body in place, so a rogue run could
-		// delete real speech. If the body shrank to a small fraction of the pre-LLM snapshot,
-		// revert rather than trust the edit. The floor is deliberately low — legitimate echo /
-		// catch-all cleanup can remove a large minority of words (e.g. a mic channel that echoed
-		// everyone), so only a near-total loss trips this.
+		// delete real speech. Use two independent collapse signals to tell a real catastrophe
+		// from a heavy-but-legitimate cleanup:
+		//   - words: echo/catch-all removal (a mic channel that echoed everyone) can legitimately
+		//     drop a large share of words, so a word collapse ALONE is not enough to revert.
+		//   - speakers: that same cleanup only removes echo labels — every real diarized speaker
+		//     survives. A catastrophe deletes whole speakers, collapsing the distinct-label set.
+		// Revert only when BOTH collapse together, or when almost nothing survives at all (a
+		// near-total loss no real transcript reaches — covers a gutted body that kept its labels).
 		if (snapshot !== undefined) {
+			const WORD_FLOOR = 0.34;   // revert candidate when fewer than this fraction of words remain …
+			const LABEL_FLOOR = 0.5;   // … AND fewer than this fraction of the distinct speaker labels remain
+			const MIN_REAL_WORDS = 30; // a real transcript body always clears this; below it = gutted
 			try {
 				const current = await this.app.vault.read(transcriptFile);
-				const before = bodyWordCount(snapshot);
-				if (before > 0 && bodyWordCount(current) < before * 0.34) {
+				const beforeWords = bodyWordCount(snapshot);
+				const afterWords = bodyWordCount(current);
+				const beforeLabels = distinctSpeakerLabels(snapshot);
+				const afterLabels = distinctSpeakerLabels(current);
+				const wordsCollapsed = beforeWords > 0 && afterWords < beforeWords * WORD_FLOOR;
+				const labelsCollapsed = beforeLabels > 0 && afterLabels < beforeLabels * LABEL_FLOOR;
+				const nearTotalLoss = beforeWords >= MIN_REAL_WORDS && afterWords < MIN_REAL_WORDS;
+				if ((wordsCollapsed && labelsCollapsed) || nearTotalLoss) {
 					await this.restoreTranscriptBody(transcriptPath, snapshot, notePath, auto, "Transcript post-processing removed too much text — transcript restored");
 					return;
 				}
