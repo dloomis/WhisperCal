@@ -1,6 +1,7 @@
 import {Modal, App, TFolder, TFile, Notice, setIcon} from "obsidian";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
+import {transcriptBody, findSpeakerLabels} from "../utils/transcript";
 import {renderModalHeader} from "./ModalHeader";
 
 export interface SpeakerTagDecision {
@@ -98,20 +99,8 @@ export class SpeakerTagModal extends Modal {
 	/** Parse transcript body into per-speaker blocks (with audio spans) for the excerpt panel. */
 	private parseSpeakerBlocks(content: string): Map<string, ExcerptBlock[]> {
 		const map = new Map<string, ExcerptBlock[]>();
-		// Strip YAML frontmatter
-		const firstFence = content.indexOf("---");
-		if (firstFence < 0) return map;
-		const secondFence = content.indexOf("---", firstFence + 3);
-		if (secondFence < 0) return map;
-		const body = content.slice(secondFence + 3);
-
-		// Match any line starting with a bold speaker label — format-agnostic
-		const re = /^\*\*(.+?)\*\*/gm;
-		const starts: {name: string; pos: number}[] = [];
-		let m: RegExpExecArray | null;
-		while ((m = re.exec(body)) !== null) {
-			starts.push({name: m[1]!, pos: m.index});
-		}
+		const body = transcriptBody(content);
+		const starts = findSpeakerLabels(body);
 
 		// First pass: build each block in global transcript order with its start offset.
 		const ordered: {name: string; block: ExcerptBlock}[] = [];

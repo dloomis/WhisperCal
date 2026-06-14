@@ -1,5 +1,6 @@
 import type {App} from "obsidian";
 import {TFile} from "obsidian";
+import {transcriptBody, findSpeakerLabels} from "../utils/transcript";
 
 export interface ProposedSpeakerMapping {
 	index: number;
@@ -267,10 +268,7 @@ function buildFallbackMappings(speakers: FrontmatterSpeaker[]): ProposedSpeakerM
  */
 export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], content: string): void {
 	const counts = new Map<string, number>();
-	const re = /^\*\*(.+?)\*\*/gm;
-	let match: RegExpExecArray | null;
-	while ((match = re.exec(content)) !== null) {
-		const name = match[1]!;
+	for (const {name} of findSpeakerLabels(transcriptBody(content))) {
 		counts.set(name, (counts.get(name) ?? 0) + 1);
 	}
 	for (const mapping of mappings) {
@@ -287,15 +285,9 @@ export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], con
  * string list (no per-speaker objects). Speakers appear in first-spoken order.
  */
 export function buildMappingsFromBody(content: string): ProposedSpeakerMapping[] {
-	const start = content.indexOf("## Transcript");
-	const body = start >= 0 ? content.slice(start) : content;
 	const counts = new Map<string, number>();
 	const order: string[] = [];
-	const re = /^\*\*(.+?)\*\*/gm;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(body)) !== null) {
-		const name = m[1]!.trim();
-		if (!name || name.endsWith(":") || /^Duration\b/.test(name)) continue;
+	for (const {name} of findSpeakerLabels(transcriptBody(content))) {
 		if (!counts.has(name)) order.push(name);
 		counts.set(name, (counts.get(name) ?? 0) + 1);
 	}

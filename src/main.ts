@@ -19,6 +19,7 @@ import {parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter, readFmString} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
+import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
 import type {AuthState, TokenCache} from "./services/AuthTypes";
 import type {CalendarAuth} from "./services/CalendarAuth";
 import type {CalendarProvider, CalendarProviderType} from "./types";
@@ -63,19 +64,6 @@ function parseInviteeNames(fm: Record<string, unknown>): string[] {
 }
 
 /**
- * Return a transcript's body (everything after the frontmatter block). Mirrors the
- * frontmatter/body split in WordReplacer.applyWordReplacements.
- */
-function transcriptBody(content: string): string {
-	const fmEnd = content.indexOf("\n---", 1);
-	if (fmEnd >= 0) {
-		const bodyStart = content.indexOf("\n", fmEnd + 4);
-		if (bodyStart >= 0) return content.slice(bodyStart);
-	}
-	return content;
-}
-
-/**
  * Count whitespace-delimited words in a transcript's body. Paired with the distinct-label
  * count to detect catastrophic deletion by an in-place post-processing edit.
  */
@@ -84,21 +72,13 @@ function bodyWordCount(content: string): number {
 }
 
 /**
- * Count the distinct speaker labels (`**Label**` at the start of a body line) in a transcript.
- * Legitimate echo/catch-all cleanup drops duplicate *words* but keeps every real diarized
- * *speaker*; a catastrophic deletion drops whole speakers. Comparing the distinct-label set
- * before/after the edit tells the two apart (see the tripwire in handleSpeakerTagSuccess).
+ * Count the distinct speaker labels (`**Label**`) in a transcript's body. Legitimate
+ * echo/catch-all cleanup drops duplicate *words* but keeps every real diarized *speaker*; a
+ * catastrophic deletion drops whole speakers. Comparing the distinct-label set before/after
+ * the edit tells the two apart (see the tripwire in handleSpeakerTagSuccess).
  */
 function distinctSpeakerLabels(content: string): number {
-	const labels = new Set<string>();
-	const re = /^\*\*(.+?)\*\*/gm;
-	const body = transcriptBody(content);
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(body)) !== null) {
-		const name = m[1]!.trim();
-		if (name) labels.add(name);
-	}
-	return labels.size;
+	return new Set(findSpeakerLabels(transcriptBody(content)).map(l => l.name)).size;
 }
 
 interface PluginData extends WhisperCalSettings {
