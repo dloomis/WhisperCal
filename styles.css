@@ -1660,6 +1660,71 @@
 	margin: 0;
 }
 
+.whisper-cal-research-series-tag {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 4px 0 8px;
+	padding: 6px 10px;
+	border-radius: var(--radius-s);
+	border-left: 3px solid var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.whisper-cal-research-series-tag-icon {
+	display: inline-flex;
+	align-items: center;
+	color: var(--interactive-accent);
+}
+
+.whisper-cal-research-series-tag-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.whisper-cal-research-series-tag-link {
+	color: var(--text-accent);
+	cursor: pointer;
+	text-decoration: none;
+}
+
+.whisper-cal-research-series-tag-link:hover {
+	text-decoration: underline;
+}
+
+.whisper-cal-research-toggle {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 4px 0 8px;
+	padding: 2px 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-accent);
+	cursor: pointer;
+	user-select: none;
+}
+
+.whisper-cal-research-toggle-text:hover {
+	text-decoration: underline;
+}
+
+.whisper-cal-research-toggle-chevron {
+	display: inline-flex;
+	align-items: center;
+}
+
+.whisper-cal-research-toggle-chevron svg {
+	width: 16px;
+	height: 16px;
+}
+
+.whisper-cal-research-advanced.is-hidden {
+	display: none;
+}
+
 .whisper-cal-research-label {
 	display: block;
 	font-size: var(--font-ui-small);

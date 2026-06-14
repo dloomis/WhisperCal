@@ -1219,8 +1219,15 @@ export default class WhisperCalPlugin extends Plugin {
 			const seriesPrep = justCreatedSeriesNote
 				? null
 				: await resolveSeriesPrep(this.app, this.settings, fm);
+			// Only surface the provenance tag when the series note actually
+			// contributed prompt text or context notes — not for a matched but
+			// empty series note (which would leave the modal blank).
+			const seriesNoteTag = seriesPrep && (seriesPrep.instruction || seriesPrep.paths.length > 0)
+				? seriesPrep.seriesNotePath
+				: undefined;
 			const result = await new ResearchModal(
 				this.app, title, subtitle, seriesPrep?.paths, seriesPrep?.instruction,
+				undefined, seriesNoteTag,
 			).prompt();
 			if (!result) return;
 

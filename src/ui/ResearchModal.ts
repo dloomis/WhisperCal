@@ -23,18 +23,30 @@ export class ResearchModal extends Modal {
 	private instructionsEl!: HTMLTextAreaElement;
 	private bypassCheckbox!: HTMLInputElement;
 	private instructionsLabel!: HTMLElement;
+	private advancedEl!: HTMLElement;
+	private toggleChevron!: HTMLElement;
+	private toggleText!: HTMLElement;
+	private submitBtn!: HTMLButtonElement;
 	private initialInstructions: string;
 	private initialBypass: boolean;
+	private seriesNotePath: string | null;
+	// Series prep gives the modal a runnable default (a prompt and/or context
+	// notes), so the note picker and prompt editor collapse behind a disclosure.
+	// Ad-hoc research has no default, so it shows those controls outright.
+	private collapsible = false;
+	private expanded = false;
 	private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(app: App, meetingTitle: string, subtitle: string,
-		initialPaths?: string[], initialInstructions?: string, initialBypass?: boolean) {
+		initialPaths?: string[], initialInstructions?: string, initialBypass?: boolean,
+		seriesNotePath?: string) {
 		super(app);
 		this.meetingTitle = meetingTitle;
 		this.meetingSubtitle = subtitle;
 		this.selected = new Set(initialPaths ?? []);
 		this.initialInstructions = initialInstructions ?? "";
 		this.initialBypass = initialBypass ?? false;
+		this.seriesNotePath = seriesNotePath ?? null;
 	}
 
 	prompt(): Promise<ResearchResult | null> {
@@ -50,12 +62,56 @@ export class ResearchModal extends Modal {
 
 		renderModalHeader(contentEl, this.meetingTitle, this.meetingSubtitle);
 
-		// Selected chips
+		// A series note that contributed a prompt and/or default context notes gives
+		// the user a one-click "just research it" path, so collapse the advanced
+		// controls by default. Ad-hoc research needs them, so start expanded.
+		this.collapsible = !!this.seriesNotePath;
+		this.expanded = !this.collapsible;
+
+		// Provenance tag: where the pre-filled prompt/notes came from, linked so the
+		// user can open and edit that series note in the vault.
+		if (this.seriesNotePath) {
+			const seriesPath = this.seriesNotePath;
+			const tag = contentEl.createDiv({cls: "whisper-cal-research-series-tag"});
+			setIcon(tag.createSpan({cls: "whisper-cal-research-series-tag-icon"}), "git-branch");
+			tag.createSpan({
+				cls: "whisper-cal-research-series-tag-text",
+				text: "Using the meeting series prompt from",
+			});
+			const link = tag.createEl("a", {
+				cls: "whisper-cal-research-series-tag-link",
+				text: seriesPath.replace(/\.md$/, ""),
+				href: "#",
+			});
+			link.setAttr("aria-label", `Open ${seriesPath}`);
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				void this.app.workspace.openLinkText(seriesPath, "", true);
+			});
+		}
+
+		// Selected context-note chips \u2014 shown in both states so the pre-filled
+		// context is always visible; the picker that edits them lives in advanced.
 		this.chipsEl = contentEl.createDiv({cls: "whisper-cal-research-chips"});
 		this.renderChips();
 
-		// Search input
-		this.searchInput = contentEl.createEl("input", {
+		// Disclosure toggle (series mode only): reveals the note picker and prompt
+		// editor for the occasional custom run.
+		if (this.collapsible) {
+			const toggle = contentEl.createDiv({cls: "whisper-cal-research-toggle"});
+			this.toggleChevron = toggle.createSpan({cls: "whisper-cal-research-toggle-chevron"});
+			this.toggleText = toggle.createSpan({cls: "whisper-cal-research-toggle-text"});
+			toggle.addEventListener("click", () => {
+				this.expanded = !this.expanded;
+				this.applyDisclosure();
+				if (this.expanded) setTimeout(() => this.searchInput.focus(), 0);
+			});
+		}
+
+		// Advanced controls: note picker (search + results) and prompt editor.
+		this.advancedEl = contentEl.createDiv({cls: "whisper-cal-research-advanced"});
+
+		this.searchInput = this.advancedEl.createEl("input", {
 			type: "text",
 			placeholder: "Search vault notes\u2026",
 			cls: "whisper-cal-research-search",
@@ -65,12 +121,12 @@ export class ResearchModal extends Modal {
 			this.debounceTimer = setTimeout(() => this.renderResults(), 150);
 		});
 
-		// Results list
-		this.resultsEl = contentEl.createDiv({cls: "whisper-cal-research-results"});
+		this.resultsEl = this.advancedEl.createDiv({cls: "whisper-cal-research-results"});
 		this.renderResults();
 
-		// Bypass prompt checkbox
-		const bypassRow = contentEl.createDiv({cls: "whisper-cal-research-bypass"});
+		// Bypass prompt checkbox: when checked the textarea replaces the prompt file
+		// outright instead of appending to it.
+		const bypassRow = this.advancedEl.createDiv({cls: "whisper-cal-research-bypass"});
 		this.bypassCheckbox = bypassRow.createEl("input", {type: "checkbox"});
 		this.bypassCheckbox.id = "whisper-cal-bypass-prompt";
 		bypassRow.createEl("label", {
@@ -79,19 +135,16 @@ export class ResearchModal extends Modal {
 		});
 		this.bypassCheckbox.addEventListener("change", () => this.updateBypassState());
 
-		// Instructions textarea \u2014 always visible. In normal mode it holds
-		// additional instructions appended to the research prompt; in bypass
-		// mode it is the direct prompt. updateBypassState() relabels it.
-		this.instructionsLabel = contentEl.createEl("label", {
+		this.instructionsLabel = this.advancedEl.createEl("label", {
 			text: "Prompt",
 			cls: "whisper-cal-research-label",
 		});
-		this.instructionsEl = contentEl.createEl("textarea", {
+		this.instructionsEl = this.advancedEl.createEl("textarea", {
 			placeholder: "Enter your research prompt\u2026",
 			cls: "whisper-cal-research-instructions",
 		});
 		this.instructionsEl.rows = 6;
-		// Seed from any series-note prep before resolving the label/focus state.
+		// Seed from any series-note prep before resolving the label state.
 		this.bypassCheckbox.checked = this.initialBypass;
 		this.instructionsEl.value = this.initialInstructions;
 		this.updateBypassState();
@@ -101,13 +154,29 @@ export class ResearchModal extends Modal {
 		const cancelBtn = btnRow.createEl("button", {text: "Cancel"});
 		cancelBtn.addEventListener("click", () => this.close());
 
-		const submitBtn = btnRow.createEl("button", {text: "Research", cls: "mod-cta"});
-		submitBtn.addEventListener("click", () => {
+		this.submitBtn = btnRow.createEl("button", {text: "Research", cls: "mod-cta"});
+		this.submitBtn.addEventListener("click", () => {
 			this.submitted = true;
 			this.close();
 		});
 
-		setTimeout(() => this.searchInput.focus(), 10);
+		this.applyDisclosure();
+		// Series mode opens collapsed: focus the CTA so Enter researches immediately.
+		// Ad-hoc mode focuses the search box to start picking context notes.
+		setTimeout(() => {
+			if (this.collapsible && !this.expanded) this.submitBtn.focus();
+			else this.searchInput.focus();
+		}, 10);
+	}
+
+	private applyDisclosure(): void {
+		this.advancedEl.toggleClass("is-hidden", !this.expanded);
+		if (this.collapsible) {
+			setIcon(this.toggleChevron, this.expanded ? "chevron-down" : "chevron-right");
+			this.toggleText.setText(this.expanded
+				? "Hide options"
+				: "Add context notes or customize the prompt");
+		}
 	}
 
 	private renderChips(): void {
@@ -130,11 +199,9 @@ export class ResearchModal extends Modal {
 
 	private updateBypassState(): void {
 		const bypass = this.bypassCheckbox.checked;
-		// The textarea is always visible; only its meaning (and label) changes.
 		this.instructionsLabel.setText(bypass
 			? "Direct prompt (replaces the prompt file)"
 			: "Additional instructions (appended to the research prompt)");
-		if (bypass) this.instructionsEl.focus();
 	}
 
 	private renderResults(): void {
