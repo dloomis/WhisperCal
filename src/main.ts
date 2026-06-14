@@ -975,12 +975,13 @@ export default class WhisperCalPlugin extends Plugin {
 					console.warn("[WhisperCal] voiceprint heal failed", e);
 				}
 
-				// Apply word replacements to transcript now that speaker tags are in place
+				// Apply word replacements now that real names are in the body (stub→name can
+				// expose new matches). Silent, like the other pipeline passes — a Notice belongs
+				// only to the explicit "Run word replacements" command, not a tagging side effect.
 				if (this.settings.replacementFilePath) {
 					const result = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
 					if (result.totalCount > 0) {
 						console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) to transcript`);
-						showReplacementNotice(result);
 					}
 				}
 

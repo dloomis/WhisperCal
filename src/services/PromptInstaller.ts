@@ -1,6 +1,5 @@
 import {App, normalizePath} from "obsidian";
 import postProcessingPrompt from "../../prompts/Transcript Post-Processing Prompt.md";
-import speakerTagPrompt from "../../prompts/Speaker Auto-Tag Prompt.md";
 import summarizerPrompt from "../../prompts/Meeting Transcript Summarizer Prompt.md";
 import researchPrompt from "../../prompts/Meeting Research Prompt.md";
 
@@ -9,9 +8,11 @@ interface PromptEntry {
 	content: string;
 }
 
+// The old "Speaker Auto-Tag" prompt is intentionally not installed: the default is now the
+// in-place post-processing prompt, and the #4 settings migration repoints prior installs.
+// The repo still keeps the file for anyone who deliberately wants the name-only behavior.
 const BUNDLED_PROMPTS: PromptEntry[] = [
 	{settingPath: "Prompts/Transcript Post-Processing Prompt.md", content: postProcessingPrompt},
-	{settingPath: "Prompts/Speaker Auto-Tag Prompt.md", content: speakerTagPrompt},
 	{settingPath: "Prompts/Meeting Transcript Summarizer Prompt.md", content: summarizerPrompt},
 	{settingPath: "Prompts/Meeting Research Prompt.md", content: researchPrompt},
 ];
