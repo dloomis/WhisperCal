@@ -1,10 +1,12 @@
 import type {App} from "obsidian";
-import {TFile} from "obsidian";
+import {TFile, parseYaml} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import {FM} from "../constants";
 import {ensureFolder, resolveWikiLink, stripWikiLink} from "../utils/vault";
 import {sanitizeFilename} from "../utils/sanitize";
 import {cosine, meanNorm} from "../utils/vec";
+import {debug} from "../utils/debug";
+import {PeopleMatchService} from "./PeopleMatchService";
 import type {VoiceprintMatch} from "./VoiceprintMatcher";
 
 /**
@@ -70,6 +72,48 @@ export interface EnrollResult {
 	skipped: number;
 	/** Libraries cleaned of a stale sample from this transcript after a corrected tag. */
 	corrected: number;
+	/** Enrolled names that did NOT resolve to a People note (kept as typed). Surfaced as a Notice
+	 *  nudging the user to create a note so the voiceprint library aligns with the People folder. */
+	unmatchedPeople: string[];
+	/** The transcript declared a `voiceprints:` sidecar, but it could not be resolved/loaded —
+	 *  speakers were tagged but NOT acoustically enrolled. Surfaced to the user as a Notice so
+	 *  the failure isn't silent. False when no sidecar was declared (a non-voiceprint transcript). */
+	sidecarMissing: boolean;
+}
+
+/**
+ * Read a transcript's frontmatter, preferring the metadata cache but falling back to a direct
+ * disk read when the cache lacks the `voiceprints:` pointer. The cache can lag a just-written
+ * transcript, and a recording-named sidecar (Call recordings) has no sibling-file backstop — so
+ * without this fallback, enrollment right after Apply can silently no-op. Best-effort.
+ */
+async function readTranscriptFm(app: App, transcriptPath: string): Promise<Record<string, unknown>> {
+	const file = app.vault.getAbstractFileByPath(transcriptPath);
+	if (!(file instanceof TFile)) return {};
+	const cached = (app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+	if (cached[FM.VOICEPRINTS] !== undefined) return cached;
+	try {
+		const content = await app.vault.read(file);
+		const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+		if (m && m[1]) {
+			const parsed = parseYaml(m[1]) as Record<string, unknown> | null;
+			if (parsed && typeof parsed === "object") {
+				if (parsed[FM.VOICEPRINTS] !== undefined) {
+					debug("voiceprint", "readTranscriptFm: voiceprints pointer recovered from disk (metadata cache lagged)");
+				}
+				return parsed;
+			}
+		}
+	} catch (e) {
+		debug("voiceprint", "readTranscriptFm: disk frontmatter read failed", e);
+	}
+	return cached;
+}
+
+/** True when the transcript's frontmatter declares a (non-empty) `voiceprints:` sidecar pointer. */
+async function transcriptDeclaresVoiceprints(app: App, transcriptPath: string): Promise<boolean> {
+	const raw = (await readTranscriptFm(app, transcriptPath))[FM.VOICEPRINTS];
+	return typeof raw === "string" && raw.trim().length > 0;
 }
 
 /** Resolve and parse the voiceprint sidecar for a transcript, or null if absent/invalid. */
@@ -78,9 +122,8 @@ export async function loadSidecar(app: App, transcriptPath: string): Promise<Voi
 
 	// Resolve the `voiceprints:` frontmatter pointer, so the sidecar can live wherever Tome
 	// writes it (it's named after the recording, not the transcript).
-	const file = app.vault.getAbstractFileByPath(transcriptPath);
-	if (file instanceof TFile) {
-		const fm = (app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+	{
+		const fm = await readTranscriptFm(app, transcriptPath);
 		// 1. Obsidian link resolution — handles [[wikilinks]] and recognized attachment types.
 		const linked = resolveWikiLink(app, fm, FM.VOICEPRINTS, transcriptPath);
 		if (linked) candidates.push(linked.path);
@@ -98,15 +141,25 @@ export async function loadSidecar(app: App, transcriptPath: string): Promise<Voi
 	// 3. Fall back to the sibling convention (<transcript>.voiceprints.json).
 	candidates.push(transcriptPath.replace(/\.md$/, ".voiceprints.json"));
 
+	debug("voiceprint", `loadSidecar: transcript=${transcriptPath} candidates=`, candidates);
+
 	for (const path of candidates) {
 		try {
-			if (!(await app.vault.adapter.exists(path))) continue;
+			if (!(await app.vault.adapter.exists(path))) {
+				debug("voiceprint", `loadSidecar: candidate does not exist: ${path}`);
+				continue;
+			}
 			const parsed = JSON.parse(await app.vault.adapter.read(path)) as VoiceprintSidecar;
-			if (parsed && typeof parsed === "object" && parsed.speakers) return parsed;
-		} catch {
-			// try the next candidate
+			if (parsed && typeof parsed === "object" && parsed.speakers) {
+				debug("voiceprint", `loadSidecar: RESOLVED ${path} (model=${parsed.model}, speakers=${Object.keys(parsed.speakers).join(", ")})`);
+				return parsed;
+			}
+			debug("voiceprint", `loadSidecar: candidate parsed but has no speakers object: ${path}`);
+		} catch (e) {
+			debug("voiceprint", `loadSidecar: candidate failed to read/parse: ${path}`, e);
 		}
 	}
+	debug("voiceprint", `loadSidecar: NO sidecar resolved for ${transcriptPath} — enrollment will be skipped`);
 	return null;
 }
 
@@ -167,18 +220,46 @@ async function reconcileTranscriptSamples(
 export async function enrollVoiceprints(
 	app: App,
 	voiceprintFolderPath: string,
+	peopleFolderPath: string,
 	transcriptPath: string,
 	decisions: SpeakerTagDecision[],
 	today: string,
 ): Promise<EnrollResult> {
-	const result: EnrollResult = {enrolled: [], skipped: 0, corrected: 0};
+	const result: EnrollResult = {enrolled: [], skipped: 0, corrected: 0, unmatchedPeople: [], sidecarMissing: false};
+
+	// Canonical identity = People-note basename, so the voiceprint library always aligns with the
+	// People folder (the same target `confirmed_speakers` wikilinks resolve to). Names with no note
+	// are kept as typed and reported in result.unmatchedPeople.
+	const peopleSvc = new PeopleMatchService(app, peopleFolderPath);
+	const matchedByName = new Map<string, boolean>();
+	const canon = (raw: string): string => {
+		const c = peopleSvc.canonicalName(raw);
+		const name = c ?? raw;
+		matchedByName.set(name, c !== null);
+		if (c && c !== raw) debug("voiceprint", `  canonicalized "${raw}" -> "${c}" (People note)`);
+		return name;
+	};
+
+	debug("voiceprint", `enrollVoiceprints: transcript=${transcriptPath}, folder=${voiceprintFolderPath}, decisions=`,
+		decisions.map(d => ({confirmed: d.confirmedName, label: d.diarizerLabel || d.originalName})));
 
 	const sidecar = await loadSidecar(app, transcriptPath);
-	if (!sidecar) return result;
-	if (sidecar.model !== VOICEPRINT_MODEL) {
-		console.warn(`[WhisperCal] voiceprint sidecar model "${sidecar.model}" != "${VOICEPRINT_MODEL}" — skipping enrollment`);
+	if (!sidecar) {
+		// Flag only when a sidecar was actually declared — a missing-but-expected sidecar means
+		// speakers were tagged but couldn't be enrolled (the caller surfaces a Notice). A transcript
+		// with no `voiceprints:` pointer is simply not a voiceprint transcript — stay quiet.
+		result.sidecarMissing = await transcriptDeclaresVoiceprints(app, transcriptPath);
+		debug("voiceprint", result.sidecarMissing
+			? "enrollVoiceprints: voiceprints sidecar declared but could NOT be resolved — speakers tagged, not enrolled"
+			: "enrollVoiceprints: no voiceprints sidecar declared for this transcript — nothing to enroll");
 		return result;
 	}
+	if (sidecar.model !== VOICEPRINT_MODEL) {
+		console.warn(`[WhisperCal] voiceprint sidecar model "${sidecar.model}" != "${VOICEPRINT_MODEL}" — skipping enrollment`);
+		debug("voiceprint", `enrollVoiceprints: sidecar model mismatch (${sidecar.model} != ${VOICEPRINT_MODEL}) — nothing enrolled`);
+		return result;
+	}
+	debug("voiceprint", `enrollVoiceprints: sidecar OK, available speaker labels=${Object.keys(sidecar.speakers).join(", ")}`);
 
 	const source = transcriptPath.includes("/") ? transcriptPath.slice(transcriptPath.lastIndexOf("/") + 1) : transcriptPath;
 
@@ -189,25 +270,36 @@ export async function enrollVoiceprints(
 	for (const d of decisions) {
 		const nm = d.confirmedName?.trim();
 		const label = d.diarizerLabel || d.originalName;
-		if (nm && label) labelToName.set(label, nm);
+		if (nm && label) labelToName.set(label, canon(nm));
 	}
 	result.corrected = await reconcileTranscriptSamples(app, voiceprintFolderPath, source, labelToName);
 
 	// A person may hold more than one diarizer label (a split cluster) — collect all.
 	const pending = new Map<string, VoiceprintSample[]>();
 	for (const d of decisions) {
-		const name = d.confirmedName?.trim();
-		if (!name) continue;
+		const raw = d.confirmedName?.trim();
+		if (!raw) { debug("voiceprint", `  decision skipped: no confirmed name (label=${d.diarizerLabel || d.originalName})`); continue; }
+		const name = canon(raw);
 		// Sidecar key is the diarizer stub. On a first tag originalName IS the stub; on a re-tag
 		// review originalName is the real-name body label, so use the explicit diarizerLabel.
 		const label = d.diarizerLabel || d.originalName;
 		const sp = sidecar.speakers[label];
-		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) { result.skipped++; continue; }
-		if ((sp.activeSeconds ?? 0) < MIN_ENROLL_SECONDS) { result.skipped++; continue; }
+		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) {
+			debug("voiceprint", `  "${name}" SKIP: sidecar has no embedding for label "${label}" (sidecar labels: ${Object.keys(sidecar.speakers).join(", ")})`);
+			result.skipped++; continue;
+		}
+		if ((sp.activeSeconds ?? 0) < MIN_ENROLL_SECONDS) {
+			debug("voiceprint", `  "${name}" SKIP: label "${label}" has only ${sp.activeSeconds}s active speech (< ${MIN_ENROLL_SECONDS}s floor)`);
+			result.skipped++; continue;
+		}
+		debug("voiceprint", `  "${name}" ENROLL candidate: label="${label}", activeSeconds=${sp.activeSeconds}, dim=${sp.embedding.length}`);
 		const list = pending.get(name) ?? [];
 		list.push({embedding: sp.embedding, source, originalLabel: label, activeSeconds: sp.activeSeconds ?? 0, date: today});
 		pending.set(name, list);
 	}
+	// People with a pending sample but no People note — kept as typed, flagged for the caller.
+	result.unmatchedPeople = [...pending.keys()].filter(n => matchedByName.get(n) === false);
+	debug("voiceprint", `enrollVoiceprints: ${pending.size} name(s) to enroll, ${result.skipped} skipped, ${result.corrected} reconciled, unmatched=[${result.unmatchedPeople.join(", ")}]`);
 	if (pending.size === 0) return result;
 
 	await ensureFolder(app, voiceprintFolderPath);
@@ -219,25 +311,31 @@ export async function enrollVoiceprints(
 			const lib: VoiceprintLibrary = existing && existing.model === VOICEPRINT_MODEL
 				? existing
 				: {schema: 1, model: VOICEPRINT_MODEL, name, samples: []};
+			debug("voiceprint", `  "${name}": ${existing ? `existing library (${existing.samples.length} samples)` : "new library"} at ${path}`);
 
 			const seen = new Set(lib.samples.map(s => `${s.source}#${s.originalLabel}`));
 			const existingMean = lib.samples.length >= 2 ? meanNorm(lib.samples.map(s => s.embedding)) : null;
 			let added = false;
 			for (const s of samples) {
 				const key = `${s.source}#${s.originalLabel}`;
-				if (seen.has(key)) continue;
+				if (seen.has(key)) {
+					debug("voiceprint", `    sample ${key} already present — dedup skip`);
+					continue;
+				}
 				// Guard against a mis-confirmation poisoning the library: a sample that looks
 				// nothing like this person's existing voice is almost certainly the wrong
 				// speaker. (Skipped for thin libraries — no baseline yet.)
 				if (existingMean && cosine(s.embedding, existingMean) < ENROLL_OUTLIER_FLOOR) {
 					console.warn(`[WhisperCal] skipping outlier voiceprint sample for "${name}"`);
+					debug("voiceprint", `    sample ${key} OUTLIER (cosine ${cosine(s.embedding, existingMean).toFixed(3)} < ${ENROLL_OUTLIER_FLOOR}) — skipped`);
 					continue;
 				}
 				seen.add(key);
 				lib.samples.push(s);
 				added = true;
+				debug("voiceprint", `    sample ${key} added`);
 			}
-			if (!added) continue;
+			if (!added) { debug("voiceprint", `  "${name}": no new samples added — not writing`); continue; }
 
 			if (lib.samples.length > MAX_SAMPLES_PER_PERSON) {
 				lib.samples.sort((a, b) => b.activeSeconds - a.activeSeconds);
@@ -245,10 +343,13 @@ export async function enrollVoiceprints(
 			}
 			await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
 			result.enrolled.push(name);
+			debug("voiceprint", `  "${name}": WROTE ${path} (${lib.samples.length} samples total)`);
 		} catch (e) {
 			console.warn(`[WhisperCal] failed to enroll voiceprint for "${name}"`, e);
+			debug("voiceprint", `  "${name}": write FAILED`, e);
 		}
 	}
+	debug("voiceprint", `enrollVoiceprints: done — enrolled=[${result.enrolled.join(", ")}], skipped=${result.skipped}, corrected=${result.corrected}`);
 	return result;
 }
 

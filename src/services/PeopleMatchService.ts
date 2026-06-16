@@ -22,6 +22,19 @@ const EMAIL_FIELDS = [
 	"preferred_email",
 ] as const;
 
+/**
+ * Derive a "first last" name variant from an email local-part shaped like `first.last@…`.
+ * People notes are emailed `first.last@org`, so a person's formal first name often lives ONLY
+ * in the email (e.g. `douglas.sperber@…` for a note whose basename is "Doug Sperber"). Indexing
+ * this variant lets the LLM's formal-name expansions resolve to the note with no per-note
+ * curation. Returns "" when the local-part isn't a plausible multi-token name (e.g. `dsperber`).
+ */
+function nameVariantFromEmail(email: string): string {
+	const local = email.split("@")[0] ?? "";
+	const tokens = local.split(/[._-]+/).filter(t => /^[a-z]{2,}$/i.test(t));
+	return tokens.length >= 2 ? tokens.join(" ").toLowerCase() : "";
+}
+
 export interface PersonInfo {
 	notePath: string;
 	personnelType: string;
@@ -74,6 +87,19 @@ export class PeopleMatchService {
 	matchOneInfo(name: string, email: string): PersonInfo | null {
 		if (!this.peopleFolderPath) return null;
 		return this.lookupOne(this.buildIndex(), email, name);
+	}
+
+	/**
+	 * Resolve a name (a basename, full_name, or nickname+lastname variant) to its canonical
+	 * People-note basename — the identity that `confirmed_speakers` wikilinks resolve to. Returns
+	 * null when no People note matches, so callers can fall back to the name as typed. This is the
+	 * single source of truth that keeps voiceprint library names aligned with the People folder.
+	 */
+	canonicalName(name: string): string | null {
+		if (!this.peopleFolderPath || !name.trim()) return null;
+		const info = this.lookupOne(this.buildIndex(), "", name);
+		if (!info) return null;
+		return info.notePath.split("/").pop() ?? null;
 	}
 
 	/**
@@ -135,6 +161,9 @@ export class PeopleMatchService {
 	private buildIndex(): PeopleIndex {
 		const byEmail = new Map<string, PersonInfo>();
 		const byName = new Map<string, PersonInfo>();
+		// Email-derived name variants, applied in a final pass (see below) so they never
+		// outrank a real basename/full_name/nickname from any note.
+		const pendingEmailVariants: {key: string; info: PersonInfo}[] = [];
 
 		const folder = this.app.vault.getAbstractFileByPath(this.peopleFolderPath);
 		if (!(folder instanceof TFolder)) {
@@ -167,6 +196,10 @@ export class PeopleMatchService {
 				const value: unknown = fm[field];
 				if (typeof value === "string" && value) {
 					byEmail.set(value.toLowerCase(), info);
+					// Defer the email-derived "first last" variant (the formal first name often
+					// lives only in the email, e.g. douglas.sperber@… for a "Doug Sperber" note).
+					const variant = nameVariantFromEmail(value);
+					if (variant) pendingEmailVariants.push({key: variant, info});
 				}
 			}
 
@@ -190,6 +223,13 @@ export class PeopleMatchService {
 					}
 				}
 			}
+		}
+
+		// Lowest-priority name variants: an email-derived "first last" only fills a name key
+		// that no note already claims via basename/full_name/nickname. Applied after the main
+		// loop so strong variants from every note are present first.
+		for (const {key, info} of pendingEmailVariants) {
+			if (!byName.has(key)) byName.set(key, info);
 		}
 
 		return {byEmail, byName};

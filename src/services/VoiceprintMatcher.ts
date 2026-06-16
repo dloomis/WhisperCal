@@ -18,10 +18,13 @@ import {cosine, meanNorm} from "../utils/vec";
  * enrolled library there is no runner-up, so a stricter absolute floor (MATCH_THRESHOLD_SOLO)
  * stands in for the margin; centroids backed by very little speech are skipped entirely.
  */
-const MATCH_THRESHOLD = 0.40; // min cosine similarity to the best library to accept
+// Default min cosine similarity to the best library to accept. User-overridable via the
+// `voiceprintMatchFloor` setting (keep DEFAULT_SETTINGS.voiceprintMatchFloor in sync).
+export const DEFAULT_MATCH_FLOOR = 0.50;
 const MATCH_MARGIN = 0.08;    // best must beat the runner-up by at least this much
 // With only one enrolled library the margin guard is inert (no runner-up to clear), so
-// demand a stricter absolute similarity before trusting a solo match.
+// demand a stricter absolute similarity before trusting a solo match. The effective solo
+// floor is never below the configured general floor (see matchVoiceprints).
 const MATCH_THRESHOLD_SOLO = 0.55;
 // Skip matching a centroid backed by less than this much diarized speech — too thin/noisy
 // to trust a CERTAIN match against (mirrors the enroller's MIN_ENROLL_SECONDS).
@@ -81,6 +84,7 @@ export async function matchVoiceprints(
 	voiceprintFolderPath: string,
 	transcriptPath: string,
 	mappings: ProposedSpeakerMapping[],
+	matchFloor: number = DEFAULT_MATCH_FLOOR,
 ): Promise<Map<string, VoiceprintMatch>> {
 	const result = new Map<string, VoiceprintMatch>();
 	const sidecar = await loadSidecar(app, transcriptPath);
@@ -94,6 +98,10 @@ export async function matchVoiceprints(
 	}
 	const libs = await loadLibraries(app, voiceprintFolderPath);
 	if (libs.length === 0) return result;
+
+	// The solo case is the stricter of the two floors — never let it drop below the
+	// configured general floor when the user raises that above MATCH_THRESHOLD_SOLO.
+	const soloFloor = Math.max(matchFloor, MATCH_THRESHOLD_SOLO);
 
 	for (const m of mappings) {
 		// A name the user already confirmed wins over acoustics — don't re-derive or pre-fill
@@ -112,7 +120,7 @@ export async function matchVoiceprints(
 
 		// second stays at its -1 sentinel when there is no usable runner-up (a single
 		// library, or others that failed to compare) — fall back to the stricter solo floor.
-		const floor = second > -1 ? MATCH_THRESHOLD : MATCH_THRESHOLD_SOLO;
+		const floor = second > -1 ? matchFloor : soloFloor;
 		if (best >= floor && best - second >= MATCH_MARGIN) {
 			m.proposedName = bestName;
 			m.confidence = "CERTAIN";

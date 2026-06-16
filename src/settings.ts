@@ -77,6 +77,8 @@ export interface WhisperCalSettings {
 	skipWordReplacementConfirm: boolean;
 	mergeArchiveFolderPath: string;
 	voiceprintFolderPath: string;
+	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
+	voiceprintMatchFloor: number;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -132,6 +134,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	skipWordReplacementConfirm: false,
 	mergeArchiveFolderPath: "WhisperCal Archive",
 	voiceprintFolderPath: "Caches/Voiceprints",
+	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
 };
 
 class LlmConsentModal extends Modal {
@@ -407,6 +410,25 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			suggest: "folder",
 			browse: true,
 		});
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(containerEl)
+			.setName("Voiceprint match floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
+				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
+				"Default 0.50. Solo-library matches always use at least 0.55.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.50")
+				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintMatchFloor = num;
+						this.debouncedSave();
+					}
+				}));
 
 		this.addTextSetting({
 			container: containerEl,
@@ -779,7 +801,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addToggleSetting({
 			container: containerEl,
 			name: "Debug logging",
-			desc: "Log LLM commands, triggers, and stdout to the developer console. Off by default to avoid leaking meeting content.",
+			desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I). Off by default to avoid leaking meeting content.",
 			get: () => this.plugin.settings.llmDebugLogging,
 			set: v => { this.plugin.settings.llmDebugLogging = v; },
 		});

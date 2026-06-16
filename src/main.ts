@@ -21,6 +21,7 @@ import {updateFrontmatter, readFmString} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, stripWikiLink} from "./utils/vault";
 import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
+import {debug, setDebugLogging} from "./utils/debug";
 import type {AuthState, TokenCache} from "./services/AuthTypes";
 import type {CalendarAuth} from "./services/CalendarAuth";
 import type {CalendarProvider, CalendarProviderType} from "./types";
@@ -482,10 +483,12 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 		setTimeFormat(this.settings.timeFormat);
+		setDebugLogging(this.settings.llmDebugLogging);
 	}
 
 	async saveSettings() {
 		await this.persistData();
+		setDebugLogging(this.settings.llmDebugLogging);
 
 		// If provider type changed, rebuild the entire stack
 		if (this.settings.calendarProvider !== this.activeProviderType) {
@@ -681,7 +684,7 @@ export default class WhisperCalPlugin extends Plugin {
 			preBody = content;
 			const baseMappings = buildMappingsFromBody(content);
 			const vp = baseMappings.length > 0
-				? await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, baseMappings)
+				? await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, baseMappings, this.settings.voiceprintMatchFloor)
 				: new Map<string, VoiceprintMatch>();
 			if (!runLlm) {
 				// LLM-free path: cache the voiceprint matches (if any) and confirm by ear.
@@ -923,9 +926,23 @@ export default class WhisperCalPlugin extends Plugin {
 		let vpProposals = preMatched ?? new Map<string, VoiceprintMatch>();
 		if (!preMatched) {
 			try {
-				vpProposals = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings);
+				vpProposals = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings, this.settings.voiceprintMatchFloor);
 			} catch (e) {
 				console.warn("[WhisperCal] voiceprint matching failed", e);
+			}
+		}
+
+		// Align every proposal with the People folder: rewrite a proposed name (from the LLM or a
+		// voiceprint match) to its canonical People-note basename — the same target confirmed_speakers
+		// wikilinks resolve to — so the modal proposes a name that maps 1:1 to a real person note.
+		// Confirmed names (a re-review) are the user's ground truth and left untouched.
+		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+		for (const m of mappings) {
+			if (m.confirmed || !m.proposedName) continue;
+			const canonical = peopleSvc.canonicalName(m.proposedName);
+			if (canonical && canonical !== m.proposedName) {
+				debug("voiceprint", `proposal canonicalized: "${m.proposedName}" -> "${canonical}"`);
+				m.proposedName = canonical;
 			}
 		}
 
@@ -969,10 +986,12 @@ export default class WhisperCalPlugin extends Plugin {
 
 				// Enroll acoustic voiceprints for the confirmed speakers when Tome wrote a
 				// sidecar next to this transcript. Best-effort — never blocks tagging.
+				debug("voiceprint", `presentSpeakerTagModal: tags applied for ${transcriptPath} — invoking enrollVoiceprints`);
 				try {
 					const enroll = await enrollVoiceprints(
 						this.app,
 						this.settings.voiceprintFolderPath,
+						this.settings.peopleFolderPath,
 						transcriptPath,
 						decisions,
 						new Date().toISOString().slice(0, 10),
@@ -982,6 +1001,12 @@ export default class WhisperCalPlugin extends Plugin {
 					}
 					if (enroll.corrected > 0) {
 						new Notice(`Updated ${enroll.corrected} voiceprint librar${enroll.corrected === 1 ? "y" : "ies"} after re-tagging`);
+					}
+					if (enroll.unmatchedPeople.length > 0) {
+						new Notice(`Enrolled ${enroll.unmatchedPeople.join(", ")} without a people note — create one to keep voiceprints aligned`);
+					}
+					if (enroll.sidecarMissing) {
+						new Notice("Voiceprint sidecar not found — speakers tagged, but not enrolled for acoustic matching");
 					}
 				} catch (e) {
 					console.warn("[WhisperCal] voiceprint enrollment failed", e);
