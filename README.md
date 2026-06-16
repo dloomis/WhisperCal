@@ -672,7 +672,9 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 ### Speaker Tagging
 
-WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library.
+WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library. How strict matching is can be tuned with the **Voiceprint match floor** setting.
+
+Voiceprint libraries stay **aligned 1:1 with your People notes**: a confirmed name (whether proposed by voiceprint, the LLM, or typed by you) is canonicalized to its People-note basename before enrolling — so a library always maps to a real person note, the same target `confirmed_speakers` wikilinks resolve to. If you enroll someone who has no People note yet, a Notice nudges you to create one. (Email-derived name variants help here: a note emailed `douglas.sperber@…` still matches the LLM's formal "Douglas Sperber" even when its basename is "Doug Sperber".)
 
 The optional **transcript post-processing** LLM pass runs whenever LLM features are on and a post-processing prompt is set (the prompt path is the on/off switch). In one pass it **fixes the transcript in place** — correcting transcription errors and diarization mistakes (mis-attributed lines, echo/overlap duplicates) — and **proposes identities only for the speakers voiceprints didn't match** (the confident voiceprint hits are passed in as fixed CERTAIN anchors). [Word replacements](#word-replacements) run first as the only deterministic, non-LLM fix. Leave the prompt path empty to stay fully LLM-free: known people are still matched by voiceprint and unknowns confirmed by ear in the modal, and no transcript leaves your machine.
 
@@ -897,7 +899,8 @@ If any check fails, an Obsidian notice explains the problem.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
-| **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. |
+| **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. Library names align 1:1 with your People notes — a confirmed name is canonicalized to its People-note basename before enrolling. |
+| **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) required to accept an acoustic speaker match. Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. Solo-library matches always use at least `0.55`. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
@@ -995,6 +998,8 @@ All commands are available from the command palette (`Cmd+P`):
 | **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
 | **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review, never auto-applied) and auto-summarize after tags are applied. |
 | **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
+| **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) to accept an acoustic speaker match. Higher = stricter. Solo-library matches use at least `0.55`. |
+| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I`). Off by default to avoid leaking meeting content. |
 | **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
 
 ### Calendar
@@ -1067,11 +1072,16 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 ### LLM job fails immediately
 - Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
 - Ensure your **Transcript post-processing prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
-- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail.
+- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail. Turn on **Debug logging** in settings for verbose diagnostics (LLM commands and stdout, speaker tagging, and voiceprint enrollment), filterable by the `[WhisperCal:` prefix.
 
 ### Speaker tagging modal shows no AI suggestions
 - The LLM's stdout must contain a fenced JSON code block with the expected schema (see [Required LLM Output Format](#required-llm-output-format)). If parsing fails, speakers are shown without proposals.
 - Check the developer console for the raw LLM output to debug prompt issues.
+
+### Speakers tagged but not matched acoustically next time
+- Enrollment needs a Tome voiceprint sidecar alongside the transcript. If a sidecar was expected but couldn't be resolved, WhisperCal shows a Notice ("speakers tagged, but not enrolled") — turn on **Debug logging** to see which sidecar paths were tried.
+- If you see "enrolled … without a people note," create a People note for that person so the voiceprint library stays aligned with your People folder.
+- Matching too loose or too strict? Adjust the **Voiceprint match floor** setting.
 
 ### "LLM concurrency limit reached"
 - The default limit is 2 simultaneous LLM processes. Wait for a running job to finish, or increase **Max concurrent LLM processes** in settings.
