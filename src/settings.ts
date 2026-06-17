@@ -79,6 +79,19 @@ export interface WhisperCalSettings {
 	voiceprintFolderPath: string;
 	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
 	voiceprintMatchFloor: number;
+	/**
+	 * When true, skip the speaker-tag modal and silently apply tags whenever every speaker
+	 * is a confident voiceprint match at or above voiceprintAutoTagFloor. To guard against
+	 * voiceprint drift, these silent auto-tags never enroll or update any voiceprint library —
+	 * libraries only change when you confirm in the modal.
+	 */
+	voiceprintAutoTagSkipModal: boolean;
+	/**
+	 * High-confidence cosine floor (0–1) every speaker must clear for a silent auto-tag.
+	 * Only consulted when voiceprintAutoTagSkipModal is on. Kept high so the bar to skip the
+	 * modal stays strict.
+	 */
+	voiceprintAutoTagFloor: number;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -135,6 +148,8 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	mergeArchiveFolderPath: "WhisperCal Archive",
 	voiceprintFolderPath: "Caches/Voiceprints",
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
+	voiceprintAutoTagSkipModal: false,
+	voiceprintAutoTagFloor: 0.80,
 };
 
 class LlmConsentModal extends Modal {
@@ -429,6 +444,47 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						this.debouncedSave();
 					}
 				}));
+
+		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
+		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
+		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
+		// when you confirm in the modal.
+		const autoTagSkipSub = containerEl.createDiv();
+		const autoTagSkipSetting = new Setting(containerEl)
+			.setName("Auto-tag when all speakers match")
+			.setDesc(
+				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
+				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
+				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
+			)
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
+				.onChange(async (value) => {
+					this.plugin.settings.voiceprintAutoTagSkipModal = value;
+					await this.plugin.saveSettings();
+					autoTagSkipSub.toggle(value);
+				}));
+		// Move the toggle above its sub-setting container.
+		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(autoTagSkipSub)
+			.setName("Auto-tag confidence floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
+				"Keep it high so unattended tagging stays strict. Default 0.80.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.80")
+				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintAutoTagFloor = num;
+						this.debouncedSave();
+					}
+				}));
+		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
 
 		this.addTextSetting({
 			container: containerEl,

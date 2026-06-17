@@ -9,7 +9,7 @@ import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
 import {access} from "fs/promises";
-import {SpeakerTagModal} from "./ui/SpeakerTagModal";
+import {SpeakerTagModal, type SpeakerTagDecision} from "./ui/SpeakerTagModal";
 import {CachedProposalModal} from "./ui/CachedProposalModal";
 import {ResearchModal} from "./ui/ResearchModal";
 import {resolveSeriesPrep, ensureSeriesNote} from "./services/SeriesPrep";
@@ -690,6 +690,14 @@ export default class WhisperCalPlugin extends Plugin {
 				// LLM-free path: cache the voiceprint matches (if any) and confirm by ear.
 				if (baseMappings.length > 0) await writeSpeakerProposals(this.app, transcriptPath, baseMappings);
 				if (auto) {
+					// Automatic mode is on (the only way auto runs reach here). If every speaker is
+					// a confident match at/above the floor, apply now without waiting for a pill
+					// click — otherwise cache the candidates and flag the card for manual review.
+					if (this.shouldAutoTag(baseMappings, vp)) {
+						this.canonicalizeProposals(baseMappings);
+						await this.autoApplyVoiceprintTags(baseMappings, transcriptFile, transcriptPath, notePath);
+						return;
+					}
 					if (vp.size > 0) this.setCardStatus(notePath, `${vp.size} speaker(s) matched by voiceprint — review`, "users-round", 6000, "done");
 					return;
 				}
@@ -860,9 +868,24 @@ export default class WhisperCalPlugin extends Plugin {
 		this.refreshCalendarCards(transcriptPath);
 
 		if (auto) {
-			// Automatic mode stops here: candidates are cached, never applied.
-			// The user reviews via the Speakers pill, which is also what gates
-			// auto-summarize (inside presentSpeakerTagModal, after apply).
+			// Automatic mode is on. Match the LLM's final labels against the voiceprint libraries
+			// (mutating mappings with confident cache hits, same as the modal path). If every
+			// speaker clears the auto-tag floor, apply now without a pill click — drift-guarded by
+			// autoApplyVoiceprintTags (no enrollment). Otherwise cache the candidates for review.
+			if (this.settings.voiceprintAutoTagSkipModal) {
+				try {
+					const vp = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings, this.settings.voiceprintMatchFloor);
+					if (this.shouldAutoTag(mappings, vp)) {
+						this.canonicalizeProposals(mappings);
+						await this.autoApplyVoiceprintTags(mappings, transcriptFile, transcriptPath, notePath);
+						return;
+					}
+				} catch (e) {
+					console.warn("[WhisperCal] auto-tag voiceprint match failed", e);
+				}
+			}
+			// Candidates are cached, never applied. The user reviews via the Speakers pill, which
+			// is also what gates auto-summarize (inside presentSpeakerTagModal, after apply).
 			this.setCardStatus(notePath, "Speaker candidates ready — click Speakers to review", "users-round", 8000, "done");
 			return;
 		}
@@ -932,18 +955,18 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 
-		// Align every proposal with the People folder: rewrite a proposed name (from the LLM or a
-		// voiceprint match) to its canonical People-note basename — the same target confirmed_speakers
-		// wikilinks resolve to — so the modal proposes a name that maps 1:1 to a real person note.
-		// Confirmed names (a re-review) are the user's ground truth and left untouched.
-		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
-		for (const m of mappings) {
-			if (m.confirmed || !m.proposedName) continue;
-			const canonical = peopleSvc.canonicalName(m.proposedName);
-			if (canonical && canonical !== m.proposedName) {
-				debug("voiceprint", `proposal canonicalized: "${m.proposedName}" -> "${canonical}"`);
-				m.proposedName = canonical;
-			}
+		this.canonicalizeProposals(mappings);
+
+		// Auto-tag (skip the modal): when enabled and EVERY speaker is a confident voiceprint
+		// match at/above the high-confidence floor, apply without any user intervention. This is
+		// the pill-click trigger (Automatic mode off — the user clicked Speakers to get here); the
+		// background trigger applies the same way from doTagSpeakers/handleSpeakerTagSuccess when
+		// Automatic mode is on. autoApplyVoiceprintTags never enrolls or heals a library (the drift
+		// guard). A single unmatched or below-floor speaker falls through to the modal below.
+		if (this.shouldAutoTag(mappings, vpProposals)) {
+			debug("voiceprint", `presentSpeakerTagModal: all ${mappings.length} speaker(s) cleared auto-tag floor ${this.settings.voiceprintAutoTagFloor} — skipping modal for ${transcriptPath}`);
+			await this.autoApplyVoiceprintTags(mappings, transcriptFile, transcriptPath, notePath);
+			return;
 		}
 
 		// Queue the modal so parallel completions are presented one at a time.
@@ -1049,6 +1072,98 @@ export default class WhisperCalPlugin extends Plugin {
 				clearProgressStatus();
 			}
 		});
+	}
+
+	/**
+	 * True when the modal can be skipped and the matches applied silently: the feature is on and
+	 * EVERY speaker is a confident voiceprint match at or above the high-confidence floor.
+	 * Deliberately a high bar — a single unmatched or below-floor speaker falls back to the modal.
+	 * Confirmed re-review mappings are skipped by matchVoiceprints, so they're never in `vp` and a
+	 * re-review never auto-tags.
+	 */
+	private shouldAutoTag(mappings: ProposedSpeakerMapping[], vp: Map<string, VoiceprintMatch>): boolean {
+		return this.settings.voiceprintAutoTagSkipModal
+			&& mappings.length > 0
+			&& mappings.every(m => {
+				const match = vp.get(m.originalName);
+				return match !== undefined && match.cosine >= this.settings.voiceprintAutoTagFloor;
+			});
+	}
+
+	/**
+	 * Align every proposal with the People folder: rewrite a proposed name (from the LLM or a
+	 * voiceprint match) to its canonical People-note basename — the same target confirmed_speakers
+	 * wikilinks resolve to — so a tag maps 1:1 to a real person note. Confirmed names (a re-review)
+	 * are the user's ground truth and left untouched. Mutates the mappings in place.
+	 */
+	private canonicalizeProposals(mappings: ProposedSpeakerMapping[]): void {
+		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+		for (const m of mappings) {
+			if (m.confirmed || !m.proposedName) continue;
+			const canonical = peopleSvc.canonicalName(m.proposedName);
+			if (canonical && canonical !== m.proposedName) {
+				debug("voiceprint", `proposal canonicalized: "${m.proposedName}" -> "${canonical}"`);
+				m.proposedName = canonical;
+			}
+		}
+	}
+
+	/**
+	 * Apply confident voiceprint matches without showing the modal (the "auto-tag when all
+	 * speakers match" path). Mirrors the modal's apply tail — tag the body, run word
+	 * replacements, advance pipeline_state, auto-summarize — but DELIBERATELY skips voiceprint
+	 * enrollment and healing. A silent auto-tag must never write back to a library: that's the
+	 * drift guard, so an unattended run can't teach a person's voiceprint a wrong or noisy
+	 * centroid (cross-talk, stray utterances) just because the user stopped reviewing.
+	 */
+	private async autoApplyVoiceprintTags(
+		mappings: ProposedSpeakerMapping[],
+		transcriptFile: TFile,
+		transcriptPath: string,
+		notePath: string,
+	): Promise<void> {
+		const decisions: SpeakerTagDecision[] = mappings.map(m => ({
+			speakerId: m.speakerId,
+			originalName: m.originalName,
+			diarizerLabel: m.diarizerLabel,
+			confirmedName: m.proposedName,
+			confidence: m.confidence,
+			evidence: m.evidence,
+		}));
+		// Reflect the auto-tag step on the card while it applies. On the background (LLM) path the
+		// "Post-processing transcript…" progress label has already been cleared by the time we get
+		// here, so without this the card would go blank mid-process; a pulsing progress status keeps
+		// it honest. The done status below replaces it (or auto-summarize's own progress does), and
+		// the catch clears it on failure.
+		this.setCardStatus(notePath, "Auto-tagging speakers by voiceprint…", "users-round", 0, "progress");
+		try {
+			await applySpeakerTags(this.app, transcriptPath, decisions);
+
+			// Word replacements run after tagging so stub→name substitutions can expose new
+			// matches — parity with the modal apply path. No enroll/heal here (see method doc).
+			if (this.settings.replacementFilePath) {
+				const result = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+				if (result.totalCount > 0) {
+					console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) to transcript`);
+				}
+			}
+
+			await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
+			this.setCardStatus(notePath, `${decisions.length} speaker(s) auto-tagged by voiceprint`, "users-round", 5000, "done");
+			debug("voiceprint", `autoApplyVoiceprintTags: applied ${decisions.length} tag(s) for ${transcriptPath} without enrollment (drift guard)`);
+
+			// Auto-summarize if enabled, same as the modal apply path.
+			if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
+				void this.doSummarize(notePath, true);
+			}
+
+			this.refreshCalendarCards(transcriptPath);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			console.error("[WhisperCal] Auto-tag (skip modal) failed:", e);
+			new Notice(`Failed to auto-tag speakers: ${msg}`);
+			this.clearProgressStatus(notePath);
+		}
 	}
 
 	/**
