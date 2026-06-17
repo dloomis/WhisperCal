@@ -1076,18 +1076,36 @@ export default class WhisperCalPlugin extends Plugin {
 
 	/**
 	 * True when the modal can be skipped and the matches applied silently: the feature is on and
-	 * EVERY speaker is a confident voiceprint match at or above the high-confidence floor.
-	 * Deliberately a high bar — a single unmatched or below-floor speaker falls back to the modal.
-	 * Confirmed re-review mappings are skipped by matchVoiceprints, so they're never in `vp` and a
-	 * re-review never auto-tags.
+	 * every speaker is either a confident voiceprint match at or above the high-confidence floor,
+	 * or the microphone user. The mic user is identified deterministically (its own mic channel +
+	 * the configured `microphoneUser` name) and so never gets a voiceprint-library match — without
+	 * this exemption the user's own presence (i.e. nearly every meeting) would always block auto-tag.
+	 * Deliberately a high bar otherwise — a single unmatched or below-floor non-mic speaker falls
+	 * back to the modal. Confirmed re-review mappings are skipped by matchVoiceprints (never in `vp`)
+	 * and excluded from the mic-user branch, so a re-review never auto-tags.
 	 */
 	private shouldAutoTag(mappings: ProposedSpeakerMapping[], vp: Map<string, VoiceprintMatch>): boolean {
-		return this.settings.voiceprintAutoTagSkipModal
-			&& mappings.length > 0
-			&& mappings.every(m => {
-				const match = vp.get(m.originalName);
-				return match !== undefined && match.cosine >= this.settings.voiceprintAutoTagFloor;
-			});
+		if (!this.settings.voiceprintAutoTagSkipModal || mappings.length === 0) return false;
+		const micUser = this.settings.microphoneUser.trim().toLowerCase();
+		const floor = this.settings.voiceprintAutoTagFloor;
+		const reasons: string[] = [];
+		let allPass = true;
+		for (const m of mappings) {
+			const match = vp.get(m.originalName);
+			const byVoiceprint = match !== undefined && match.cosine >= floor;
+			// The mic user never voiceprint-matches but is at least as certain — treat a speaker
+			// whose proposed name is the configured mic user as satisfied.
+			const byMicUser = micUser.length > 0 && !m.confirmed && m.proposedName.trim().toLowerCase() === micUser;
+			if (!byVoiceprint && !byMicUser) allPass = false;
+			let detail: string;
+			if (byVoiceprint && match) detail = `voiceprint ${match.cosine.toFixed(3)}`;
+			else if (byMicUser) detail = "mic user";
+			else if (match) detail = `below floor ${match.cosine.toFixed(3)} < ${floor}`;
+			else detail = "no voiceprint match";
+			reasons.push(`${m.originalName} -> ${detail}`);
+		}
+		debug("voiceprint", `shouldAutoTag = ${allPass} (floor ${floor}): ${reasons.join("; ")}`);
+		return allPass;
 	}
 
 	/**
