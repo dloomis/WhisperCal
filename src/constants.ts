@@ -34,7 +34,12 @@ export const FM = {
 	MEETING_SERIES_ID: "meeting_series_id",
 	CONFIRMED_SPEAKERS: "confirmed_speakers",
 	VOICEPRINTS: "voiceprints",
+	// Research is orthogonal to the linear pipeline (it runs as pre-meeting prep
+	// or post-summary), so its completion lives in its own field rather than in
+	// pipeline_state, which would otherwise be clobbered by later transcript/
+	// summary writes. Set to "research-done" by the plugin on a successful run.
+	RESEARCH_STATE: "research_state",
 } as const;
 
 /** Valid values written to `pipeline_state` across the pipeline. */
-export type PipelineState = "note" | "titled" | "transcript" | "tagged" | "summarized" | "research-done";
+export type PipelineState = "note" | "titled" | "transcript" | "tagged" | "summarized";

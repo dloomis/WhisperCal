@@ -1343,28 +1343,67 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Read a file's frontmatter, waiting for the metadata cache to catch up when
+	 * the file was just created. Obsidian indexes frontmatter asynchronously, so a
+	 * read immediately after vault.create() returns nothing; we resolve as soon as
+	 * the cache reports the file changed, or fall back to whatever is cached after a
+	 * short timeout (never blocking the UI indefinitely).
+	 */
+	private readFrontmatterAwaitingCache(file: TFile): Promise<Record<string, unknown>> {
+		const cached = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (cached) return Promise.resolve(cached);
+		return new Promise((resolve) => {
+			let settled = false;
+			const finish = (fm: Record<string, unknown>): void => {
+				if (settled) return;
+				settled = true;
+				this.app.metadataCache.offref(ref);
+				clearTimeout(timer);
+				resolve(fm);
+			};
+			const ref = this.app.metadataCache.on("changed", (changed) => {
+				if (changed.path !== file.path) return;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (fm) finish(fm);
+			});
+			const timer = setTimeout(
+				() => finish(this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}),
+				2000,
+			);
+		});
+	}
+
 	private doResearch(notePath: string): void {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
 			return;
 		}
-		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {};
-		const title = (fm["meeting_subject"] as string) || noteFile.basename;
-		const subtitle = buildMeetingSubtitle(fm);
 
 		void (async () => {
+			// The research pill auto-creates a missing occurrence note immediately
+			// before calling us, and Obsidian indexes the metadata cache asynchronously
+			// — so an immediate read returns empty frontmatter. That would drop the
+			// subject + series id and make series-prep resolution fall back to the blank
+			// default modal even when a meeting series note exists. Wait for the cache.
+			const fm = await this.readFrontmatterAwaitingCache(noteFile);
+			const title = (fm["meeting_subject"] as string) || noteFile.basename;
+			const subtitle = buildMeetingSubtitle(fm);
+
 			// For a recurring meeting, auto-create its series note (frontmatter +
 			// "## Research instructions" section) when one doesn't exist yet, so
 			// the user has a home for per-series prep. Recurring-only and gated on
 			// the feature being configured; silent find-or-create.
 			let justCreatedSeriesNote = false;
+			let ensuredSeriesPath: string | null = null;
 			const isRecurringSeries = fm["is_recurring"] === true
 				|| fm["is_recurring"] === "true"
 				|| !!readFmString(fm, FM.MEETING_SERIES_ID);
 			if (this.settings.seriesNotesFolderPath && isRecurringSeries) {
 				const seriesId = readFmString(fm, FM.MEETING_SERIES_ID) ?? "";
 				const {path, created} = await ensureSeriesNote(this.app, this.settings, seriesId, title);
+				ensuredSeriesPath = path;
 				justCreatedSeriesNote = created;
 				if (created) new Notice(`Created meeting series note: ${path}`);
 			}
@@ -1383,9 +1422,15 @@ export default class WhisperCalPlugin extends Plugin {
 			const seriesNoteTag = seriesPrep && (seriesPrep.instruction || seriesPrep.paths.length > 0)
 				? seriesPrep.seriesNotePath
 				: undefined;
+			// When a series note exists but contributed no prep yet, the modal opens
+			// blank — nudge the user there to add per-series prompts, linked to the
+			// note. Mutually exclusive with the provenance tag above.
+			const emptySeriesNotePath = seriesNoteTag
+				? undefined
+				: (ensuredSeriesPath ?? seriesPrep?.seriesNotePath ?? undefined);
 			const result = await new ResearchModal(
 				this.app, title, subtitle, seriesPrep?.paths, seriesPrep?.instruction,
-				undefined, seriesNoteTag,
+				undefined, seriesNoteTag, emptySeriesNotePath,
 			).prompt();
 			if (!result) return;
 
@@ -1430,11 +1475,15 @@ export default class WhisperCalPlugin extends Plugin {
 					debugMode: this.settings.llmDebugMode,
 					debugLogging: this.settings.llmDebugLogging,
 				}),
-				onSuccess: ({exitCode, stderr}) => {
+				onSuccess: async ({exitCode, stderr}) => {
 					if (exitCode === 0) {
 						if (!this.app.vault.getAbstractFileByPath(notePath)) {
 							new Notice("Meeting note was deleted while research was running");
 						} else {
+							// Plugin owns the research-done marker — a dedicated field, not the
+							// linear pipeline_state — so it survives later transcript/summary
+							// state writes and is set regardless of what the research prompt does.
+							await updateFrontmatter(this.app, notePath, FM.RESEARCH_STATE, "research-done");
 							this.setCardStatus(notePath, "Research complete", "check", 4000, "done");
 						}
 					} else {
@@ -1552,7 +1601,11 @@ export default class WhisperCalPlugin extends Plugin {
 					});
 				}
 
-				void opts.onSuccess(result);
+				// Await so any completion frontmatter the handler writes (e.g.
+				// research_state) lands BEFORE the finally re-renders the card —
+				// otherwise that cleanup render paints the pill as still-incomplete
+				// and the fix relies on the debounced metadataCache listener.
+				await opts.onSuccess(result);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
 				new Notice(`${label} encountered an unexpected error: ${msg}`);

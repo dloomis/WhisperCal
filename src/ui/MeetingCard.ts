@@ -264,8 +264,12 @@ function computePillStates(
 	const note: PillState = noteExists ? "complete" : "incomplete";
 	// Research stays enabled even without a parent note — clicking it
 	// auto-creates the note first (via NoteCreator.ensureNote).
+	// Done is the plugin-written marker (set on a successful run), matching the
+	// other pills. research_notes is a legacy fallback — it was written on note
+	// selection before the run, so it predates the marker on already-researched
+	// notes; new runs always set research_state.
 	const research: PillState = jobs.has("research", notePath) ? "running"
-		: noteFm["research_notes"] ? "complete"
+		: (noteFm[FM.RESEARCH_STATE] === "research-done" || noteFm["research_notes"]) ? "complete"
 		: "incomplete";
 	const transcript: PillState = !noteExists
 		? "disabled"

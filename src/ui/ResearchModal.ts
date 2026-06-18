@@ -30,6 +30,9 @@ export class ResearchModal extends Modal {
 	private initialInstructions: string;
 	private initialBypass: boolean;
 	private seriesNotePath: string | null;
+	// A series note that exists but has no prep yet: the modal opens blank, so we
+	// show a tip pointing the user to it. Mutually exclusive with seriesNotePath.
+	private emptySeriesNotePath: string | null;
 	// Series prep gives the modal a runnable default (a prompt and/or context
 	// notes), so the note picker and prompt editor collapse behind a disclosure.
 	// Ad-hoc research has no default, so it shows those controls outright.
@@ -39,7 +42,7 @@ export class ResearchModal extends Modal {
 
 	constructor(app: App, meetingTitle: string, subtitle: string,
 		initialPaths?: string[], initialInstructions?: string, initialBypass?: boolean,
-		seriesNotePath?: string) {
+		seriesNotePath?: string, emptySeriesNotePath?: string) {
 		super(app);
 		this.meetingTitle = meetingTitle;
 		this.meetingSubtitle = subtitle;
@@ -47,6 +50,7 @@ export class ResearchModal extends Modal {
 		this.initialInstructions = initialInstructions ?? "";
 		this.initialBypass = initialBypass ?? false;
 		this.seriesNotePath = seriesNotePath ?? null;
+		this.emptySeriesNotePath = emptySeriesNotePath ?? null;
 	}
 
 	prompt(): Promise<ResearchResult | null> {
@@ -88,6 +92,30 @@ export class ResearchModal extends Modal {
 				e.preventDefault();
 				void this.app.workspace.openLinkText(seriesPath, "", true);
 			});
+		}
+
+		// Tip (blank-modal case only): a series note exists but has no prep yet, so
+		// point the user to it. Mutually exclusive with the provenance tag above.
+		if (this.emptySeriesNotePath) {
+			const seriesPath = this.emptySeriesNotePath;
+			const tip = contentEl.createDiv({cls: "whisper-cal-research-series-tip"});
+			setIcon(tip.createSpan({cls: "whisper-cal-research-series-tip-icon"}), "lightbulb");
+			const text = tip.createSpan({cls: "whisper-cal-research-series-tip-text"});
+			text.appendText("Did you know you can save custom LLM prompts specific to this meeting series? Open ");
+			const link = text.createEl("a", {
+				cls: "whisper-cal-research-series-tag-link",
+				text: seriesPath.replace(/\.md$/, "").split("/").pop() ?? seriesPath,
+				href: "#",
+			});
+			link.setAttr("aria-label", `Open ${seriesPath}`);
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				// Opening the series note to edit its prompt means the user isn't
+				// researching right now — dismiss the modal so it's out of the way.
+				void this.app.workspace.openLinkText(seriesPath, "", true);
+				this.close();
+			});
+			text.appendText(" to add them.");
 		}
 
 		// Selected context-note chips \u2014 shown in both states so the pre-filled

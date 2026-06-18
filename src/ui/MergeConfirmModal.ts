@@ -37,7 +37,6 @@ export class MergeConfirmModal extends Modal {
 		switch (state) {
 		case "tagged":
 		case "summarized":
-		case "research-done":
 			return "tagged";
 		case "titled":
 		case "transcript":

@@ -417,77 +417,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		this.addTextSetting({
 			container: containerEl,
-			name: "Speaker voiceprints folder",
-			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
-			placeholder: "Caches/Voiceprints",
-			get: () => this.plugin.settings.voiceprintFolderPath,
-			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(containerEl)
-			.setName("Voiceprint match floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
-				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
-				"Default 0.50. Solo-library matches always use at least 0.55.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.50")
-				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintMatchFloor = num;
-						this.debouncedSave();
-					}
-				}));
-
-		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
-		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
-		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
-		// when you confirm in the modal.
-		const autoTagSkipSub = containerEl.createDiv();
-		const autoTagSkipSetting = new Setting(containerEl)
-			.setName("Auto-tag when all speakers match")
-			.setDesc(
-				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
-				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
-				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
-			)
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
-				.onChange(async (value) => {
-					this.plugin.settings.voiceprintAutoTagSkipModal = value;
-					await this.plugin.saveSettings();
-					autoTagSkipSub.toggle(value);
-				}));
-		// Move the toggle above its sub-setting container.
-		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
-
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(autoTagSkipSub)
-			.setName("Auto-tag confidence floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
-				"Keep it high so unattended tagging stays strict. Default 0.80.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.80")
-				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintAutoTagFloor = num;
-						this.debouncedSave();
-					}
-				}));
-		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
-
-		this.addTextSetting({
-			container: containerEl,
 			name: "Note filename template",
 			desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
 			placeholder: "{{date}} {{time}} - {{subject}}",
@@ -864,7 +793,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		// Per-prompt settings: each prompt has its own sub-section with a file
 		// path, model, and additional flags appended after the global flags.
-		const modelSelects: HTMLSelectElement[] = [];
+		// Each select is paired with its model key so refreshModels() doesn't
+		// depend on the order the prompt sub-sections are rendered.
+		const modelSelects: {sel: HTMLSelectElement; key: "speakerTagModel" | "summarizerModel" | "researchModel"}[] = [];
 
 		const addPromptSetting = (
 			name: string,
@@ -893,7 +824,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setName("Model")
 				.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key above to load available models.`)
 				.addDropdown(dropdown => {
-					modelSelects.push(dropdown.selectEl);
+					modelSelects.push({sel: dropdown.selectEl, key: modelKey});
 					dropdown.addOption("", "Default");
 					const current = this.plugin.settings[modelKey];
 					if (current) {
@@ -915,6 +846,113 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				set: v => { this.plugin.settings[flagsKey] = v; },
 			});
 		};
+
+		addPromptSetting(
+			"Summarizer",
+			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
+			"Prompts/Meeting Summarizer.md",
+			"summarizerPromptPath",
+			"summarizerModel",
+			"summarizerFlags",
+		);
+
+		addPromptSetting(
+			"Research",
+			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
+			"Prompts/Meeting Research.md",
+			"researchPromptPath",
+			"researchModel",
+			"researchFlags",
+		);
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Meeting series notes folder",
+			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
+			placeholder: "Meeting Series",
+			get: () => this.plugin.settings.seriesNotesFolderPath,
+			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+
+		// ── Speaker tagging ──────────────────────────────────────────────
+		// Acoustic voiceprint matching (LLM-free) plus the LLM fallback prompt
+		// and the modal/roster knobs that shape the Speakers pipeline stage.
+		new Setting(containerEl)
+			.setName("Speaker tagging")
+			.setHeading();
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Speaker voiceprints folder",
+			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
+			placeholder: "Caches/Voiceprints",
+			get: () => this.plugin.settings.voiceprintFolderPath,
+			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(containerEl)
+			.setName("Voiceprint match floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
+				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
+				"Default 0.50. Solo-library matches always use at least 0.55.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.50")
+				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintMatchFloor = num;
+						this.debouncedSave();
+					}
+				}));
+
+		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
+		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
+		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
+		// when you confirm in the modal.
+		const autoTagSkipSub = containerEl.createDiv();
+		const autoTagSkipSetting = new Setting(containerEl)
+			.setName("Auto-tag when all speakers match")
+			.setDesc(
+				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
+				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
+				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
+			)
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
+				.onChange(async (value) => {
+					this.plugin.settings.voiceprintAutoTagSkipModal = value;
+					await this.plugin.saveSettings();
+					autoTagSkipSub.toggle(value);
+				}));
+		// Move the toggle above its sub-setting container.
+		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(autoTagSkipSub)
+			.setName("Auto-tag confidence floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
+				"Keep it high so unattended tagging stays strict. Default 0.80.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.80")
+				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintAutoTagFloor = num;
+						this.debouncedSave();
+					}
+				}));
+		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
 
 		addPromptSetting(
 			"Transcript post-processing",
@@ -952,43 +990,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
 		});
 
-		addPromptSetting(
-			"Summarizer",
-			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
-			"Prompts/Meeting Summarizer.md",
-			"summarizerPromptPath",
-			"summarizerModel",
-			"summarizerFlags",
-		);
-
-		addPromptSetting(
-			"Research",
-			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
-			"Prompts/Meeting Research.md",
-			"researchPromptPath",
-			"researchModel",
-			"researchFlags",
-		);
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Meeting series notes folder",
-			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
-			placeholder: "Meeting Series",
-			get: () => this.plugin.settings.seriesNotesFolderPath,
-			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
 		// Populate all model dropdowns from the API
-		const modelKeys: ("speakerTagModel" | "summarizerModel" | "researchModel")[] =
-			["speakerTagModel", "summarizerModel", "researchModel"];
 		const refreshModels = async () => {
 			const models = await this.fetchAnthropicModels();
-			for (let i = 0; i < modelSelects.length; i++) {
-				const sel = modelSelects[i]!;
-				const current = this.plugin.settings[modelKeys[i]!];
+			for (const {sel, key} of modelSelects) {
+				const current = this.plugin.settings[key];
 				sel.replaceChildren();
 				sel.add(new Option("Default", ""));
 				for (const m of models) {

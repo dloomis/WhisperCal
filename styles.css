@@ -1695,6 +1695,34 @@
 	text-decoration: underline;
 }
 
+.whisper-cal-research-series-tip {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 4px 0 8px;
+	padding: 8px 12px;
+	border-radius: var(--radius-m);
+	/* Accent-tinted callout that follows the user's chosen theme accent
+	   (Obsidian exposes it as the --accent-h/s/l HSL components). */
+	border: 1px solid hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.35);
+	background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.13);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-normal);
+	line-height: 1.4;
+}
+
+.whisper-cal-research-series-tip-icon {
+	display: inline-flex;
+	align-items: center;
+	margin-top: 1px;
+	color: hsl(var(--accent-h), var(--accent-s), var(--accent-l));
+}
+
+.whisper-cal-research-series-tip-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
 .whisper-cal-research-toggle {
 	display: flex;
 	align-items: center;
