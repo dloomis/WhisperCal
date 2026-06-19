@@ -263,25 +263,28 @@
 	pointer-events: none;
 }
 
-/* The line itself: a flat, solid accent rule spanning the list. */
+/* The line itself: a flat accent rule spanning the card from its left edge. Kept translucent
+   so card text underneath stays readable where the line crosses it. */
 .whisper-cal-now-line::before {
 	content: "";
 	position: absolute;
-	left: 6px;
+	left: 0;
 	right: 0;
 	top: -1px;
 	height: 2px;
-	background: var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
 }
 
-/* Bullet anchor at the left edge — the obvious "you are here" dot. */
+/* "You are here" dot, parked in the thin margin just left of the card so it sits cleanly
+   between a conflict bracket (when present, its right edge is at -8px) and the card edge,
+   with a couple of pixels of breathing room before the card. */
 .whisper-cal-now-line::after {
 	content: "";
 	position: absolute;
-	left: 0;
-	top: -4px;
-	width: 9px;
-	height: 9px;
+	left: -8px;
+	top: -3px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	background: var(--interactive-accent);
 }
