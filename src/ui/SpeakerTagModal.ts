@@ -311,6 +311,20 @@ export class SpeakerTagModal extends Modal {
 					text: "unresolved",
 				});
 			}
+
+			// Closest voiceprint below the confident-match bar. Shown even alongside an LLM
+			// guess so the user can see the acoustics also leaned toward this person.
+			if (mapping.nearMatch) {
+				const near = row.createDiv({cls: "whisper-cal-speaker-tag-detail whisper-cal-speaker-tag-nearmatch"});
+				near.createSpan({
+					cls: "whisper-cal-speaker-tag-badge whisper-cal-badge-nearmatch",
+					text: "closest",
+				});
+				near.createSpan({
+					cls: "whisper-cal-speaker-tag-evidence",
+					text: ` · ${mapping.nearMatch.name} · cosine ${mapping.nearMatch.cosine.toFixed(3)}`,
+				});
+			}
 		}
 
 		// Handle Enter on last input → Apply, Tab navigation is native

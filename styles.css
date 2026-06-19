@@ -286,6 +286,11 @@
 	background: var(--interactive-accent);
 }
 
+/* Between meetings: drop the line, keep just the dot so it doesn't cross the gap label. */
+.whisper-cal-now-line--dot::before {
+	display: none;
+}
+
 .whisper-cal-content {
 	position: relative;
 }
@@ -1485,6 +1490,17 @@
 .whisper-cal-badge-source-llm {
 	background: var(--background-modifier-border);
 	color: var(--text-muted);
+}
+
+/* Sub-threshold voiceprint "closest match" hint — accent-tinted but muted to read as
+   tentative, distinct from the confident "cache" badge. */
+.whisper-cal-badge-nearmatch {
+	background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+	color: var(--text-muted);
+}
+
+.whisper-cal-speaker-tag-nearmatch {
+	margin-top: 2px;
 }
 
 .whisper-cal-speaker-tag-evidence {

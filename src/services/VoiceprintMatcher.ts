@@ -29,6 +29,10 @@ const MATCH_THRESHOLD_SOLO = 0.55;
 // Skip matching a centroid backed by less than this much diarized speech — too thin/noisy
 // to trust a CERTAIN match against (mirrors the enroller's MIN_ENROLL_SECONDS).
 const MATCH_MIN_SECONDS = 5;
+// Below the confident-match bar, but close enough to surface in the modal as a "closest
+// match" hint (e.g. a known speaker split across diarizer labels, where one label clears
+// the floor and the other lands just under it). Purely informational.
+const NEAR_MATCH_FLOOR = 0.40;
 
 export interface VoiceprintMatch {
 	name: string;
@@ -127,6 +131,11 @@ export async function matchVoiceprints(
 			m.source = "cache";
 			m.evidence = `cosine ${best.toFixed(3)}`;
 			result.set(m.originalName, {name: bestName, cosine: best});
+		} else if (best >= NEAR_MATCH_FLOOR && bestName) {
+			// Didn't clear the confident-match bar (below the floor, or too close to a runner-up),
+			// but worth showing the user the closest voiceprint so they can corroborate by ear.
+			// Doesn't pre-fill the name or block the LLM fallback — informational only.
+			m.nearMatch = {name: bestName, cosine: best};
 		}
 	}
 	return result;

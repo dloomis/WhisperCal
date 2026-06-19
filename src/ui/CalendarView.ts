@@ -1433,24 +1433,39 @@ export class CalendarView extends ItemView {
 			const frac = end > start ? Math.min(0.92, Math.max(0.08, (nowMs - start) / (end - start))) : 0.08;
 			topPx = relTop(live) + frac * height(live);
 		} else {
-			// Not in any meeting. The last card that has already started sits just above the
-			// current whitespace; the next card sits just below it.
-			let aboveIdx = -1;
-			for (let i = 0; i < cards.length; i++) {
-				if (Number(cards[i]!.dataset.startTime) <= nowMs) aboveIdx = i; else break;
+			// Not in any meeting. Prefer the gap spacer that contains "now" so the dot lines
+			// up with that gap's dotted rule + duration label; otherwise use the whitespace
+			// midpoint between the surrounding cards.
+			let gapPx: number | null = null;
+			for (const g of Array.from(content.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"))) {
+				if (nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd)) {
+					gapPx = relTop(g) + height(g) / 2;
+					break;
+				}
 			}
-			if (aboveIdx === -1) return; // before the day's first meeting — no marker
-
-			const above = cards[aboveIdx]!;
-			const below = cards[aboveIdx + 1] ?? null;
-			topPx = below
-				// Truly between two meetings: float the line in the gap between them.
-				? (relTop(above) + height(above) + relTop(below)) / 2
-				// After the day's last meeting — sit just below it.
-				: relTop(above) + height(above);
+			if (gapPx !== null) {
+				topPx = gapPx;
+			} else {
+				// The last card that has already started sits just above the current whitespace.
+				let aboveIdx = -1;
+				for (let i = 0; i < cards.length; i++) {
+					if (Number(cards[i]!.dataset.startTime) <= nowMs) aboveIdx = i; else break;
+				}
+				if (aboveIdx === -1) return; // before the day's first meeting — no marker
+				const above = cards[aboveIdx]!;
+				const below = cards[aboveIdx + 1] ?? null;
+				topPx = below
+					// Truly between two meetings: float in the gap between them.
+					? (relTop(above) + height(above) + relTop(below)) / 2
+					// After the day's last meeting — sit just below it.
+					: relTop(above) + height(above);
+			}
 		}
 
 		const marker = content.createDiv({cls: "whisper-cal-now-line"});
+		// Between/after meetings: show just the dot so the line doesn't cross the gap's
+		// duration label. The full line is reserved for a meeting that's actually live.
+		if (!live) marker.addClass("whisper-cal-now-line--dot");
 		marker.setCssProps({"--wc-now-top": `${topPx}px`});
 	}
 

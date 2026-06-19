@@ -19,6 +19,9 @@ export interface ProposedSpeakerMapping {
 	/** True when originalName is already a user-confirmed real name (re-review of a tagged
 	 *  transcript). Acoustic matching must not overwrite a confirmed name with a fresh guess. */
 	confirmed?: boolean;
+	/** Best voiceprint library below the confident-match bar — surfaced in the modal as a
+	 *  "closest match" hint. Informational only: never pre-fills the name. */
+	nearMatch?: {name: string; cosine: number};
 }
 
 interface ParseResult {
