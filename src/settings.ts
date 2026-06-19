@@ -117,7 +117,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
 	rosterMaxEnriched: 20,
-	speakerTagClipSeconds: 0,
+	speakerTagClipSeconds: 5,
 	llmEnabled: false,
 	anthropicApiKey: "",
 	llmCli: "claude",
@@ -367,7 +367,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addToggleSetting({
 			container: containerEl,
 			name: "Auto-create people notes",
-			desc: "Automatically create people notes for meeting organizers that don't have one yet. Requires a people template.",
+			desc: "Automatically create people notes for meeting organizers and newly-tagged speakers without one. Organizers need a people template; tagged speakers fall back to a minimal note.",
 			get: () => this.plugin.settings.autoCreatePeopleNotes,
 			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
 		});
@@ -983,8 +983,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addNumberSetting({
 			container: containerEl,
 			name: "Speaker clip length (seconds)",
-			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 = play the full snippet (until the next speaker).",
-			placeholder: "0",
+			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
+			placeholder: "5",
 			min: 0,
 			get: () => this.plugin.settings.speakerTagClipSeconds,
 			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },

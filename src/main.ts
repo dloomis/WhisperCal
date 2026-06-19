@@ -36,6 +36,7 @@ import {getLinkedTranscriptFile} from "./services/ApiRecording";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
+import {createPeopleNotesForNames} from "./services/PeopleAutoCreate";
 import {AutoSpeakerTagger} from "./services/AutoSpeakerTagger";
 
 /** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
@@ -1025,8 +1026,42 @@ export default class WhisperCalPlugin extends Plugin {
 					if (enroll.corrected > 0) {
 						new Notice(`Updated ${enroll.corrected} voiceprint librar${enroll.corrected === 1 ? "y" : "ies"} after re-tagging`);
 					}
-					if (enroll.unmatchedPeople.length > 0) {
-						new Notice(`Enrolled ${enroll.unmatchedPeople.join(", ")} without a people note — create one to keep voiceprints aligned`);
+
+					// Auto-create People notes for confirmed speakers who are genuinely new to the
+					// vault (gated by the same toggle as calendar-organizer auto-create). The helper
+					// skips anyone an existing note already covers — including surname variants like
+					// "Steve" vs "Steven" — so the warning below still fires for those.
+					let createdPeople: string[] = [];
+					if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath) {
+						try {
+							// Skip the microphone user — that's the note-taker, not a new person
+							// (mirrors the calendar-organizer path skipping the user's own email).
+							const micUser = this.settings.microphoneUser.trim().toLowerCase();
+							const confirmedNames = decisions
+								.map(d => d.confirmedName?.trim())
+								.filter((n): n is string => !!n && n.toLowerCase() !== micUser);
+							createdPeople = await createPeopleNotesForNames(
+								this.app,
+								this.settings.peopleFolderPath,
+								this.settings.peopleTemplatePath,
+								confirmedNames,
+								title,
+							);
+							if (createdPeople.length > 0) {
+								new Notice(`Created people note${createdPeople.length === 1 ? "" : "s"} for ${createdPeople.join(", ")}`);
+							}
+						} catch (e) {
+							console.warn("[WhisperCal] auto-create people notes failed", e);
+						}
+					}
+
+					// Warn only about enrolled speakers we did NOT just create a note for (e.g. a
+					// surname variant the guard deliberately skipped) — their voiceprint library
+					// name won't line up with any People note until the user reconciles it.
+					const createdLower = new Set(createdPeople.map(n => n.toLowerCase()));
+					const stillUnmatched = enroll.unmatchedPeople.filter(n => !createdLower.has(n.toLowerCase()));
+					if (stillUnmatched.length > 0) {
+						new Notice(`Enrolled ${stillUnmatched.join(", ")} without a people note — create one to keep voiceprints aligned`);
 					}
 					if (enroll.sidecarMissing) {
 						new Notice("Voiceprint sidecar not found — speakers tagged, but not enrolled for acoustic matching");

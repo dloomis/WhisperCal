@@ -4,6 +4,9 @@ import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
 import {transcriptBody, findSpeakerLabels} from "../utils/transcript";
 import {renderModalHeader} from "./ModalHeader";
 
+/** Fallback clip length when the setting is unset (0). */
+const DEFAULT_CLIP_SECONDS = 5;
+
 export interface SpeakerTagDecision {
 	speakerId: string;
 	originalName: string;
@@ -127,18 +130,16 @@ export class SpeakerTagModal extends Modal {
 	}
 
 	/**
-	 * Seek the player to a snippet and pause at its end. The stop point is the next
-	 * speaker's timestamp, optionally shortened by the clip-length setting
-	 * (0 = play the whole snippet). Enforced by the timeupdate listener in onOpen.
+	 * Seek the player to a snippet and pause after a fixed clip length. We deliberately
+	 * ignore the next speaker's timestamp: on short lines that boundary is a split-second
+	 * away and used to cut the clip off almost immediately. Always playing a fixed window
+	 * (the clip-length setting, default 5s) guarantees you actually hear the voice.
+	 * Enforced by the timeupdate listener in onOpen.
 	 */
-	private playSnippet(start: number, end: number | null): void {
+	private playSnippet(start: number): void {
 		if (!this.audioEl) return;
-		let stopAt = end;
-		if (this.clipSeconds > 0) {
-			const capped = start + this.clipSeconds;
-			stopAt = stopAt === null ? capped : Math.min(stopAt, capped);
-		}
-		this.stopAt = stopAt;
+		const duration = this.clipSeconds > 0 ? this.clipSeconds : DEFAULT_CLIP_SECONDS;
+		this.stopAt = start + duration;
 		this.seekingForSnippet = true;
 		this.audioEl.currentTime = start;
 		void this.audioEl.play();
@@ -164,7 +165,7 @@ export class SpeakerTagModal extends Modal {
 				setIcon(icon, "play");
 				tsEl.createSpan({text: stripped});
 				tsEl.setAttribute("aria-label", "Play this snippet");
-				tsEl.addEventListener("click", () => this.playSnippet(start, block.endOffset));
+				tsEl.addEventListener("click", () => this.playSnippet(start));
 			} else {
 				blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
 			}

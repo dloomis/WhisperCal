@@ -1,7 +1,7 @@
 import {App, TFile, TFolder} from "obsidian";
 import type {CalendarEvent} from "../types";
 import {PeopleMatchService} from "./PeopleMatchService";
-import {getMarkdownFilesRecursive} from "../utils/vault";
+import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import {sanitizeFilename} from "../utils/sanitize";
 import {applyTemplate} from "./TemplateEngine";
@@ -143,4 +143,80 @@ export async function autoCreatePeopleNotes(
 	if (created > 0) {
 		console.debug(`[WhisperCal] Auto-created ${created} People note(s)`);
 	}
+}
+
+/**
+ * Auto-create People notes for confirmed speaker names that are truly new: no existing note
+ * matches by name/email, AND no existing note shares the surname (the "Steve Martin" vs
+ * "Steven Martin" guard — a name variant almost certainly already has a note). Reuses the
+ * people template when one is configured, otherwise writes a minimal `full_name` stub so a
+ * freshly-tagged speaker always has a note for voiceprints to align to. Best-effort; returns
+ * the basenames of the notes it actually created.
+ */
+export async function createPeopleNotesForNames(
+	app: App,
+	peopleFolderPath: string,
+	templatePath: string,
+	names: string[],
+	contextLabel?: string,
+): Promise<string[]> {
+	if (!peopleFolderPath || names.length === 0) return [];
+
+	await ensureFolder(app, peopleFolderPath);
+	const folder = app.vault.getAbstractFileByPath(peopleFolderPath);
+	if (!(folder instanceof TFolder)) return [];
+
+	// The template is optional on this path (unlike the calendar-organizer path): a tagged
+	// speaker should always land a note, so fall back to a minimal stub when none is set.
+	let template = "";
+	const templateFile = templatePath ? app.vault.getAbstractFileByPath(templatePath) : null;
+	if (templateFile instanceof TFile) template = await app.vault.cachedRead(templateFile);
+
+	const peopleSvc = new PeopleMatchService(app, peopleFolderPath);
+
+	// Existing surnames for the variance guard. See autoCreatePeopleNotes above.
+	const existingLastNames = new Set<string>();
+	for (const file of getMarkdownFilesRecursive(folder)) {
+		const last = file.basename.split(/\s+/).pop();
+		if (last) existingLastNames.add(last.toLowerCase());
+	}
+
+	const created: string[] = [];
+	const handled = new Set<string>();
+	for (const raw of names) {
+		const name = raw.trim();
+		if (!name) continue;
+
+		const parsed = cleanParsedName(parseDisplayName(name, ""));
+		const key = parsed.toLowerCase();
+		if (handled.has(key)) continue;
+		handled.add(key);
+
+		// Filter stubs / single-token labels (e.g. "Speaker 2" cleans to "Speaker").
+		if (!isLikelyPerson(name, "")) continue;
+
+		// Already covered by an existing note (exact or normalized name match).
+		if (peopleSvc.matchOne(name, "") || peopleSvc.matchOne(parsed, "")) continue;
+
+		// Same surname already on file — almost certainly a variant of an existing person.
+		const lastName = parsed.split(/\s+/).pop();
+		if (lastName && existingLastNames.has(lastName.toLowerCase())) continue;
+
+		const path = `${peopleFolderPath}/${sanitizeFilename(parsed)}.md`;
+		if (app.vault.getAbstractFileByPath(path)) continue;
+
+		try {
+			let content = template
+				? applyTemplate(template, buildPeopleVariableMap(parsed, ""))
+				: `---\nfull_name: "${parsed}"\n---\n`;
+			if (contextLabel) content += `\n\n> [!info] Auto-created\n> Speaker in **${contextLabel}**\n`;
+			await app.vault.create(path, content);
+			created.push(parsed);
+			console.debug(`[WhisperCal] Auto-created People note from speaker tag: ${path}`);
+		} catch (e) {
+			console.warn(`[WhisperCal] failed to auto-create People note "${parsed}"`, e);
+		}
+	}
+
+	return created;
 }

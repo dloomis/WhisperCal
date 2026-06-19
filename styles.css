@@ -252,27 +252,46 @@
 	) 4;
 }
 
-/* Current-time marker — triangle in the gutter margin */
+/* Current-time marker — a horizontal "now" line across the meeting list */
 .whisper-cal-now-line {
 	position: absolute;
+	left: 0;
+	right: 0;
 	top: var(--wc-now-top, 0);
 	height: 0;
-	z-index: 1;
+	z-index: 3;
 	pointer-events: none;
 }
 
+/* The line itself: a crisp accent rule that fades out toward the right so it stays subtle. */
 .whisper-cal-now-line::before {
 	content: "";
 	position: absolute;
-	left: -16px;
-	top: 50%;
-	transform: translateY(-50%);
-	width: 0;
-	height: 0;
-	border-top: 8px solid transparent;
-	border-bottom: 8px solid transparent;
-	border-left: 11px solid var(--text-warning);
-	opacity: 0.8;
+	left: 6px;
+	right: 0;
+	top: -1px;
+	height: 2px;
+	border-radius: 2px;
+	background: linear-gradient(
+		to right,
+		var(--interactive-accent),
+		color-mix(in srgb, var(--interactive-accent) 35%, transparent) 70%,
+		transparent
+	);
+	box-shadow: 0 0 6px color-mix(in srgb, var(--interactive-accent) 50%, transparent);
+}
+
+/* Bullet anchor at the left edge — the obvious "you are here" dot. */
+.whisper-cal-now-line::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: -4px;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	box-shadow: 0 0 6px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
 }
 
 .whisper-cal-content {

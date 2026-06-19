@@ -38,6 +38,20 @@ export interface CalendarViewCallbacks {
 	getUnlinkedProvider: () => UnlinkedRecordingProvider;
 }
 
+/**
+ * Normalize a meeting/transcript name for fuzzy equality: drop a leading ISO date prefix
+ * (note templates often prepend "{{date}} - ", which the calendar subject lacks), lowercase,
+ * and collapse whitespace. Used to decide whether an unlinked transcript "obviously" belongs
+ * to a calendar meeting.
+ */
+function normalizeMeetingName(s: string): string {
+	return s
+		.replace(/^\d{4}-\d{2}-\d{2}\s*[-–—]?\s*/, "")
+		.toLowerCase()
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
 export class CalendarView extends ItemView {
 	private settings: WhisperCalSettings;
 	private provider: CalendarProvider;
@@ -60,6 +74,8 @@ export class CalendarView extends ItemView {
 	private unlinkedEl: HTMLElement | null = null;
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
+	private autoLinkInFlight = false;
+	private autoLinkAttempted = new Set<string>();
 	private nowLineTimerId: number | null = null;
 	private cards = new Map<string, {el: HTMLElement; opts: MeetingCardOpts}>();
 	private mergeSelection = new Set<string>();
@@ -262,6 +278,11 @@ export class CalendarView extends ItemView {
 			return;
 		}
 		this.lastRefreshTime = now;
+
+		// A full refresh re-fetches the calendar, so give auto-link another shot with fresh
+		// events. (High-frequency metadataCache-change passes keep this set to avoid re-fetch
+		// storms — only an explicit refresh clears it.)
+		this.autoLinkAttempted.clear();
 
 		if (!this.contentContainer) return;
 
@@ -935,7 +956,17 @@ export class CalendarView extends ItemView {
 		// Bail if a newer call superseded us
 		if (gen !== this.unlinkedGeneration) return;
 
-		if (unlinked.length === 0) {
+		// Auto-link the obvious ones first (e.g. a pill recording that Tome named but that was
+		// never linked because it was stopped from Tome's own UI or Obsidian reloaded mid-record)
+		// so the user only sees recordings that genuinely need a manual decision.
+		const autoLinked = await this.autoLinkObvious(unlinked);
+		if (gen !== this.unlinkedGeneration) return;
+		const pending = autoLinked.size > 0 ? unlinked.filter(r => !autoLinked.has(r.id)) : unlinked;
+		if (autoLinked.size > 0) {
+			new Notice(`Auto-linked ${autoLinked.size} transcript${autoLinked.size === 1 ? "" : "s"} to ${autoLinked.size === 1 ? "its meeting" : "their meetings"}`);
+		}
+
+		if (pending.length === 0) {
 			this.unlinkedEl.createDiv({
 				cls: "whisper-cal-unlinked-empty",
 				text: `No unlinked transcripts for the last ${this.settings.unlinkedLookbackDays} days`,
@@ -946,7 +977,7 @@ export class CalendarView extends ItemView {
 		// Collapsible header
 		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
 		const arrow = header.createSpan({cls: "whisper-cal-unlinked-arrow", text: this.unlinkedCollapsed ? "\u25B8" : "\u25BE"});
-		header.createSpan({text: `Unlinked transcripts (${unlinked.length})`});
+		header.createSpan({text: `Unlinked transcripts (${pending.length})`});
 
 		const body = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-body"});
 		body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
@@ -957,12 +988,109 @@ export class CalendarView extends ItemView {
 			body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
 		});
 
-		for (const recording of unlinked) {
+		for (const recording of pending) {
 			this.renderUnlinkedCard(body, recording);
 		}
 
 		// Freshly-built DOM — re-apply the active-note highlight
 		this.applyNoteOpenHighlight();
+	}
+
+	/**
+	 * Best-effort: link unlinked transcripts to an obviously-corresponding calendar meeting
+	 * without bugging the user. Conservative by design — see findObviousMeeting — and never
+	 * creates or opens a note (background passes must not steal editor focus). Returns the ids
+	 * it linked so the caller can drop them from the rendered list. Works for any provider via
+	 * the shared linkToNote interface.
+	 */
+	private async autoLinkObvious(unlinked: UnlinkedRecording[]): Promise<Set<string>> {
+		const linked = new Set<string>();
+		// One pass at a time: linking writes frontmatter, which re-triggers this loader.
+		if (this.autoLinkInFlight) return linked;
+		this.autoLinkInFlight = true;
+		try {
+			const unlinkedProvider = this.callbacks.getUnlinkedProvider();
+			for (const rec of unlinked) {
+				if (this.autoLinkAttempted.has(rec.id)) continue;
+				this.autoLinkAttempted.add(rec.id);
+
+				const event = await this.findObviousMeeting(rec, unlinkedProvider);
+				if (!event) continue;
+
+				const noteFile = this.noteCreator.findNote(event);
+				if (!noteFile) continue; // note vanished between match and link
+				try {
+					const ok = await unlinkedProvider.linkToNote({
+						app: this.app,
+						recording: rec,
+						notePath: noteFile.path,
+						subject: event.subject,
+						timezone: this.settings.timezone,
+						transcriptFolderPath: this.settings.transcriptFolderPath,
+						attendees: event.attendees,
+						isRecurring: event.isRecurring,
+						meetingDate: formatDate(event.startTime, this.settings.timezone),
+						meetingStart: formatTime(event.startTime, this.settings.timezone),
+						meetingEnd: formatTime(event.endTime, this.settings.timezone),
+						organizer: event.organizerName,
+						location: event.location,
+					});
+					if (ok) {
+						linked.add(rec.id);
+						console.debug(`[WhisperCal] Auto-linked transcript "${rec.title}" → "${event.subject}"`);
+					}
+				} catch (e) {
+					console.warn(`[WhisperCal] auto-link failed for "${rec.title}":`, e);
+				}
+			}
+		} finally {
+			this.autoLinkInFlight = false;
+		}
+		return linked;
+	}
+
+	/**
+	 * Return the single calendar meeting an unlinked recording obviously belongs to, or null
+	 * when it's ambiguous (leave those for the user). "Obvious" requires ALL of:
+	 *  - exactly one matching event within the recording time window,
+	 *  - the event subject agreeing by name with the transcript title, and
+	 *  - that event's meeting note already existing and not already linked.
+	 * The existing-note requirement keeps this safe and focus-free: it never fabricates a note,
+	 * and it cleanly recovers the common failure (a pill recording whose link step never ran).
+	 */
+	private async findObviousMeeting(
+		rec: UnlinkedRecording,
+		unlinkedProvider: UnlinkedRecordingProvider,
+	): Promise<CalendarEvent | null> {
+		const recName = normalizeMeetingName(rec.title);
+		if (recName.length < 4) return null; // too generic to match safely
+
+		let events: CalendarEvent[];
+		try {
+			events = await this.provider.fetchEvents(rec.recordingStart, this.settings.timezone);
+		} catch {
+			// Calendar unavailable — don't mark this a permanent miss; a later refresh retries.
+			this.autoLinkAttempted.delete(rec.id);
+			return null;
+		}
+
+		const windowMs = this.settings.recordingWindowMinutes * 60 * 1000;
+		const matches: CalendarEvent[] = [];
+		for (const e of events) {
+			if (e.isAllDay) continue;
+			if (Math.abs(e.startTime.getTime() - rec.recordingStart.getTime()) > windowMs) continue;
+			const subj = normalizeMeetingName(e.subject);
+			// Names must clearly agree: equal, or the transcript title ends with the subject
+			// (note basenames may carry a "{{date}} - " prefix the calendar subject lacks).
+			if (subj.length < 4 || (recName !== subj && !recName.endsWith(subj))) continue;
+			// Only ever link to a note that already exists and isn't already linked.
+			const noteFile = this.noteCreator.findNote(e);
+			if (!noteFile) continue;
+			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+			if (unlinkedProvider.isNoteLinked((fm as Record<string, unknown>) ?? {})) continue;
+			matches.push(e);
+		}
+		return matches.length === 1 ? matches[0]! : null;
 	}
 
 	private renderUnlinkedCard(container: HTMLElement, recording: UnlinkedRecording): void {
@@ -1270,39 +1398,71 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	/** Place the current-time marker centered on the active card or gap. */
+	/** Place the current-time marker on the meeting nearest to now (or the active break). */
 	private updateNowMarker(): void {
 		if (!this.contentContainer) return;
-		this.contentContainer.querySelector(".whisper-cal-now-line")?.remove();
+		const content = this.contentContainer;
+		content.querySelector(".whisper-cal-now-line")?.remove();
 		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
 
 		const nowMs = Date.now();
-		const cards = this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]");
+		const cards = Array.from(content.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]"));
 		if (cards.length === 0) return;
 
-		// Find target: gap spacer containing now, or most-recent started card/group
-		let target: HTMLElement | null = null;
-		for (const g of Array.from(this.contentContainer.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"))) {
-			if (nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd)) { target = g; break; }
-		}
-		if (!target) {
-			for (let i = cards.length - 1; i >= 0; i--) {
-				const card = cards[i]!;
-				if (nowMs >= Number(card.dataset.startTime)) {
-					const group = card.closest<HTMLElement>(".whisper-cal-conflict-group");
-					target = group ?? card;
-					break;
-				}
+		const cRect = content.getBoundingClientRect();
+		const relTop = (el: HTMLElement): number =>
+			el.getBoundingClientRect().top - cRect.top + content.scrollTop;
+
+		let topPx: number | null = null;
+
+		// On a break between groups, ride the gap spacer so the line reads as "between meetings".
+		for (const g of Array.from(content.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"))) {
+			if (nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd)) {
+				topPx = relTop(g) + g.getBoundingClientRect().height / 2;
+				break;
 			}
 		}
-		if (!target) return; // before all meetings — no marker
 
-		// Place marker at vertical center of target
-		const cRect = this.contentContainer.getBoundingClientRect();
-		const tRect = target.getBoundingClientRect();
-		const topPx = `${tRect.top - cRect.top + this.contentContainer.scrollTop + tRect.height / 2}px`;
-		const marker = this.contentContainer.createDiv({cls: "whisper-cal-now-line"});
-		marker.setCssProps({"--wc-now-top": topPx});
+		if (topPx === null) {
+			// Nothing to mark before the day's first meeting begins.
+			const earliestStart = Math.min(...cards.map(c => Number(c.dataset.startTime)));
+			if (nowMs < earliestStart) return;
+
+			// Pin to the single card closest to now — distance 0 while a meeting is live, else
+			// the gap to its nearest edge. This lands the marker on the actual current meeting
+			// inside an overlapping cluster instead of centering on the whole bracket. When
+			// several meetings are live at once, the most recently started one wins (the
+			// freshest "current" meeting).
+			let best: HTMLElement | null = null;
+			let bestDist = Infinity;
+			let bestStart = -Infinity;
+			for (const card of cards) {
+				const start = Number(card.dataset.startTime);
+				const end = Number(card.dataset.endTime);
+				const dist = nowMs < start ? start - nowMs : nowMs >= end ? nowMs - end : 0;
+				if (dist < bestDist || (dist === bestDist && start > bestStart)) {
+					best = card; bestDist = dist; bestStart = start;
+				}
+			}
+			if (!best) return;
+
+			const start = Number(best.dataset.startTime);
+			const end = Number(best.dataset.endTime);
+			const h = best.getBoundingClientRect().height;
+			const top = relTop(best);
+			if (nowMs >= start && nowMs < end && end > start) {
+				// Live: slide the line down through the card as the meeting elapses.
+				const frac = Math.min(0.92, Math.max(0.08, (nowMs - start) / (end - start)));
+				topPx = top + frac * h;
+			} else if (nowMs < start) {
+				topPx = top;        // just above the next meeting
+			} else {
+				topPx = top + h;    // just past a finished meeting
+			}
+		}
+
+		const marker = content.createDiv({cls: "whisper-cal-now-line"});
+		marker.setCssProps({"--wc-now-top": `${topPx}px`});
 	}
 
 	private static readonly NOW_MARKER_INTERVAL_MS = 60_000;
