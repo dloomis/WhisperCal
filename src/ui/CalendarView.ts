@@ -1398,7 +1398,7 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	/** Place the current-time marker on the meeting nearest to now (or the active break). */
+	/** Place the current-time marker: through the live meeting, or in the whitespace between. */
 	private updateNowMarker(): void {
 		if (!this.contentContainer) return;
 		const content = this.contentContainer;
@@ -1406,59 +1406,48 @@ export class CalendarView extends ItemView {
 		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
 
 		const nowMs = Date.now();
+		// Cards render in chronological (start-time) order — relied on below.
 		const cards = Array.from(content.querySelectorAll<HTMLElement>(".whisper-cal-card[data-start-time]"));
 		if (cards.length === 0) return;
 
 		const cRect = content.getBoundingClientRect();
 		const relTop = (el: HTMLElement): number =>
 			el.getBoundingClientRect().top - cRect.top + content.scrollTop;
+		const height = (el: HTMLElement): number => el.getBoundingClientRect().height;
 
-		let topPx: number | null = null;
+		let topPx: number;
 
-		// On a break between groups, ride the gap spacer so the line reads as "between meetings".
-		for (const g of Array.from(content.querySelectorAll<HTMLElement>(".whisper-cal-gap[data-gap-start]"))) {
-			if (nowMs >= Number(g.dataset.gapStart) && nowMs < Number(g.dataset.gapEnd)) {
-				topPx = relTop(g) + g.getBoundingClientRect().height / 2;
-				break;
-			}
+		// A meeting is live: slide the line down through its card as it elapses. When several
+		// overlap, the most recently started one wins — the freshest "current" meeting.
+		let live: HTMLElement | null = null;
+		let liveStart = -Infinity;
+		for (const card of cards) {
+			const start = Number(card.dataset.startTime);
+			const end = Number(card.dataset.endTime);
+			if (start <= nowMs && nowMs < end && start > liveStart) { live = card; liveStart = start; }
 		}
 
-		if (topPx === null) {
-			// Nothing to mark before the day's first meeting begins.
-			const earliestStart = Math.min(...cards.map(c => Number(c.dataset.startTime)));
-			if (nowMs < earliestStart) return;
-
-			// Pin to the single card closest to now — distance 0 while a meeting is live, else
-			// the gap to its nearest edge. This lands the marker on the actual current meeting
-			// inside an overlapping cluster instead of centering on the whole bracket. When
-			// several meetings are live at once, the most recently started one wins (the
-			// freshest "current" meeting).
-			let best: HTMLElement | null = null;
-			let bestDist = Infinity;
-			let bestStart = -Infinity;
-			for (const card of cards) {
-				const start = Number(card.dataset.startTime);
-				const end = Number(card.dataset.endTime);
-				const dist = nowMs < start ? start - nowMs : nowMs >= end ? nowMs - end : 0;
-				if (dist < bestDist || (dist === bestDist && start > bestStart)) {
-					best = card; bestDist = dist; bestStart = start;
-				}
+		if (live) {
+			const start = Number(live.dataset.startTime);
+			const end = Number(live.dataset.endTime);
+			const frac = end > start ? Math.min(0.92, Math.max(0.08, (nowMs - start) / (end - start))) : 0.08;
+			topPx = relTop(live) + frac * height(live);
+		} else {
+			// Not in any meeting. The last card that has already started sits just above the
+			// current whitespace; the next card sits just below it.
+			let aboveIdx = -1;
+			for (let i = 0; i < cards.length; i++) {
+				if (Number(cards[i]!.dataset.startTime) <= nowMs) aboveIdx = i; else break;
 			}
-			if (!best) return;
+			if (aboveIdx === -1) return; // before the day's first meeting — no marker
 
-			const start = Number(best.dataset.startTime);
-			const end = Number(best.dataset.endTime);
-			const h = best.getBoundingClientRect().height;
-			const top = relTop(best);
-			if (nowMs >= start && nowMs < end && end > start) {
-				// Live: slide the line down through the card as the meeting elapses.
-				const frac = Math.min(0.92, Math.max(0.08, (nowMs - start) / (end - start)));
-				topPx = top + frac * h;
-			} else if (nowMs < start) {
-				topPx = top;        // just above the next meeting
-			} else {
-				topPx = top + h;    // just past a finished meeting
-			}
+			const above = cards[aboveIdx]!;
+			const below = cards[aboveIdx + 1] ?? null;
+			topPx = below
+				// Truly between two meetings: float the line in the gap between them.
+				? (relTop(above) + height(above) + relTop(below)) / 2
+				// After the day's last meeting — sit just below it.
+				: relTop(above) + height(above);
 		}
 
 		const marker = content.createDiv({cls: "whisper-cal-now-line"});
