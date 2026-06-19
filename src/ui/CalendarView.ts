@@ -1403,6 +1403,7 @@ export class CalendarView extends ItemView {
 		if (!this.contentContainer) return;
 		const content = this.contentContainer;
 		content.querySelector(".whisper-cal-now-line")?.remove();
+		content.querySelector(".whisper-cal-day-done")?.remove();
 		if (!isSameDay(this.selectedDate, new Date(), this.settings.timezone)) return;
 
 		const nowMs = Date.now();
@@ -1416,6 +1417,8 @@ export class CalendarView extends ItemView {
 		const height = (el: HTMLElement): number => el.getBoundingClientRect().height;
 
 		let topPx: number;
+		// True only once "now" is past the day's last meeting — earns a friendly sign-off.
+		let afterLast = false;
 
 		// A meeting is live: slide the line down through its card as it elapses. When several
 		// overlap, the most recently started one wins — the freshest "current" meeting.
@@ -1454,12 +1457,32 @@ export class CalendarView extends ItemView {
 				if (aboveIdx === -1) return; // before the day's first meeting — no marker
 				const above = cards[aboveIdx]!;
 				const below = cards[aboveIdx + 1] ?? null;
-				topPx = below
+				if (below) {
 					// Truly between two meetings: float in the gap between them.
-					? (relTop(above) + height(above) + relTop(below)) / 2
+					topPx = (relTop(above) + height(above) + relTop(below)) / 2;
+				} else {
 					// After the day's last meeting — sit just below it.
-					: relTop(above) + height(above);
+					topPx = relTop(above) + height(above);
+					afterLast = true;
+				}
 			}
+		}
+
+		// Day's meetings are behind us: render a thin "end of day" card (styled like the all-day
+		// cards up top) at the bottom of the list, then center the "now" dot on it so the ball
+		// sits inline with the message rather than floating in open whitespace.
+		if (afterLast) {
+			const doneCard = content.createDiv({
+				cls: "whisper-cal-card whisper-cal-card-allday whisper-cal-day-done",
+			});
+			doneCard.createDiv({cls: "whisper-cal-allday-gutter whisper-cal-day-done-gutter"});
+			const body = doneCard.createDiv({cls: "whisper-cal-allday-content"});
+			const row = body.createDiv({cls: "whisper-cal-allday-row"});
+			row.createSpan({
+				cls: "whisper-cal-allday-subject whisper-cal-day-done-subject",
+				text: "Nothing left on the calendar — you made it!",
+			});
+			topPx = relTop(doneCard) + height(doneCard) / 2;
 		}
 
 		const marker = content.createDiv({cls: "whisper-cal-now-line"});

@@ -294,6 +294,26 @@
 	display: none;
 }
 
+/* End-of-day sign-off — a thin card styled like the all-day cards up top, with an accent
+   gutter that ties it to the "now" dot riding inline alongside the message. */
+.whisper-cal-day-done {
+	margin-top: 4px;
+}
+
+.whisper-cal-day-done-gutter {
+	background: var(--interactive-accent);
+}
+
+/* Center the sign-off across the card rather than left-aligning like a normal subject. */
+.whisper-cal-day-done .whisper-cal-allday-row {
+	justify-content: center;
+}
+
+.whisper-cal-day-done-subject {
+	font-style: italic;
+	text-align: center;
+}
+
 .whisper-cal-content {
 	position: relative;
 }
