@@ -298,10 +298,12 @@
    gutter that ties it to the "now" dot riding inline alongside the message. */
 .whisper-cal-day-done {
 	margin-top: 4px;
+	background: color-mix(in srgb, var(--color-green) 15%, var(--background-primary));
+	border-color: color-mix(in srgb, var(--color-green) 35%, var(--background-modifier-border));
 }
 
 .whisper-cal-day-done-gutter {
-	background: var(--interactive-accent);
+	background: var(--color-green);
 }
 
 /* Center the sign-off across the card rather than left-aligning like a normal subject. */

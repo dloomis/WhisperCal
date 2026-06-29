@@ -1,5 +1,5 @@
 import type {App} from "obsidian";
-import {TFile} from "obsidian";
+import {TFile, parseYaml} from "obsidian";
 
 /**
  * Per-file queue to serialize processFrontMatter calls.
@@ -89,6 +89,53 @@ export function isSingleSourceTranscript(fm: Record<string, unknown> | undefined
 	const attendees = fm["attendees"];
 	if (Array.isArray(attendees)) return attendees.length <= 1;
 	return false;
+}
+
+/**
+ * Re-apply selected frontmatter fields from a pre-edit snapshot of the file.
+ *
+ * Guards against an in-place edit (e.g. the speaker-tagging LLM, which is told
+ * never to touch frontmatter but isn't otherwise constrained) dropping or
+ * rewriting externally-owned fields like the `recording` audio link. Only fields
+ * present in the snapshot are restored, and only when the current value differs;
+ * fields the snapshot never had are left alone, and everything else in the
+ * current frontmatter is preserved.
+ */
+export async function restoreFrontmatterFields(
+	app: App,
+	filePath: string,
+	snapshot: string,
+	keys: string[],
+): Promise<void> {
+	const m = snapshot.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+	if (!m || !m[1]) return; // snapshot had no frontmatter — nothing to restore
+	let original: Record<string, unknown> | null;
+	try {
+		original = parseYaml(m[1]) as Record<string, unknown> | null;
+	} catch {
+		console.warn(`[WhisperCal] restoreFrontmatterFields: unparseable snapshot frontmatter for "${filePath}" — skipping`);
+		return;
+	}
+	if (!original || typeof original !== "object") return;
+	const snap = original;
+	const toRestore = keys.filter(k => snap[k] !== undefined);
+	if (toRestore.length === 0) return;
+
+	await enqueue(filePath, async () => {
+		const file = app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) {
+			console.error(`[WhisperCal] restoreFrontmatterFields: no file at "${filePath}" — skipping {${toRestore.join(", ")}}`);
+			return;
+		}
+		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+			for (const key of toRestore) {
+				// Deep-compare so we only rewrite when the value actually changed.
+				if (JSON.stringify(frontmatter[key]) !== JSON.stringify(snap[key])) {
+					frontmatter[key] = snap[key];
+				}
+			}
+		});
+	});
 }
 
 export async function removeFrontmatterKeys(

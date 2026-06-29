@@ -36,13 +36,9 @@ export async function startApiRecording(opts: {
 	if (!health.modelsReady) {
 		throw new Error("Recording service is still loading models\u2026");
 	}
-	// Block only on active audio capture. A session in "transcribing"
-	// (post-processing) no longer holds the mic, so the recording service can
-	// accept a new recording \u2014 defer that decision to it rather than pre-blocking.
-	const {state} = await recordingStatus(baseUrl);
-	if (state === "recording") {
-		throw new Error("Recording service is already recording");
-	}
+	// No pre-block on the service's state here: whether a new recording can start
+	// while another is active is the service's call, and the UI already consulted
+	// /status and got the user's confirmation before reaching this point.
 
 	const suggestedFilename = getTranscriptFilename(notePath);
 
@@ -123,7 +119,7 @@ export function watchApiRecording(opts: {
 			await sleep(WATCH_INTERVAL_MS);
 			if (!cardUi.hasRecording(notePath)) return; // stopped via WhisperCal
 			try {
-				const {state} = await recordingStatus(baseUrl);
+				const {state, startedAt} = await recordingStatus(baseUrl);
 				// Re-check after async call — stopApiRecording may have
 				// deleted the state while we were awaiting the status check.
 				if (!cardUi.hasRecording(notePath)) return;
@@ -138,6 +134,17 @@ export function watchApiRecording(opts: {
 					onStopped();
 					void waitAndLink(app, notePath, transcriptFolderPath, info, baseUrl, onStatus);
 					return;
+				}
+				// Still recording: anchor the elapsed timer to the service's reported
+				// start time so WhisperCal's counter matches the recording app's instead
+				// of drifting by the start-call latency. Same machine, so the epoch is
+				// directly comparable. Only re-anchor on a meaningful gap to avoid churn
+				// (and no-op entirely when the service doesn't report a start time).
+				if (startedAt !== undefined) {
+					const current = cardUi.getStartTime(notePath);
+					if (current === undefined || Math.abs(current - startedAt) > 1500) {
+						cardUi.setStartTime(notePath, startedAt);
+					}
 				}
 			} catch {
 				// API unreachable — treat as stopped

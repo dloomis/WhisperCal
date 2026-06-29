@@ -26,6 +26,28 @@ export function resolveWikiLink(
 }
 
 /**
+ * Resolve the audio recording for a transcript so the speaker-tag modal can
+ * offer click-to-play per timestamp.
+ *
+ * Tome normally writes `recording: [[<basename>.m4a]]` into the transcript
+ * frontmatter, but that field is sometimes absent — e.g. "Call"-source sessions
+ * where Tome wrote the transcript and exported the audio but never wrote the
+ * link. The audio file, when present, is always named `<transcript-basename>.m4a`
+ * and lives in the vault's Audio folder; Obsidian resolves it by basename the
+ * same way the wiki-link would have, so fall back to that convention before
+ * giving up.
+ */
+export function resolveTranscriptAudio(
+	app: App,
+	transcriptFile: TFile,
+	transcriptFm: Record<string, unknown>,
+): TFile | null {
+	const linked = resolveWikiLink(app, transcriptFm, "recording", transcriptFile.path);
+	if (linked) return linked;
+	return app.metadataCache.getFirstLinkpathDest(`${transcriptFile.basename}.m4a`, transcriptFile.path);
+}
+
+/**
  * Recursively collect all markdown files in a folder.
  */
 export function getMarkdownFilesRecursive(folder: TFolder): TFile[] {

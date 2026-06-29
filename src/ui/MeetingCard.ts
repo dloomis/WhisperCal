@@ -10,11 +10,35 @@ import type {JobTracker} from "../services/JobTracker";
 import {type CardStatusVariant, type CardUiState} from "../services/CardUiState";
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
+import {ActiveRecordingConfirmModal} from "./ActiveRecordingConfirmModal";
+import {recordingStatus} from "../services/RecordingApi";
 import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
+
+/**
+ * Before starting a capture, consult the recording service's live /status. If it
+ * reports an active recording, ask the user whether to proceed anyway (the
+ * service owns the concurrency decision) — surfacing the in-progress meeting's
+ * subject when it provides one. Returns true to proceed, false to abort.
+ * A service that isn't recording — or one that's unreachable — proceeds without a
+ * prompt; startApiRecording surfaces any hard error from there.
+ */
+async function confirmIfServiceRecording(app: App, baseUrl: string): Promise<boolean> {
+	let status;
+	try {
+		status = await recordingStatus(baseUrl);
+	} catch {
+		// Unreachable, or an older service with no /status endpoint (e.g. a 404):
+		// don't block recording on it — proceed and let startApiRecording report
+		// any genuine failure.
+		return true;
+	}
+	if (status.state !== "recording") return true;
+	return new ActiveRecordingConfirmModal(app, status.subject).prompt();
+}
 
 function personnelTypeIcon(type: string): string | null {
 	switch (type.toLowerCase()) {
@@ -90,9 +114,12 @@ const stateLabels: Record<PillState, string> = {
 
 function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLElement): void {
 	cardUi.stopDurationTimer(notePath);
-	const start = cardUi.getStartTime(notePath) ?? Date.now();
 	const tick = () => {
 		if (!textEl.isConnected) { cardUi.stopDurationTimer(notePath); return; }
+		// Read the anchor each tick (not captured once) so a re-sync to the
+		// recording service's reported start time takes effect mid-recording.
+		const start = cardUi.getStartTime(notePath);
+		if (start === undefined) return;
 		const elapsed = formatElapsed((Date.now() - start) / 1000);
 		textEl.textContent = elapsed;
 		cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
@@ -275,10 +302,13 @@ function computePillStates(
 		? "disabled"
 		: noteFm[FM.TRANSCRIPT] ? "complete" : "incomplete";
 
+	// No cross-card "one at a time" lock: a sibling card recording (or, worse, a
+	// stale entry from one that already moved to transcribing) must not grey out
+	// this pill. The record click consults the recording service's live /status
+	// instead and lets the user decide — see confirmIfServiceRecording.
 	const record: PillState = cardUi.hasRecording(notePath)
 		? "running"
 		: noteFm[FM.TRANSCRIPT] ? "complete"
-		: cardUi.recordingCount > 0 ? "disabled"
 		: "incomplete";
 
 	const pipelineState = noteFm[FM.PIPELINE_STATE] as string | undefined;
@@ -442,7 +472,7 @@ export function renderMeetingCard(
 	if (event.id === "unscheduled") {
 		const actionsWrap = content.createDiv({cls: "whisper-cal-card-actions-wrap"});
 		const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
-		const notePill = renderPill(actions, "file-plus-2", "Meeting summary", "incomplete");
+		const notePill = renderPill(actions, "file-plus-2", "Meeting note", "incomplete");
 		notePill.addEventListener("click", () => {
 			notePill.disabled = true;
 			const handleClick = async () => {
@@ -619,11 +649,16 @@ function renderCardDynamic(
 					} else if (choice === "re-record") {
 						recordPill.disabled = true;
 						try {
+							// Defer to the recording service on whether the mic is free;
+							// confirm with the user if it's mid-recording. Abort cleanly on cancel.
+							if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) {
+								recordPill.disabled = false;
+								return;
+							}
 							// Ensure note exists, then start recording. startApiRecording
-							// runs its readiness/already-recording checks before any state
-							// mutates, so reset the transcript frontmatter only once the
-							// capture is underway — a failed start leaves the note's
-							// existing transcript link intact.
+							// runs its readiness checks before any state mutates, so reset the
+							// transcript frontmatter only once the capture is underway — a
+							// failed start leaves the note's existing transcript link intact.
 							await noteCreator.ensureNote(event);
 							await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 							await removeFrontmatterKeys(app, notePath, [
@@ -715,6 +750,12 @@ function renderCardDynamic(
 								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 							]);
 						}
+						// Defer to the recording service on whether the mic is free;
+						// confirm with the user if it's mid-recording. Abort cleanly on cancel.
+						if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) {
+							recordPill.disabled = false;
+							return;
+						}
 						await noteCreator.ensureNote(event);
 						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
 						recording = true;
@@ -779,7 +820,7 @@ function renderCardDynamic(
 	// row, so the mic is harder to hit by accident.
 	actions.createDiv({cls: "whisper-cal-pill-divider"});
 
-	// Note pill — notebook-pen (vs generic file-text) keeps it visually
+	// Meeting note pill — notebook-pen (vs generic file-text) keeps it visually
 	// distinct from the Transcript pill.
 	// The accent "complete" border means the meeting is fully summarized —
 	// an existing-but-unsummarized note is still in progress, so it keeps
@@ -788,7 +829,7 @@ function renderCardDynamic(
 	const notePillState: PillState =
 		states.note === "complete" && states.summary === "complete" ? "complete" : "incomplete";
 	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-	const notePill = renderPill(noteWrap, noteIcon, "Meeting summary", notePillState);
+	const notePill = renderPill(noteWrap, noteIcon, "Meeting note", notePillState);
 	// Pulsing accent border while summarization runs (pill stays clickable)
 	if (states.summary === "running") notePill.addClass("whisper-cal-pill-busy");
 	notePill.addEventListener("click", () => {
@@ -850,7 +891,7 @@ function renderCardDynamic(
 	}
 
 	// Transcript pill — opens the transcript file; disabled until one exists.
-	// Speaker tagging lives in the corner badge (mirroring the Note pill's
+	// Speaker tagging lives in the corner badge (mirroring the Meeting note pill's
 	// summary badge), so the transcript stays reachable while tagging runs.
 	{
 		const transcriptWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
@@ -931,7 +972,13 @@ function renderCardDynamic(
 	// Research pill (LLM feature, independent of pipeline workflow)
 	if (opts.llmEnabled !== false) {
 		const researchPill = renderPill(actions, "book-open", "Research", states.research);
-		if (states.research === "incomplete" && onResearch) {
+		// Research is re-runnable: clicking re-opens the research flow whether or not a
+		// prior run finished. Series prep in particular expects multiple reruns, so the
+		// "complete" state must stay a live re-run button (the checkmark is just a
+		// "done once" marker) — not a dead-end that only opens the note. Opening the
+		// note is already covered by the note pill. A "running" pill is disabled by
+		// renderPill, so it's excluded here.
+		if (onResearch && (states.research === "incomplete" || states.research === "complete")) {
 			researchPill.addEventListener("click", () => {
 				researchPill.disabled = true;
 				void (async () => {
@@ -945,10 +992,6 @@ function renderCardDynamic(
 						researchPill.disabled = false;
 					}
 				})();
-			});
-		} else if (states.research === "complete") {
-			researchPill.addEventListener("click", () => {
-				void app.workspace.openLinkText(notePath, "", false);
 			});
 		}
 	}

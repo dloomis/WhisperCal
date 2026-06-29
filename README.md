@@ -106,7 +106,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Transcript post-processing — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An optional LLM pass (enabled by setting a post-processing prompt) fixes transcription and diarization errors in the transcript itself and proposes names for speakers voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
 - **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals. Optionally **auto-tag** recordings where every speaker is a high-confidence match — these silent auto-tags skip the modal but never write back to a library, guarding against voiceprint drift.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
-- **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
+- **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Meeting note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -357,7 +357,7 @@ The four pipeline pill buttons show their completion state via border color:
 | **Hover** | Accent-tinted background and border. |
 | **Running** | Pulsing accent background, disabled. |
 
-The Note pill shows its accent border only once the meeting is **summarized** — an existing-but-unsummarized note keeps the neutral border (its notebook icon marks that the note exists; the warning-tinted gutter marks the remaining work). The Transcript pill's accent border means speaker tagging is applied.
+The Meeting note pill shows its accent border only once the meeting is **summarized** — an existing-but-unsummarized note keeps the neutral border (its notebook icon marks that the note exists; the warning-tinted gutter marks the remaining work). The Transcript pill's accent border means speaker tagging is applied.
 
 ### Non-Accepted Meeting Indicator
 
@@ -404,7 +404,7 @@ Note  -->  Record/Transcript  -->  Speakers  -->  Summary
 
 ### Stage 1 — Note
 
-**Click the "Note" pill** to create a meeting note from the calendar event.
+**Click the "Meeting note" pill** to create a meeting note from the calendar event.
 
 - A new Markdown file is created in your configured notes folder using your template.
 - The filename follows your configured pattern (default: `YYYY-MM-DD - Subject.md`).
@@ -450,14 +450,14 @@ The badge pulses while the LLM is running (the transcript stays openable in the 
 
 ### Stage 4 — Summary
 
-**Click the + corner badge on the Note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Note pill's open-note click.)
+**Click the + corner badge on the Meeting note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Meeting note pill's open-note click.)
 
 - The badge appears once speakers are tagged and stays visible as a call-to-action; clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
 - While running, the badge pulses and a "Summarizing…" banner appears at the top of the meeting note editor.
 - The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
 - When finished, the plugin sets `pipeline_state: summarized` and the banner disappears.
 
-Once the summary is complete, the badge becomes hover-revealed on the Note pill and re-runs summarization (regenerate), with the same optional instructions dialog. All corner badges use the **+** icon — hover tooltips name each action (e.g. "Summarize meeting", "Re-run speaker tagging with optional instructions").
+Once the summary is complete, the badge becomes hover-revealed on the Meeting note pill and re-runs summarization (regenerate), with the same optional instructions dialog. All corner badges use the **+** icon — hover tooltips name each action (e.g. "Summarize meeting", "Re-run speaker tagging with optional instructions").
 
 ### Stage 5 — Research
 
@@ -827,7 +827,7 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Click the **+ badge on the Note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
+1. Click the **+ badge on the Meeting note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
 4. The banner disappears and the card gutter shows the completed (accent) highlight.

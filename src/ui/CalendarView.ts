@@ -237,12 +237,12 @@ export class CalendarView extends ItemView {
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.onActiveFileChanged()));
 		this.registerEvent(this.app.workspace.on("layout-change", () => this.updateNoteOpenHighlight()));
 
-		// A capture starting/ending changes whether *other* cards' record pills
-		// are locked (one active capture at a time). Re-render every card so
-		// sibling pills unlock the moment Tome leaves "recording" — otherwise
-		// they stay greyed for the whole post-processing window. Driven off the
-		// recordings map itself so every mutation path is covered, including
-		// captures stopped from Tome's own UI or via the watch loop.
+		// A capture starting/ending flips the recording card's own pill between its
+		// "running" (stop) state and its normal state, so re-render on every change
+		// to the recordings map. Driven off the map itself so every mutation path is
+		// covered, including captures stopped from Tome's own UI or via the watch
+		// loop. (Sibling cards are no longer gated on this — the record click
+		// consults Tome's live /status instead.)
 		this.unsubscribeRecordings = this.callbacks.cardUi.onRecordingsChange(() => this.rerenderCards());
 
 		// Start auto-refresh
@@ -359,12 +359,12 @@ export class CalendarView extends ItemView {
 	}
 
 	/**
-	 * Self-heal a leaked recording lock. WhisperCal tracks active captures in an
-	 * in-memory map (`cardUi.recordings`); a non-empty map disables the record
-	 * pill on every *other* card so two captures can't fight over the one mic.
-	 * The watch loop normally deletes an entry the instant Tome leaves the
-	 * "recording" state, but if that loop dies (or never cleaned up) the entry
-	 * leaks and locks all other cards until the plugin reloads.
+	 * Self-heal a leaked recording entry. WhisperCal tracks active captures in an
+	 * in-memory map (`cardUi.recordings`); an entry drives the recording card's
+	 * "running" pill, its red dot, and the elapsed-time status. The watch loop
+	 * normally deletes an entry the instant Tome leaves the "recording" state, but
+	 * if that loop dies (or never cleaned up) the entry leaks and the card looks
+	 * stuck "recording" until the plugin reloads.
 	 *
 	 * Tome's `/status` is authoritative for "is a capture active". When it reports
 	 * anything other than "recording" but we still hold entries, those entries are

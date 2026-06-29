@@ -17,9 +17,9 @@ import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
 import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
 import {parseDateTime, setTimeFormat} from "./utils/time";
-import {updateFrontmatter, readFmString} from "./utils/frontmatter";
+import {updateFrontmatter, readFmString, restoreFrontmatterFields} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
-import {resolveWikiLink, stripWikiLink} from "./utils/vault";
+import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
 import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
 import {debug, setDebugLogging} from "./utils/debug";
 import type {AuthState, TokenCache} from "./services/AuthTypes";
@@ -844,6 +844,16 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 
+		// Frontmatter guard (belt-and-suspenders for the audio link): the LLM edits the
+		// transcript in place and is instructed never to touch frontmatter, but nothing
+		// enforces it — a stray rewrite can drop or mangle the externally-written
+		// `recording: [[…m4a]]` link and strand the modal's audio player. Re-apply it from
+		// the pre-LLM snapshot. (resolveTranscriptAudio's naming-convention fallback covers
+		// the separate case where Tome never wrote the link in the first place.)
+		if (snapshot !== undefined) {
+			await restoreFrontmatterFields(this.app, transcriptPath, snapshot, ["recording"]);
+		}
+
 		const {mappings, warning} = parseSpeakerTagOutput(stdout, this.app, transcriptPath);
 		if (warning) {
 			console.warn("[WhisperCal]", warning);
@@ -980,10 +990,12 @@ export default class WhisperCalPlugin extends Plugin {
 					: {};
 				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
 				const subtitle = buildMeetingSubtitle(meetingFm);
-				// Resolve the linked recording (Tome writes `recording: [[...m4a]]` to the
-				// transcript frontmatter) so the modal can offer click-to-play per timestamp.
+				// Resolve the recording so the modal can offer click-to-play per timestamp.
+				// Tome usually writes `recording: [[...m4a]]` to the transcript frontmatter,
+				// but that field is sometimes absent (e.g. "Call"-source sessions); the helper
+				// falls back to the `<basename>.m4a` naming convention in those cases.
 				const transcriptFm = this.app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {};
-				const audioFile = resolveWikiLink(this.app, transcriptFm, "recording", transcriptPath);
+				const audioFile = resolveTranscriptAudio(this.app, transcriptFile, transcriptFm);
 				// Curated attendee names to prefill the modal's dropdowns. Source from the
 				// parent meeting note (the source of truth), falling back to the transcript copy.
 				const inviteeRaw = (Array.isArray(meetingFm[FM.MEETING_INVITEES]) ? meetingFm[FM.MEETING_INVITEES]
