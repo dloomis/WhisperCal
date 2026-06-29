@@ -12,6 +12,17 @@ import {FM} from "../constants";
 /** Prevents duplicate waitAndLink calls when stopApiRecording and watchApiRecording race. */
 const linkingInProgress = new Set<string>();
 
+/**
+ * Heuristic: did /start fail because the service is already capturing? The error
+ * is the API's "Recording API error: <status> <body>" message; the service returns
+ * a conflict (409) whose body explains it's already recording. Match either signal.
+ */
+function isAlreadyRecordingError(err: unknown): boolean {
+	if (!(err instanceof Error)) return false;
+	const m = err.message.toLowerCase();
+	return m.includes("already recording") || m.includes("409");
+}
+
 function getTranscriptFilename(notePath: string): string {
 	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
 	return `${basename} - Transcript`;
@@ -42,10 +53,21 @@ export async function startApiRecording(opts: {
 
 	const suggestedFilename = getTranscriptFilename(notePath);
 
-	await recordingStart(baseUrl, suggestedFilename, {
-		subject: event.subject,
-		attendees: event.attendees.map(a => a.name || a.email),
-	});
+	try {
+		await recordingStart(baseUrl, suggestedFilename, {
+			subject: event.subject,
+			attendees: event.attendees.map(a => a.name || a.email),
+		});
+	} catch (err) {
+		// The UI consults /status first, but that read can be stale (the service
+		// began capturing in the gap). The service then rejects /start because it's
+		// already recording — surface the same plain guidance as the pre-check
+		// notice instead of leaking the raw "Recording API error: 409 …" string.
+		if (isAlreadyRecordingError(err)) {
+			throw new Error("The recording service is already recording. Stop that recording before starting a new one.");
+		}
+		throw err;
+	}
 
 	// Capture a live TFile reference so a rename during recording doesn't
 	// orphan the linking step (TFile.path is auto-updated on rename).

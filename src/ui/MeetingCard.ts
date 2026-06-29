@@ -10,7 +10,7 @@ import type {JobTracker} from "../services/JobTracker";
 import {type CardStatusVariant, type CardUiState} from "../services/CardUiState";
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
-import {ActiveRecordingConfirmModal} from "./ActiveRecordingConfirmModal";
+import {ActiveRecordingNoticeModal} from "./ActiveRecordingNoticeModal";
 import {recordingStatus} from "../services/RecordingApi";
 import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
@@ -20,11 +20,14 @@ import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 /**
  * Before starting a capture, consult the recording service's live /status. If it
- * reports an active recording, ask the user whether to proceed anyway (the
- * service owns the concurrency decision) — surfacing the in-progress meeting's
- * subject when it provides one. Returns true to proceed, false to abort.
- * A service that isn't recording — or one that's unreachable — proceeds without a
- * prompt; startApiRecording surfaces any hard error from there.
+ * reports an active recording, abort: there's only one audio source, so a
+ * concurrent capture can't work (the service rejects /start). Show an informational
+ * notice — naming the in-progress meeting when known — telling the user to stop
+ * that recording first. Returns true to proceed, false to abort. A service that
+ * isn't recording — or one that's unreachable — proceeds without a prompt;
+ * startApiRecording surfaces any hard error from there. Note this only fires for an
+ * active "recording" state: "transcribing" frees the mic, so a new recording may
+ * start while a prior one finishes post-processing.
  */
 async function confirmIfServiceRecording(app: App, baseUrl: string): Promise<boolean> {
 	let status;
@@ -37,7 +40,8 @@ async function confirmIfServiceRecording(app: App, baseUrl: string): Promise<boo
 		return true;
 	}
 	if (status.state !== "recording") return true;
-	return new ActiveRecordingConfirmModal(app, status.subject).prompt();
+	new ActiveRecordingNoticeModal(app, status.subject).open();
+	return false;
 }
 
 function personnelTypeIcon(type: string): string | null {
