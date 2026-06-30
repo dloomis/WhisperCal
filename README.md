@@ -32,6 +32,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - [Features at a Glance](#features-at-a-glance)
 - [Platform Support](#platform-support)
 - [Prerequisites](#prerequisites)
+  - [Obsidian plugins](#obsidian-plugins)
 - [Installation](#installation)
 - [Setup](#setup)
   - [Choosing a Calendar Provider](#choosing-a-calendar-provider)
@@ -140,6 +141,19 @@ MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and 
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
 - **MacWhisper** (macOS only) or a **Recording API**-compatible app (optional — needed for transcript features; see [Recording Sources](#recording-sources))
 - An **LLM CLI tool** (optional — needed for speaker tagging, summarization, and research; default: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) `claude` CLI)
+
+### Obsidian plugins
+
+WhisperCal uses only Obsidian's native APIs, so **no community plugin is required for it to run** — the calendar sidebar, meeting notes, the full pipeline, and the speaker-tagging clip player all work out of the box. A few plugins make WhisperCal's *outputs* nicer to live with, but each is optional:
+
+| Plugin | What it adds | Do you need it? |
+|--------|--------------|-----------------|
+| [BRAT](https://github.com/TfTHacker/obsidian42-brat) | One-click install and automatic updates (see [Installation](#installation)) | Recommended for installing — skip it if you install manually |
+| [Media Extended](https://github.com/aidenlx/media-extended) | Waveform, scrubbing, and speed controls when a meeting recording is embedded in a note body | Optional — Obsidian's native player already plays `.m4a`, and WhisperCal's own speaker-tag clip player is native, so nothing breaks without it |
+| JSON Viewer | Pretty-prints `.json` files opened in the vault | Optional — only for eyeballing WhisperCal's data files: voiceprint libraries in `Caches/Voiceprints/*.json` and Tome's `*.voiceprints.json` sidecars |
+| [Dataview](https://github.com/blacksmithgu/obsidian-dataview) | Renders a "related meetings" query inside People notes | Optional — needed **only if** your People-note template includes such a query; WhisperCal emits no Dataview itself |
+
+None of these touch the core pipeline. MacWhisper and the Recording API app (Tome) are *external macOS apps*, not Obsidian plugins — see [Recording Sources](#recording-sources).
 
 ---
 
@@ -647,7 +661,7 @@ The field is case-insensitive. If `personnel_type` is not present in the frontma
 
 WhisperCal can automatically create People notes for meeting organizers who don't have a matching note in your vault. When the calendar view refreshes, it scans organizers and silently creates notes for ones that look like real people (filtering out team calendars, room resources, and system accounts).
 
-Auto-created notes include frontmatter with `full_name`, `nickname`, organization (derived from email domain), and personnel type. A Dataview query is included to show related meetings.
+Auto-created notes include frontmatter with `full_name`, `nickname`, organization (derived from email domain), and personnel type. The body comes from your People-note template — so if that template contains a Dataview "related meetings" query, the new note will too (which needs the [Dataview](#obsidian-plugins) plugin to render).
 
 ### Example People Note
 
