@@ -2,7 +2,7 @@ import {App, EventRef, TFile, TFolder} from "obsidian";
 import type {WhisperCalSettings} from "../settings";
 import type {JobTracker} from "./JobTracker";
 import {FM} from "../constants";
-import {readFmString, isSingleSourceTranscript} from "../utils/frontmatter";
+import {readFmString, isSingleSourceTranscript, diarizedSpeakerCount} from "../utils/frontmatter";
 import {resolveWikiLink, getMarkdownFilesRecursive} from "../utils/vault";
 import {hasCachedProposals} from "./SpeakerTagParser";
 import {debug} from "../utils/debug";
@@ -114,8 +114,14 @@ export class AutoSpeakerTagger {
 		if (!fm || readFmString(fm, FM.PIPELINE_STATE) !== "titled") return skip("pipeline_state not titled");
 		const noteFile = resolveWikiLink(this.deps.app, fm, FM.MEETING_NOTE, file.path);
 		if (!noteFile) return skip("meeting_note link unresolved");
-		// Single-source recordings need manual hints via the instructions modal
-		if (isSingleSourceTranscript(fm)) return skip("single-source transcript");
+		// A single-source recording the diarizer collapsed to ≤1 speaker needs a manual hint
+		// (how many people / who's who) that only the instructions modal carries — voiceprint
+		// matching can't recover speakers diarization never separated, so leave those for a
+		// manual click. But a voice memo the diarizer DID split into 2+ speakers is handled
+		// acoustically like any meeting (voiceprint-first, no LLM), so let it auto-tag.
+		if (isSingleSourceTranscript(fm) && diarizedSpeakerCount(fm) <= 1) {
+			return skip("single-source transcript with <=1 diarized speaker");
+		}
 		if (hasCachedProposals(this.deps.app, file.path)) return skip("proposals already cached");
 		if (this.deps.jobs.has("speakerTag", file.path)) return skip("tagging already running");
 		if (this.attempted.has(file.path)) return skip("already attempted this session");

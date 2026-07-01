@@ -17,7 +17,7 @@ import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
 import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
 import {parseDateTime, setTimeFormat} from "./utils/time";
-import {updateFrontmatter, readFmString, restoreFrontmatterFields} from "./utils/frontmatter";
+import {updateFrontmatter, readFmString, restoreFrontmatterFields, isSingleSourceTranscript} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
 import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
@@ -662,7 +662,14 @@ export default class WhisperCalPlugin extends Plugin {
 		// pre-work awaits, bouncing the auto run after it was already marked attempted — a
 		// silent drop. The LLM-free path claims nothing (no LLM runs); the claim is handed to
 		// runLlmJob (preClaimed) or released at the early return below.
-		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath;
+		// Single-source recordings (voice memos, or diarization collapsed to one speaker) carry
+		// no calendar roster, so the LLM has no text signal to name speakers from — only the
+		// acoustic voiceprint match can. Take the LLM-free voiceprint path for them by default
+		// (fast, reliable, no multi-minute spawn) and only engage the LLM when the user supplies
+		// a manual hint via the instructions modal — the "how many people / who's who" the
+		// acoustic path can't infer. Regular meetings are unaffected.
+		const singleSourceNoHint = isSingleSourceTranscript(transcriptFm) && !customInstructions?.trim();
+		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath && !singleSourceNoHint;
 		let slotClaimed = false;
 		if (runLlm) {
 			if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {

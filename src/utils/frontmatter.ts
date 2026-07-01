@@ -92,6 +92,25 @@ export function isSingleSourceTranscript(fm: Record<string, unknown> | undefined
 }
 
 /**
+ * Best-effort count of distinct diarized speakers from transcript frontmatter — how many
+ * voices the diarizer actually separated, not how many people were in the room. Prefers
+ * MacWhisper's `speaker_count`, then the `attendees` list length (Tome writes one entry per
+ * diarized label, e.g. "Speaker 1", "Speaker 2"). Returns 0 when neither is present.
+ *
+ * Used to tell a genuinely single-voice recording (needs a manual "who's who" hint) from a
+ * single-mic recording the diarizer still split into multiple speakers (which voiceprint
+ * matching can identify on its own).
+ */
+export function diarizedSpeakerCount(fm: Record<string, unknown> | undefined): number {
+	if (!fm) return 0;
+	const speakerCount = fm["speaker_count"];
+	if (typeof speakerCount === "number") return speakerCount;
+	const attendees = fm["attendees"];
+	if (Array.isArray(attendees)) return attendees.length;
+	return 0;
+}
+
+/**
  * Re-apply selected frontmatter fields from a pre-edit snapshot of the file.
  *
  * Guards against an in-place edit (e.g. the speaker-tagging LLM, which is told
