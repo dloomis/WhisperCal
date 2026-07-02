@@ -34,10 +34,15 @@ export class NoteCreator {
 	 * `meeting_subject` + `meeting_date` match the event.
 	 */
 	findNote(event: CalendarEvent): TFile | null {
-		// Fast path: canonical template path
-		const canonical = this.getNotePath(event);
-		const abs = this.app.vault.getAbstractFileByPath(canonical);
-		if (abs instanceof TFile) return abs;
+		// Fast path: canonical template path. Skipped for synthetic events
+		// (merged/unscheduled) whose subject-derived canonical path could collide
+		// with a same-named original that still lives in the note folder — those
+		// resolve deterministically via the frontmatter scan below instead.
+		if (!event.id.startsWith("merged-") && !event.id.startsWith("unscheduled")) {
+			const canonical = this.getNotePath(event);
+			const abs = this.app.vault.getAbstractFileByPath(canonical);
+			if (abs instanceof TFile) return abs;
+		}
 
 		// Scan note folder by frontmatter (recursively to cover subfolders)
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);

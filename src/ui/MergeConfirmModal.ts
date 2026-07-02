@@ -51,7 +51,7 @@ export class MergeConfirmModal extends Modal {
 		contentEl.createEl("h3", {text: `Merge ${this.parts.length} meetings`});
 		contentEl.createEl("p", {
 			cls: "whisper-cal-merge-confirm-hint",
-			text: "Parts are combined in time order into one note and transcript. Originals move to the archive folder.",
+			text: "Parts are combined in time order into a new merged note and transcript. Originals stay in place and are hidden in the calendar.",
 		});
 
 		const list = contentEl.createDiv({cls: "whisper-cal-merge-confirm-list"});

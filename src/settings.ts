@@ -75,7 +75,6 @@ export interface WhisperCalSettings {
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
 	skipWordReplacementConfirm: boolean;
-	mergeArchiveFolderPath: string;
 	voiceprintFolderPath: string;
 	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
 	voiceprintMatchFloor: number;
@@ -145,7 +144,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 	skipWordReplacementConfirm: false,
-	mergeArchiveFolderPath: "WhisperCal Archive",
 	voiceprintFolderPath: "Caches/Voiceprints",
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
 	voiceprintAutoTagSkipModal: false,
@@ -400,17 +398,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			placeholder: "Transcripts",
 			get: () => this.plugin.settings.transcriptFolderPath,
 			set: v => { this.plugin.settings.transcriptFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Merge archive folder",
-			desc: "Vault folder where original part notes and transcripts are moved after merging meeting cards. Must be outside the notes and transcripts folders.",
-			placeholder: "WhisperCal Archive",
-			get: () => this.plugin.settings.mergeArchiveFolderPath,
-			set: v => { this.plugin.settings.mergeArchiveFolderPath = v; },
 			suggest: "folder",
 			browse: true,
 		});

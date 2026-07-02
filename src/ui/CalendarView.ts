@@ -541,8 +541,9 @@ export class CalendarView extends ItemView {
 		// Merged before the empty check so ad-hoc notes still render on days
 		// with no calendar events (e.g. weekends).
 		const calendarEventIds = new Set(events.map(e => e.id));
-		const localNotes = this.findLocalNotes(calendarEventIds);
-		const merged = [...events, ...localNotes];
+		const {localNotes, suppressedEventIds} = this.findLocalNotes(calendarEventIds);
+		// Drop Graph events whose note was merged away (their merged card renders instead).
+		const merged = [...events.filter(e => !suppressedEventIds.has(e.id)), ...localNotes];
 
 		if (merged.length === 0) {
 			this.contentContainer.createDiv({
@@ -712,12 +713,18 @@ export class CalendarView extends ItemView {
 	/**
 	 * Find meeting notes for the selected date that aren't backed by a
 	 * Graph API calendar event.  Covers "unscheduled", "macwhisper-*",
-	 * and any other locally-created meeting notes.
+	 * merged (`_merged`) notes, and any other locally-created meeting notes.
+	 *
+	 * Also returns `suppressedEventIds`: the calendar_event_id of every note
+	 * that has been merged away (`merged_into` set). renderEvents filters the
+	 * Graph event list by this set so the original's card disappears in favor
+	 * of the merged card — without ever moving or deleting the original file.
 	 */
-	private findLocalNotes(calendarEventIds: Set<string>): CalendarEvent[] {
+	private findLocalNotes(calendarEventIds: Set<string>): {localNotes: CalendarEvent[]; suppressedEventIds: Set<string>} {
+		const suppressedEventIds = new Set<string>();
 		const datePrefix = formatDate(this.selectedDate, this.settings.timezone);
 		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
-		if (!(folder instanceof TFolder)) return [];
+		if (!(folder instanceof TFolder)) return {localNotes: [], suppressedEventIds};
 
 		const files = getMarkdownFilesRecursive(folder);
 		const results: CalendarEvent[] = [];
@@ -729,6 +736,14 @@ export class CalendarView extends ItemView {
 			if (!fm) continue;
 
 			const eventId = fm[FM.CALENDAR_EVENT_ID] as string | undefined;
+
+			// A merged-away original never renders its own card. Record its
+			// (real) event id so the underlying Graph card is filtered too.
+			if (fm[FM.MERGED_INTO]) {
+				if (eventId) suppressedEventIds.add(eventId);
+				continue;
+			}
+
 			if (!eventId || calendarEventIds.has(eventId)) continue;
 
 			// Skip notes from a different provider (or legacy notes without the field)
@@ -762,11 +777,17 @@ export class CalendarView extends ItemView {
 			// note). Tolerate either separator after the date prefix —
 			// "YYYY-MM-DD - Subject" (template-created) or "YYYY-MM-DD Subject"
 			// (verbatim names from the link-unlinked-transcript flow).
-			const strippedBasename = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "");
+			const isMerged = eventId.startsWith("merged-");
+			let strippedBasename = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "");
+			// Merged notes carry a `_merged` file suffix; drop it so the card
+			// shows the clean user-chosen name.
+			if (isMerged) strippedBasename = strippedBasename.replace(/_merged$/, "");
 			const displaySubject = strippedBasename || meetingSubject || child.basename;
 
 			results.push({
-				id: `unscheduled-${child.path}`,
+				// Merged notes key on their own synthetic id so findNote resolves
+				// them deterministically (calendar_event_id === event.id).
+				id: isMerged ? eventId : `unscheduled-${child.path}`,
 				subject: displaySubject,
 				body: "",
 				isAllDay: false,
@@ -784,9 +805,10 @@ export class CalendarView extends ItemView {
 				seriesId: "",
 				responseStatus: "organizer",
 				categories: [],
+				isMerged,
 			});
 		}
-		return results;
+		return {localNotes: results, suppressedEventIds};
 	}
 
 	/** Find card whose note or transcript matches the given path. */
@@ -1265,7 +1287,7 @@ export class CalendarView extends ItemView {
 	/** Keys from frontmatter that affect card rendering. */
 	private static readonly FM_KEYS = [
 		FM.MACWHISPER_SESSION_ID, FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.CALENDAR_EVENT_ID,
-		"research_notes", FM.RESEARCH_STATE,
+		"research_notes", FM.RESEARCH_STATE, FM.MERGED_INTO,
 	] as const;
 
 	/** Build a stable string from card-relevant frontmatter values. */

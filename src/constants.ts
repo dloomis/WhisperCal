@@ -28,6 +28,10 @@ export const FM = {
 	MACWHISPER_SESSION_ID: "macwhisper_session_id",
 	MACWHISPER_SESSION_IDS: "macwhisper_session_ids",
 	MERGED_FROM: "merged_from",
+	// Backlink written onto each original note when it is merged. Presence of
+	// this key hides the note's card in the calendar (both its local card and
+	// the underlying Graph event card); the merged note is the source of truth.
+	MERGED_INTO: "merged_into",
 	TRANSCRIPT: "transcript",
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",

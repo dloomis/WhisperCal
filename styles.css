@@ -228,6 +228,18 @@
 	stroke-width: 2.5px;
 }
 
+.whisper-cal-card-gutter-merged {
+	color: var(--text-accent);
+	display: flex;
+	align-items: center;
+}
+
+.whisper-cal-card-gutter-merged .svg-icon {
+	width: 16px;
+	height: 16px;
+	stroke-width: 2.5px;
+}
+
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
 	--wc-category-color: var(--text-warning);

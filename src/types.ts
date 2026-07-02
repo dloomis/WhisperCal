@@ -30,6 +30,8 @@ export interface CalendarEvent {
 	seriesId: string;   // provider series id (seriesMasterId / recurringEventId); "" for non-recurring / single instances
 	responseStatus: ResponseStatus;
 	categories: EventCategory[];
+	/** True only for the synthetic card representing a merged (`_merged`) note. */
+	isMerged?: boolean;
 }
 
 export type CalendarProviderType = "microsoft" | "google";

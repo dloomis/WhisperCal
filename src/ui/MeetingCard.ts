@@ -188,7 +188,8 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 
 	// Merge checkbox — static zone so it survives dynamic-zone rebuilds.
 	// Eligibility (note must exist) is toggled by renderCardDynamic.
-	if (event.id !== "unscheduled" && opts.onToggleMergeSelect) {
+	// A merged card is already a source-of-truth aggregate; don't offer to merge it again.
+	if (event.id !== "unscheduled" && !event.isMerged && opts.onToggleMergeSelect) {
 		const mergeCb = topRow.createEl("input", {
 			type: "checkbox",
 			cls: "whisper-cal-merge-checkbox whisper-cal-merge-checkbox-hidden",
@@ -220,6 +221,11 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	if (isImportantOrganizer) {
 		const importantEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-important", attr: {"aria-label": "Important organizer"}});
 		setIcon(importantEl, "octagon-alert");
+	}
+
+	if (event.isMerged) {
+		const mergedEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-merged", attr: {"aria-label": "Merged meeting"}});
+		setIcon(mergedEl, "git-merge");
 	}
 
 	return {gutter, timeDiv: timeDivRef, iconRow};
