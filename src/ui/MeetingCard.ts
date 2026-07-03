@@ -18,6 +18,8 @@ import {startApiRecording, stopApiRecording, watchApiRecording} from "../service
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
 import {hasCachedProposals, countCachedProposals} from "../services/SpeakerTagParser";
 import {exportMeetingBundle} from "../services/MeetingExporter";
+import {collectMeetingRelatedFiles, trashMeetingFiles} from "../services/MeetingDeleter";
+import {DeleteNoteModal} from "./DeleteNoteModal";
 
 /**
  * Before starting a capture, consult the recording service's live /status. If it
@@ -74,6 +76,7 @@ export interface MeetingCardOpts {
 	onReviewSpeakerCandidates?: (notePath: string) => void;
 	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
+	onNoteDeleted?: () => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
 	onStatusUpdate?: () => void;
@@ -502,10 +505,11 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Top-level unscheduled placeholder — just a Create note button, no state lookup
+	// Top-level unscheduled placeholder — just a Create note button, no state lookup.
+	// Rendered directly (not in a collapse wrapper): this card has no status rail to
+	// hover, so a collapsed action row could never be revealed — keep it always visible.
 	if (event.id === "unscheduled") {
-		const actionsWrap = content.createDiv({cls: "whisper-cal-card-actions-wrap"});
-		const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
+		const actions = content.createDiv({cls: "whisper-cal-card-actions"});
 		const createBtn = renderSmartBtn(actions, "file-plus-2", "Create note…", {ariaLabel: "Create meeting note"});
 		createBtn.addEventListener("click", () => {
 			createBtn.disabled = true;
@@ -784,23 +788,60 @@ function renderCardDynamic(
 				}));
 		}
 
-		// Export needs the meeting's artifacts on disk — offered once a note exists.
+		// Export/delete need a note on disk — offered once one exists.
 		if (states.note === "complete") {
 			menu.addSeparator();
 			menu.addItem((item) => item
 				.setTitle("Export meeting bundle…")
 				.setIcon("folder-output")
 				.onClick(() => { void exportMeetingBundle(app, notePath); }));
+
+			// Delete — destructive, so it's rendered red (setWarning) and confirmed
+			// through a dedicated modal. Hidden while a recording is live: capture is
+			// still writing to this note, and trashing it mid-record would strand the
+			// in-flight transcript link. Related files (transcript/audio/voiceprint
+			// sidecar) are resolved up front — before anything is trashed — so they can
+			// be listed in the modal and the note's links still resolve.
+			if (states.record !== "running") {
+				menu.addItem((item) => item
+					.setTitle("Delete note…")
+					.setIcon("trash-2")
+					.setWarning(true)
+					.onClick(() => {
+						if (!noteFile) return;
+						void (async () => {
+							const noteFm = (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {}) as Record<string, unknown>;
+							const related = collectMeetingRelatedFiles(app, notePath, noteFm);
+							const choice = await new DeleteNoteModal(app, {
+								subject: event.subject,
+								relatedFiles: related,
+							}).prompt();
+							if (!choice) return; // cancelled
+							const toTrash: TFile[] = [noteFile];
+							if (choice.deleteRelated) toTrash.push(...related.map(r => r.file));
+							const n = await trashMeetingFiles(app, toTrash);
+							if (n > 0) new Notice(`Moved ${n} file${n === 1 ? "" : "s"} to trash`);
+							opts.onNoteDeleted?.();
+						})();
+					}));
+			}
 		}
 
 		return menu;
 	};
 
+	// Expand group — the status rail and the collapsible actions share one hover
+	// container so auto-expand keys on the rail alone (not the whole card), while
+	// still staying open when the pointer moves down onto the revealed buttons.
+	// When collapsed the actions have zero height, so the only hover target is the
+	// rail itself; see .whisper-cal-card-expand in styles.css.
+	const expandGroup = zone.createDiv({cls: "whisper-cal-card-expand"});
+
 	// Status rail — four segments (Note · Transcript · Speakers · Summary).
-	// Rendered directly in the dynamic zone (before the collapsible actions) so
-	// it stays visible when the card is collapsed. Each segment opens its stage's
-	// artifact on click; hovering the rail expands the segments into labeled bars.
-	const rail = zone.createDiv({cls: "whisper-cal-rail"});
+	// Rendered before the collapsible actions and always visible (the rail stays
+	// shown even when collapsed). Each segment opens its stage's artifact on
+	// click; hovering the rail expands the segments into labeled bars.
+	const rail = expandGroup.createDiv({cls: "whisper-cal-rail"});
 	const openNote = states.note === "complete" ? () => { void openOrCreateNote(opts); } : undefined;
 	const openTranscript = states.transcriptFile
 		? () => { const tf = states.transcriptFile; if (tf) void app.workspace.openLinkText(tf.path, "", false); }
@@ -828,7 +869,7 @@ function renderCardDynamic(
 	renderRailSeg(rail, "Summary", summarySeg, openNote);
 
 	// Actions row (wrapped for collapse animation)
-	const actionsWrap = zone.createDiv({cls: "whisper-cal-card-actions-wrap"});
+	const actionsWrap = expandGroup.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
 	// Smart action button — always the pipeline's next verb; absent when the
@@ -998,11 +1039,13 @@ function renderCardDynamic(
 	// Unified card status — renders from CardUiState. The recording variant is
 	// skipped: while recording, the live timer lives inside the Stop button, not
 	// a status line. Every other variant (transcribing progress, auto-tag
-	// notices, done/warning) still renders here.
+	// notices, done/warning) still renders here. Lives inside the expand group so
+	// the group's fill-to-bottom growth adds trailing space below it, never a gap
+	// between it and the action row above.
 	const cs = opts.cardUi.getStatus(notePath);
 	if (cs && cs.variant !== "recording") {
 		const variant = cs.variant ?? "progress";
-		const statusEl = zone.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
+		const statusEl = expandGroup.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
 		if (cs.icon) {
 			const ico = statusEl.createSpan({cls: "whisper-cal-card-status-icon"});
 			setIcon(ico, cs.icon);

@@ -656,6 +656,14 @@ export class CalendarView extends ItemView {
 			onReviewSpeakerCandidates: this.callbacks.onReviewSpeakerCandidates,
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,
+			onNoteDeleted: () => {
+				// Re-render from cache so the timeline reflects the deletion: a
+				// local-only note's card disappears, while a Graph-backed note's card
+				// falls back to its "create note" state. Also refresh the unlinked
+				// section in case a now-orphaned recording should surface there.
+				if (this.cachedEvents) this.renderEvents(this.cachedEvents);
+				void this.loadAndRenderUnlinkedSection();
+			},
 			onStatusUpdate: () => this.rerenderCardById(event.id),
 			isMergeSelected: () => this.mergeSelection.has(event.id),
 			onToggleMergeSelect: (selected: boolean) => {

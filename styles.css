@@ -336,12 +336,25 @@
 	background: var(--background-modifier-hover);
 }
 
-/* Content — right column */
+/* Content — right column. A flex column so the dynamic zone (and the expand
+   group inside it) can stretch to fill the height the card gains when the
+   gutter is taller than the content — see .whisper-cal-card-expand. */
 .whisper-cal-card-content {
 	flex: 1;
 	min-width: 0;
 	padding: 12px;
 	background: var(--background-primary-alt);
+	display: flex;
+	flex-direction: column;
+}
+
+/* Dynamic zone fills the content column's remaining height so the expand group
+   inside it can stretch down to the card's bottom edge. */
+.whisper-cal-card-dynamic {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
 }
 
 .whisper-cal-card-subject-row {
@@ -388,10 +401,39 @@
 	margin-top: 10px;
 }
 
+/* Expand group — wraps the status rail and the collapsible actions so the
+   auto-expand keys on the rail alone, not the whole card. When collapsed the
+   actions have zero height, so the group's only hover target is the rail; once
+   expanded, the buttons live inside the group, so moving the pointer down onto
+   them keeps hover (and keeps the group open) instead of collapsing it. */
+.whisper-cal-card-expand {
+	display: flow-root;
+	position: relative;
+	/* Grow to fill the dynamic zone so the thin whitespace between the rail and
+	   the card's bottom edge counts as hover target too, not just the rail. Block
+	   children (rail, actions, status) stay top-aligned; the slack sits below. */
+	flex: 1 1 auto;
+}
+
+/* The group grows only to the content-box edge; the card's 12px bottom padding
+   (on .whisper-cal-card-content) sits below it and would otherwise be a dead
+   strip that collapses the card when the pointer drifts into it. This pseudo
+   extends the hover hit-area over that strip — absolutely positioned so it adds
+   no height, and hovering a pseudo-element still counts as hovering its host, so
+   :hover keeps firing. Height matches the content's bottom padding. */
+.whisper-cal-card-expand::after {
+	content: "";
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	height: 12px;
+}
+
 /* Actions wrapper — animated hover reveal. Cards rest collapsed (rail and
-   status line stay visible); hovering the card — or tabbing into it — expands
-   the action row. A card with live activity carries whisper-cal-card-active
-   and stays expanded without hover. */
+   status line stay visible); hovering the rail — or tabbing into the group —
+   expands the action row. A card with live activity carries
+   whisper-cal-card-active and stays expanded without hover. */
 .whisper-cal-card-actions-wrap {
 	display: grid;
 	grid-template-rows: 0fr;
@@ -401,9 +443,9 @@
 
 /* Hover-intent delay: expansion waits briefly so mousing across the list
    doesn't ripple every card open; collapse (the base rule, no delay) starts
-   the moment the pointer leaves. */
-.whisper-cal-card:hover .whisper-cal-card-actions-wrap,
-.whisper-cal-card:has(:focus-visible) .whisper-cal-card-actions-wrap,
+   the moment the pointer leaves the rail group. */
+.whisper-cal-card-expand:hover .whisper-cal-card-actions-wrap,
+.whisper-cal-card-expand:has(:focus-visible) .whisper-cal-card-actions-wrap,
 .whisper-cal-card-active .whisper-cal-card-actions-wrap {
 	grid-template-rows: 1fr;
 	margin-top: 10px;
@@ -939,12 +981,12 @@
 	cursor: default;
 }
 
-/* Hovering the card (or tabbing into it, or live activity pinning it open)
-   expands every segment into a labeled bar: a bigger click target, and the
-   stage names give the context tooltips used to. All four grow together so
+/* Hovering the rail group (or tabbing into it, or live activity pinning it
+   open) expands every segment into a labeled bar: a bigger click target, and
+   the stage names give the context tooltips used to. All four grow together so
    the layout shifts once, not per segment. */
-.whisper-cal-card:hover .whisper-cal-rail-seg,
-.whisper-cal-card:has(:focus-visible) .whisper-cal-rail-seg,
+.whisper-cal-card-expand:hover .whisper-cal-rail-seg,
+.whisper-cal-card-expand:has(:focus-visible) .whisper-cal-rail-seg,
 .whisper-cal-card-active .whisper-cal-rail-seg {
 	height: 20px;
 	max-width: 200px;
@@ -964,8 +1006,8 @@
 	transition: opacity 150ms ease-out;
 }
 
-.whisper-cal-card:hover .whisper-cal-rail-seg-label,
-.whisper-cal-card:has(:focus-visible) .whisper-cal-rail-seg-label,
+.whisper-cal-card-expand:hover .whisper-cal-rail-seg-label,
+.whisper-cal-card-expand:has(:focus-visible) .whisper-cal-rail-seg-label,
 .whisper-cal-card-active .whisper-cal-rail-seg-label {
 	opacity: 1;
 	transition-delay: 200ms;
@@ -1387,6 +1429,26 @@
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
+}
+
+/* DeleteNoteModal — related-files opt-in */
+.whisper-cal-delete-related {
+	margin-bottom: 16px;
+}
+
+.whisper-cal-delete-related-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	color: var(--text-normal);
+}
+
+.whisper-cal-delete-related-list {
+	margin: 8px 0 0;
+	padding-left: 28px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
 }
 
 .whisper-cal-word-replacement-checkbox {

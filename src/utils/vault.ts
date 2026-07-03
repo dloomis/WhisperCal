@@ -1,4 +1,4 @@
-import {App, TFile, TFolder} from "obsidian";
+import {App, TFile, TFolder, normalizePath} from "obsidian";
 import {FM} from "../constants";
 
 /**
@@ -45,6 +45,40 @@ export function resolveTranscriptAudio(
 	const linked = resolveWikiLink(app, transcriptFm, "recording", transcriptFile.path);
 	if (linked) return linked;
 	return app.metadataCache.getFirstLinkpathDest(`${transcriptFile.basename}.m4a`, transcriptFile.path);
+}
+
+/**
+ * Resolve the Tome voiceprint sidecar (`<recording>.voiceprints.json`) for a
+ * transcript to a vault TFile, mirroring loadSidecar's candidate order but
+ * returning the file itself (so it can be trashed natively) rather than reading
+ * its contents. `.json` isn't a linkable extension, so the frontmatter pointer is
+ * resolved as a path (transcript's own folder, then vault root); the sibling
+ * convention is the final fallback. Returns null when no sidecar file exists.
+ */
+export function resolveVoiceprintSidecar(
+	app: App,
+	transcriptFile: TFile,
+	transcriptFm: Record<string, unknown>,
+): TFile | null {
+	const asFile = (p: string): TFile | null => {
+		const f = app.vault.getAbstractFileByPath(normalizePath(p));
+		return f instanceof TFile ? f : null;
+	};
+	const raw = transcriptFm[FM.VOICEPRINTS];
+	if (typeof raw === "string" && raw.trim()) {
+		// A rare linkable form still resolves through the link index.
+		const linked = resolveWikiLink(app, transcriptFm, FM.VOICEPRINTS, transcriptFile.path);
+		if (linked) return linked;
+		const name = stripWikiLink(raw);
+		const dir = transcriptFile.parent && transcriptFile.parent.path !== "/"
+			? transcriptFile.parent.path
+			: "";
+		const byDir = dir ? asFile(`${dir}/${name}`) : null;
+		if (byDir) return byDir;
+		const byRoot = asFile(name);
+		if (byRoot) return byRoot;
+	}
+	return asFile(transcriptFile.path.replace(/\.md$/, ".voiceprints.json"));
 }
 
 /**
