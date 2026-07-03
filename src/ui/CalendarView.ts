@@ -1441,13 +1441,30 @@ export class CalendarView extends ItemView {
 		let afterLast = false;
 
 		// A meeting is live: slide the line down through its card as it elapses. When several
-		// overlap, the most recently started one wins — the freshest "current" meeting.
+		// overlap, the one actually being captured wins — an active recording first, then a
+		// card mid-pipeline (transcribing/tagging/summarizing), then the most recently
+		// started one as the freshest "current" meeting.
+		const cardUi = this.callbacks.cardUi;
+		const liveRank = (card: HTMLElement): number => {
+			const notePath = card.dataset.notePath;
+			if (!notePath) return 0;
+			if (cardUi.hasRecording(notePath)) return 2;
+			const variant = cardUi.getStatus(notePath)?.variant;
+			return variant === "recording" || variant === "progress" ? 1 : 0;
+		};
 		let live: HTMLElement | null = null;
 		let liveStart = -Infinity;
+		let liveRankBest = -1;
 		for (const card of cards) {
 			const start = Number(card.dataset.startTime);
 			const end = Number(card.dataset.endTime);
-			if (start <= nowMs && nowMs < end && start > liveStart) { live = card; liveStart = start; }
+			if (start > nowMs || nowMs >= end) continue;
+			const rank = liveRank(card);
+			if (rank > liveRankBest || (rank === liveRankBest && start > liveStart)) {
+				live = card;
+				liveStart = start;
+				liveRankBest = rank;
+			}
 		}
 
 		if (live) {
