@@ -933,7 +933,7 @@ export default class WhisperCalPlugin extends Plugin {
 		const file = this.app.vault.getAbstractFileByPath(transcriptPath);
 		if (snapshot !== undefined && file instanceof TFile) {
 			try {
-				await this.app.vault.modify(file, snapshot);
+				await this.app.vault.process(file, () => snapshot);
 			} catch (e) {
 				console.error("[WhisperCal] failed to restore transcript snapshot", e);
 			}

@@ -163,6 +163,17 @@ export async function loadSidecar(app: App, transcriptPath: string): Promise<Voi
 	return null;
 }
 
+/**
+ * Delete an emptied library via fileManager.trashFile so it lands in the user's
+ * configured trash (recoverable) instead of being removed permanently. Falls back
+ * to adapter.remove only when the file isn't in the vault index yet.
+ */
+async function trashLibrary(app: App, path: string): Promise<void> {
+	const af = app.vault.getAbstractFileByPath(path);
+	if (af instanceof TFile) await app.fileManager.trashFile(af);
+	else await app.vault.adapter.remove(path);
+}
+
 async function loadLibrary(app: App, path: string): Promise<VoiceprintLibrary | null> {
 	try {
 		if (!(await app.vault.adapter.exists(path))) return null;
@@ -201,7 +212,7 @@ async function reconcileTranscriptSamples(
 			if (kept.length === lib.samples.length) continue; // nothing from this transcript to move
 			lib.samples = kept;
 			try {
-				if (lib.samples.length === 0) await app.vault.adapter.remove(path);
+				if (lib.samples.length === 0) await trashLibrary(app, path);
 				else await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
 				corrected++;
 				console.warn(`[WhisperCal] reconciled voiceprint "${lib.name}" — dropped a stale sample from ${source}`);
@@ -404,7 +415,7 @@ async function removeCulpritSample(app: App, folder: string, name: string, centr
 
 	lib.samples.splice(idx, 1);
 	try {
-		if (lib.samples.length === 0) await app.vault.adapter.remove(path);
+		if (lib.samples.length === 0) await trashLibrary(app, path);
 		else await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
 	} catch {
 		return false;
