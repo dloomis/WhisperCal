@@ -388,43 +388,26 @@
 	margin-top: 10px;
 }
 
-/* Collapse toggle in gutter icon row */
-.whisper-cal-card-toggle {
-	margin-left: auto;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	cursor: pointer;
-	color: var(--text-muted);
-	transition: color 150ms ease;
-}
-
-.whisper-cal-card-toggle:hover {
-	color: var(--text-normal);
-}
-
-.whisper-cal-card-toggle .svg-icon {
-	width: 14px;
-	height: 14px;
-	transition: transform 200ms ease-out;
-	transform: rotate(90deg);
-}
-
-.whisper-cal-card-collapsed .whisper-cal-card-toggle .svg-icon {
-	transform: rotate(0deg);
-}
-
-/* Actions wrapper — animated collapse */
+/* Actions wrapper — animated hover reveal. Cards rest collapsed (rail and
+   status line stay visible); hovering the card — or tabbing into it — expands
+   the action row. A card with live activity carries whisper-cal-card-active
+   and stays expanded without hover. */
 .whisper-cal-card-actions-wrap {
 	display: grid;
-	grid-template-rows: 1fr;
+	grid-template-rows: 0fr;
 	transition: grid-template-rows 200ms ease-out, margin-top 200ms ease-out;
-	margin-top: 10px;
+	margin-top: 0;
 }
 
-.whisper-cal-card-collapsed .whisper-cal-card-actions-wrap {
-	grid-template-rows: 0fr;
-	margin-top: 0;
+/* Hover-intent delay: expansion waits briefly so mousing across the list
+   doesn't ripple every card open; collapse (the base rule, no delay) starts
+   the moment the pointer leaves. */
+.whisper-cal-card:hover .whisper-cal-card-actions-wrap,
+.whisper-cal-card:has(:focus-visible) .whisper-cal-card-actions-wrap,
+.whisper-cal-card-active .whisper-cal-card-actions-wrap {
+	grid-template-rows: 1fr;
+	margin-top: 10px;
+	transition-delay: 200ms;
 }
 
 .whisper-cal-card-actions-wrap > .whisper-cal-card-actions {
@@ -914,194 +897,267 @@
 	color: var(--text-faint);
 }
 
-/* Workflow pill buttons */
-.whisper-cal-pill {
+/* Meeting title link — the title itself opens (or creates) the note. Subtle
+   dotted-underline + pointer affordance on hover so it reads as actionable
+   without competing with real links. */
+.whisper-cal-card-subject-link {
+	cursor: pointer;
+}
+
+.whisper-cal-card-subject-link:hover {
+	color: var(--interactive-accent);
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+
+/* Status rail — four slim segments (Note · Transcript · Speakers · Summary)
+   under the meta rows. Clickable buttons that open each stage's artifact.
+   Segments are <button>s, so every rule that sets background/color/box-shadow
+   must out-rank Obsidian's `button:not(.clickable-icon)` (0,1,1) — hence the
+   descendant/double-class selectors throughout (same trick the old pills used). */
+.whisper-cal-rail {
+	display: flex;
+	gap: 4px;
+	margin-top: 9px;
+}
+
+.whisper-cal-rail .whisper-cal-rail-seg {
+	height: 5px;
+	flex: 1;
+	max-width: 56px;
+	padding: 0;
+	border: 0;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	box-shadow: none;
+	cursor: pointer;
+	overflow: hidden;
+	transition: background 150ms ease, height 150ms ease-out, max-width 150ms ease-out;
+}
+
+.whisper-cal-rail .whisper-cal-rail-seg:disabled {
+	cursor: default;
+}
+
+/* Hovering the card (or tabbing into it, or live activity pinning it open)
+   expands every segment into a labeled bar: a bigger click target, and the
+   stage names give the context tooltips used to. All four grow together so
+   the layout shifts once, not per segment. */
+.whisper-cal-card:hover .whisper-cal-rail-seg,
+.whisper-cal-card:has(:focus-visible) .whisper-cal-rail-seg,
+.whisper-cal-card-active .whisper-cal-rail-seg {
+	height: 20px;
+	max-width: 200px;
+	/* Delay only the growth (hover intent) — a segment's own hover tint
+	   (background) must stay immediate. */
+	transition: background 150ms ease, height 150ms ease-out 200ms, max-width 150ms ease-out 200ms;
+}
+
+.whisper-cal-rail-seg-label {
+	font-size: 10px;
+	font-weight: 500;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-muted);
+	opacity: 0;
+	transition: opacity 150ms ease-out;
+}
+
+.whisper-cal-card:hover .whisper-cal-rail-seg-label,
+.whisper-cal-card:has(:focus-visible) .whisper-cal-rail-seg-label,
+.whisper-cal-card-active .whisper-cal-rail-seg-label {
+	opacity: 1;
+	transition-delay: 200ms;
+}
+
+/* Label contrast on the colored (done/running/attention/rec) fills. */
+.whisper-cal-rail-seg-done .whisper-cal-rail-seg-label,
+.whisper-cal-rail-seg-running .whisper-cal-rail-seg-label,
+.whisper-cal-rail-seg-attention .whisper-cal-rail-seg-label,
+.whisper-cal-rail-seg-rec .whisper-cal-rail-seg-label {
+	color: var(--text-on-accent);
+}
+
+/* Segment states use Obsidian's semantic theme colors (they adapt to the
+   active theme and light/dark mode): done = success green, running = accent,
+   needs-review = warning orange, recording = error red. */
+.whisper-cal-rail-seg.whisper-cal-rail-seg-done {
+	background: var(--text-success);
+}
+
+.whisper-cal-rail-seg.whisper-cal-rail-seg-running {
+	background: var(--interactive-accent);
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-rail-seg.whisper-cal-rail-seg-attention {
+	background: var(--text-warning);
+}
+
+.whisper-cal-rail-seg.whisper-cal-rail-seg-rec {
+	background: var(--text-error);
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-rail-seg:not(:disabled):hover {
+	background: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
+}
+
+.whisper-cal-rail-seg-done:not(:disabled):hover {
+	background: color-mix(in srgb, var(--text-success) 80%, var(--text-normal));
+}
+
+.whisper-cal-rail-seg-running:not(:disabled):hover {
+	background: var(--interactive-accent-hover);
+}
+
+/* Smart action button — the pipeline's single "next verb", fully labeled.
+   Scoped under .whisper-cal-card-actions to out-rank Obsidian's
+   `button:not(.clickable-icon)` background/color/box-shadow. */
+.whisper-cal-card-actions .whisper-cal-smart {
 	display: inline-flex;
 	align-items: center;
-	justify-content: center;
-	position: relative;
-	width: 52px;
-	height: 26px;
-	padding: 0;
+	gap: 6px;
+	height: 30px;
+	padding: 0 12px;
 	border-radius: var(--radius-s);
-	/* Same color as the meeting card border (.whisper-cal-card), one pixel
-	   thinner — 2px read too heavy at pill scale. No drop shadow — its halo
-	   softened the border so it read lighter than the card frame. */
 	border: 1px solid var(--background-modifier-border);
 	background: var(--interactive-normal);
-	color: var(--icon-color);
+	color: var(--text-normal);
+	box-shadow: none;
 	cursor: pointer;
 	box-sizing: border-box;
 	font-size: var(--font-ui-smaller);
+	font-weight: 500;
 	line-height: 1;
 }
 
-.whisper-cal-pill-icon {
-	display: flex;
+.whisper-cal-smart:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+}
+
+.whisper-cal-smart:disabled {
+	cursor: default;
+}
+
+.whisper-cal-smart-icon {
+	display: inline-flex;
 	align-items: center;
 }
 
-.whisper-cal-pill-icon svg {
+.whisper-cal-smart-icon svg {
 	width: 15px;
 	height: 15px;
 }
 
-.whisper-cal-pill-label {
-	display: none;
+.whisper-cal-smart-label {
+	white-space: nowrap;
 }
 
-/* Badge element hidden — complete state uses border accent instead */
-.whisper-cal-pill-badge {
-	display: none;
+.whisper-cal-smart-elapsed {
+	font-variant-numeric: tabular-nums;
 }
 
-.whisper-cal-pill:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
-	color: var(--interactive-accent);
-	border-color: var(--interactive-accent);
-	box-shadow: 0 2px 4px color-mix(in srgb, var(--background-modifier-border) 50%, transparent);
-}
-
-.whisper-cal-pill.whisper-cal-pill-complete {
-	border-color: var(--interactive-accent);
-	box-shadow: 0 0 0 1px var(--interactive-accent);
-}
-
-.whisper-cal-pill.whisper-cal-pill-complete:hover:not(:disabled) {
-	border-color: var(--interactive-accent);
-	box-shadow: 0 0 0 1px var(--interactive-accent), 0 2px 4px color-mix(in srgb, var(--interactive-accent) 25%, transparent);
-}
-
-/* Mic (record) pill hovers red — a destructive/attention accent that makes an
-   accidental mouse-over visually obvious before a click lands. Double-class +
-   placement after the .pill-complete rules so it wins for every record state. */
-.whisper-cal-pill.whisper-cal-pill-mic:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--text-error) 15%, var(--interactive-normal));
-	color: var(--text-error);
+/* Stop button — theme-red tint, matching the rail's recording segment. */
+.whisper-cal-smart.whisper-cal-smart-stop {
+	background: color-mix(in srgb, var(--text-error) 15%, transparent);
 	border-color: var(--text-error);
-	box-shadow: 0 2px 4px color-mix(in srgb, var(--text-error) 25%, transparent);
+	color: var(--text-error);
 }
 
-.whisper-cal-pill-running {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+.whisper-cal-smart-stop:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--text-error) 25%, transparent);
+	border-color: var(--text-error);
+	color: var(--text-error);
+}
+
+/* Review speakers — accent-tinted call-to-action (mirrors the old review pill). */
+.whisper-cal-smart.whisper-cal-smart-review {
+	background: color-mix(in srgb, var(--interactive-accent) 12%, var(--interactive-normal));
 	border-color: var(--interactive-accent);
 	color: var(--interactive-accent);
-	cursor: wait;
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
-/* Red recording dot badge on upper-right corner of record pill */
-.whisper-cal-pill-rec-dot {
-	position: absolute;
-	top: 5px;
-	right: 5px;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: #e53935;
-	pointer-events: none;
-	animation: whisper-cal-rec-dot-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes whisper-cal-rec-dot-pulse {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.3; }
-}
-
-/* Recording pill: solid red-tinted background, no pulse — looks clickable (stop) */
-.whisper-cal-pill-recording {
-	animation: none;
-	background: color-mix(in srgb, #e53935 15%, transparent);
-	border-color: #e53935;
-	color: #e53935;
-	cursor: pointer;
-}
-
-.whisper-cal-pill-recording:hover:not(:disabled) {
-	background: color-mix(in srgb, #e53935 25%, transparent);
-}
-
-/* Recording pill in running state is clickable (stop) — override wait cursor */
-.whisper-cal-pill-running:not(:disabled) {
-	cursor: pointer;
-}
-
-/* Busy pill: the LLM job for this pill's stage is running — same pulsing
-   accent look as the running state, but the pill stays clickable (e.g.
-   open the transcript while tagging runs). */
-.whisper-cal-pill-busy {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
-	border-color: var(--interactive-accent);
+.whisper-cal-smart-review:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--interactive-accent) 22%, var(--interactive-normal));
 	color: var(--interactive-accent);
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
-/* Wrapper positioning context for the hover instruction affordance */
-.whisper-cal-pill-wrap {
-	position: relative;
+.whisper-cal-smart-count {
 	display: inline-flex;
-}
-
-/* Vertical delimiter between the recording (mic) pill and the rest of the
-   row — extra horizontal margin (on top of the row's 4px gap) widens the
-   gap so the mic is harder to hit by accident. */
-.whisper-cal-pill-divider {
-	align-self: center;
-	width: 1px;
-	height: 16px;
-	margin: 0 4px;
-	background: var(--background-modifier-border);
-}
-
-/* Corner action badge on a pill's top-right — hosts the LLM actions
-   (summarize on the Note pill, tag speakers on the Transcript pill).
-   Default: hover-revealed. Sits inside the pill bounds because the actions
-   row clips overflow for the collapse animation.
-   .is-ready: always visible as a call-to-action.
-   .is-running: always visible, pulsing, inert.
-   .has-candidates: green — unapproved proposals await review (click = resume review). */
-.whisper-cal-pill-corner-badge {
-	position: absolute;
-	top: 1px;
-	right: 1px;
-	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 13px;
-	height: 13px;
-	padding: 0;
-	border: none;
-	border-radius: 50%;
+	min-width: 15px;
+	height: 15px;
+	padding: 0 4px;
+	border-radius: 8px;
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
-	cursor: pointer;
-	box-shadow: 0 1px 2px color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 0.15s ease;
+	font-size: 10px;
+	font-weight: var(--font-medium);
+	line-height: 1;
 }
 
-.whisper-cal-pill-corner-badge svg {
-	width: 9px;
-	height: 9px;
-}
-
-.whisper-cal-pill-wrap:hover .whisper-cal-pill-corner-badge,
-.whisper-cal-pill-corner-badge:focus-visible,
-.whisper-cal-pill-corner-badge.is-ready,
-.whisper-cal-pill-corner-badge.is-running {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-.whisper-cal-pill-corner-badge.is-running {
-	pointer-events: none;
+/* Busy button — a background LLM job for this stage is running (disabled). */
+.whisper-cal-smart.whisper-cal-smart-busy {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
 	cursor: wait;
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
-.whisper-cal-pill-corner-badge.has-candidates {
-	background: var(--color-green);
+/* Mini icon buttons — Research and ⋯, alongside the smart button. */
+.whisper-cal-card-actions .whisper-cal-mini {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+	background: var(--interactive-normal);
+	color: var(--icon-color);
+	box-shadow: none;
+	cursor: pointer;
+	box-sizing: border-box;
+}
+
+.whisper-cal-mini svg {
+	width: 15px;
+	height: 15px;
+}
+
+.whisper-cal-mini:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+}
+
+/* Ghost/quiet minis — pipeline complete, so the card goes calm. */
+.whisper-cal-mini.whisper-cal-mini-quiet {
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.whisper-cal-mini-quiet:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+	border-color: transparent;
+	color: var(--text-normal);
+}
+
+/* Busy mini — Research job running. */
+.whisper-cal-mini.whisper-cal-mini-busy {
+	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+	cursor: wait;
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes whisper-cal-pulse {
@@ -1177,11 +1233,6 @@
 	background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
 	border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 20%, transparent);
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
-}
-
-.whisper-cal-pill-disabled {
-	opacity: 0.35;
-	cursor: not-allowed;
 }
 
 /* Unlinked recordings section */

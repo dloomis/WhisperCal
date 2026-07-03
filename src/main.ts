@@ -892,6 +892,12 @@ export default class WhisperCalPlugin extends Plugin {
 			// autoApplyVoiceprintTags (no enrollment). Otherwise cache the candidates for review.
 			if (this.settings.voiceprintAutoTagSkipModal) {
 				try {
+					// The minor-speaker exemption in shouldAutoTag needs real line counts, but
+					// frontmatter often lacks them here (e.g. Tome transcripts) — count from the
+					// body, same as presentSpeakerTagModal does before its own auto-tag check.
+					if (mappings.some(m => m.lineCount === 0)) {
+						enrichLineCountsFromBody(mappings, await this.app.vault.cachedRead(transcriptFile));
+					}
 					const vp = await matchVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, mappings, this.settings.voiceprintMatchFloor);
 					if (this.shouldAutoTag(mappings, vp)) {
 						this.canonicalizeProposals(mappings);
@@ -902,9 +908,10 @@ export default class WhisperCalPlugin extends Plugin {
 					console.warn("[WhisperCal] auto-tag voiceprint match failed", e);
 				}
 			}
-			// Candidates are cached, never applied. The user reviews via the Speakers pill, which
-			// is also what gates auto-summarize (inside presentSpeakerTagModal, after apply).
-			this.setCardStatus(notePath, "Speaker candidates ready — click Speakers to review", "users-round", 8000, "done");
+			// Candidates are cached, never applied. The user reviews via the card's
+			// "Review speakers" pill, which is also what gates auto-summarize
+			// (inside presentSpeakerTagModal, after apply).
+			this.setCardStatus(notePath, "Speaker candidates ready — click Review speakers", "users-round", 8000, "done");
 			return;
 		}
 
@@ -1131,18 +1138,38 @@ export default class WhisperCalPlugin extends Plugin {
 	/**
 	 * True when the modal can be skipped and the matches applied silently: the feature is on and
 	 * every speaker is either a confident voiceprint match at or above the high-confidence floor,
-	 * or the microphone user. The mic user is identified deterministically (its own mic channel +
-	 * the configured `microphoneUser` name) and so never gets a voiceprint-library match — without
-	 * this exemption the user's own presence (i.e. nearly every meeting) would always block auto-tag.
-	 * Deliberately a high bar otherwise — a single unmatched or below-floor non-mic speaker falls
-	 * back to the modal. Confirmed re-review mappings are skipped by matchVoiceprints (never in `vp`)
-	 * and excluded from the mic-user branch, so a re-review never auto-tags.
+	 * the microphone user, or a negligible speaker. The mic user is identified deterministically
+	 * (its own mic channel + the configured `microphoneUser` name) and so never gets a
+	 * voiceprint-library match — without this exemption the user's own presence (i.e. nearly every
+	 * meeting) would always block auto-tag. A negligible speaker is an unmatched one holding at
+	 * most voiceprintAutoTagMinorMaxShare of the transcript's lines — the junk label diarizers
+	 * emit for crosstalk and stray utterances, which a reviewer always leaves blank; letting it
+	 * block would make auto-tag nearly unreachable. The share test needs real line counts, so a
+	 * transcript with no counts at all (enrichment failed) grants no exemption and falls back to
+	 * the modal. Deliberately a high bar otherwise — a single unmatched or below-floor non-mic
+	 * speaker above the minor share falls back to the modal, and at least one speaker must
+	 * actually match (a transcript of only negligible speakers is never silently marked tagged).
+	 * Confirmed re-review mappings are skipped by matchVoiceprints (never in `vp`) and excluded
+	 * from the mic-user and negligible branches, so a re-review never auto-tags.
+	 *
+	 * On a pass, negligible speakers' proposedName is cleared (mutating the mapping): the silent
+	 * path applies voiceprint-confident names only, so an unverified LLM guess for a junk speaker
+	 * must not ride along — applySpeakerTags skips empty names, leaving them untagged.
 	 */
 	private shouldAutoTag(mappings: ProposedSpeakerMapping[], vp: Map<string, VoiceprintMatch>): boolean {
 		if (!this.settings.voiceprintAutoTagSkipModal || mappings.length === 0) return false;
 		const micUser = this.settings.microphoneUser.trim().toLowerCase();
 		const floor = this.settings.voiceprintAutoTagFloor;
+		const totalLines = mappings.reduce((sum, m) => sum + m.lineCount, 0);
+		// share = 0 disables the exemption outright — without the explicit check a zero-line
+		// speaker would still satisfy `lineCount <= 0`.
+		const minorEnabled = this.settings.voiceprintAutoTagMinorMaxShare > 0 && totalLines > 0;
+		const minorMax = minorEnabled
+			? Math.floor(totalLines * this.settings.voiceprintAutoTagMinorMaxShare)
+			: -1;
 		const reasons: string[] = [];
+		const minors: ProposedSpeakerMapping[] = [];
+		let matched = 0;
 		let allPass = true;
 		for (const m of mappings) {
 			const match = vp.get(m.originalName);
@@ -1150,15 +1177,23 @@ export default class WhisperCalPlugin extends Plugin {
 			// The mic user never voiceprint-matches but is at least as certain — treat a speaker
 			// whose proposed name is the configured mic user as satisfied.
 			const byMicUser = micUser.length > 0 && !m.confirmed && m.proposedName.trim().toLowerCase() === micUser;
-			if (!byVoiceprint && !byMicUser) allPass = false;
+			const byMinor = !byVoiceprint && !byMicUser && !m.confirmed && m.lineCount <= minorMax;
+			if (byVoiceprint || byMicUser) matched++;
+			else if (byMinor) minors.push(m);
+			else allPass = false;
 			let detail: string;
 			if (byVoiceprint && match) detail = `voiceprint ${match.cosine.toFixed(3)}`;
 			else if (byMicUser) detail = "mic user";
+			else if (byMinor) detail = `minor speaker (${m.lineCount}/${totalLines} lines) — left untagged`;
 			else if (match) detail = `below floor ${match.cosine.toFixed(3)} < ${floor}`;
 			else detail = "no voiceprint match";
 			reasons.push(`${m.originalName} -> ${detail}`);
 		}
-		debug("voiceprint", `shouldAutoTag = ${allPass} (floor ${floor}): ${reasons.join("; ")}`);
+		if (matched === 0) allPass = false;
+		debug("voiceprint", `shouldAutoTag = ${allPass} (floor ${floor}, minor ≤ ${minorMax} lines): ${reasons.join("; ")}`);
+		if (allPass) {
+			for (const m of minors) m.proposedName = "";
+		}
 		return allPass;
 	}
 
@@ -1221,8 +1256,15 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 
 			await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
-			this.setCardStatus(notePath, `${decisions.length} speaker(s) auto-tagged by voiceprint`, "users-round", 5000, "done");
-			debug("voiceprint", `autoApplyVoiceprintTags: applied ${decisions.length} tag(s) for ${transcriptPath} without enrollment (drift guard)`);
+			// Minor speakers (crosstalk) pass the gate with an emptied name and stay untagged —
+			// count only the applied tags, and say so when any were skipped.
+			const tagged = decisions.filter(d => d.confirmedName).length;
+			const skipped = decisions.length - tagged;
+			const status = skipped > 0
+				? `${tagged} speaker(s) auto-tagged by voiceprint (${skipped} minor left untagged)`
+				: `${tagged} speaker(s) auto-tagged by voiceprint`;
+			this.setCardStatus(notePath, status, "users-round", 5000, "done");
+			debug("voiceprint", `autoApplyVoiceprintTags: applied ${tagged} tag(s) for ${transcriptPath} without enrollment (drift guard)${skipped > 0 ? `, ${skipped} minor speaker(s) left untagged` : ""}`);
 
 			// Auto-summarize if enabled, same as the modal apply path.
 			if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
@@ -1357,9 +1399,6 @@ export default class WhisperCalPlugin extends Plugin {
 							await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "summarized");
 						}
 						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done");
-						// Meeting is fully processed — collapse the card to hide its
-						// action buttons, mirroring a manual carat collapse.
-						this.collapseCalendarCard(notePath);
 					}
 				} else {
 					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -1711,16 +1750,6 @@ export default class WhisperCalPlugin extends Plugin {
 				} else {
 					view.rerenderCards();
 				}
-			}
-		}
-	}
-
-	/** Collapse a meeting's calendar card across all open calendar leaves. */
-	private collapseCalendarCard(notePath: string): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
-			const view = leaf.view;
-			if (view instanceof CalendarView) {
-				view.collapseCard(notePath);
 			}
 		}
 	}

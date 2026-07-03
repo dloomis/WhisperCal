@@ -1,4 +1,4 @@
-import {App, Notice, TFile, normalizePath, setIcon} from "obsidian";
+import {App, Menu, Notice, TFile, normalizePath, setIcon} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
@@ -16,7 +16,8 @@ import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmat
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
-import {hasCachedProposals} from "../services/SpeakerTagParser";
+import {hasCachedProposals, countCachedProposals} from "../services/SpeakerTagParser";
+import {exportMeetingBundle} from "../services/MeetingExporter";
 
 /**
  * Before starting a capture, consult the recording service's live /status. If it
@@ -80,19 +81,6 @@ export interface MeetingCardOpts {
 	onToggleMergeSelect?: (selected: boolean) => void;
 }
 
-/**
- * Apply expand/collapse state to a meeting card: updates the DOM class and
- * toggle aria-label, and persists the choice in cardUi. Shared by the carat
- * click handler and the auto-collapse-on-summary trigger.
- */
-export function setCardCollapsed(card: HTMLElement, eventId: string, cardUi: CardUiState, collapsed: boolean): void {
-	card.toggleClass("whisper-cal-card-collapsed", collapsed);
-	const toggle = card.querySelector<HTMLElement>(".whisper-cal-card-toggle");
-	if (toggle) toggle.ariaLabel = collapsed ? "Expand actions" : "Collapse actions";
-	if (collapsed) cardUi.collapse(eventId);
-	else cardUi.expand(eventId);
-}
-
 type PillState = "incomplete" | "complete" | "disabled" | "running";
 
 interface PillStates {
@@ -102,19 +90,12 @@ interface PillStates {
 	record: PillState;
 	speakers: PillState;
 	summary: PillState;
-	/** Cached LLM speaker proposals are waiting for review (accent dot on the pill). */
+	/** Cached speaker proposals await review — morphs the transcript pill into "Review speakers". */
 	speakersCandidatesReady: boolean;
 	transcriptFile: TFile | null;
 	transcriptPath: string;
 	pipelineState: string | undefined;
 }
-
-const stateLabels: Record<PillState, string> = {
-	incomplete: "",
-	complete: " (done)",
-	disabled: " (locked)",
-	running: " (running)",
-};
 
 function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLElement): void {
 	cardUi.stopDurationTimer(notePath);
@@ -132,19 +113,43 @@ function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLE
 	cardUi.startDurationTimer(notePath, tick, 1000);
 }
 
-function renderPill(container: HTMLElement, icon: string, label: string, state: PillState): HTMLButtonElement {
+type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
+
+/**
+ * Render one segment of the 4-bar status rail. Hovering the rail expands
+ * every segment into a labeled bar (the stage name), so no tooltip is needed.
+ * Clickable when an onClick is supplied — opening the stage's artifact — and
+ * disabled/quiet when the stage is pending and its artifact doesn't exist yet.
+ */
+function renderRailSeg(rail: HTMLElement, label: string, state: RailSegState, onClick?: () => void): void {
+	const seg = rail.createEl("button", {cls: "whisper-cal-rail-seg"});
+	seg.createSpan({cls: "whisper-cal-rail-seg-label", text: label});
+	if (state !== "pending") seg.addClass(`whisper-cal-rail-seg-${state}`);
+	if (onClick) seg.addEventListener("click", onClick);
+	else seg.disabled = true;
+}
+
+/**
+ * Build a smart action button: an icon + a full text label (+ an optional count
+ * chip). The pipeline's single "next verb" button that replaces the old pill row.
+ */
+function renderSmartBtn(
+	container: HTMLElement,
+	icon: string,
+	label: string,
+	opts: {cls?: string; count?: number; disabled?: boolean; ariaLabel: string},
+): HTMLButtonElement {
 	const btn = container.createEl("button", {
-		cls: `whisper-cal-pill whisper-cal-pill-${state}`,
-		attr: {"aria-label": label + stateLabels[state]},
+		cls: "whisper-cal-smart" + (opts.cls ? " " + opts.cls : ""),
+		attr: {"aria-label": opts.ariaLabel},
 	});
-	const iconEl = btn.createSpan({cls: "whisper-cal-pill-icon"});
-	setIcon(iconEl, icon);
-	if (state === "complete") {
-		btn.createSpan({cls: "whisper-cal-pill-badge"});
+	const ico = btn.createSpan({cls: "whisper-cal-smart-icon"});
+	setIcon(ico, icon);
+	btn.createSpan({cls: "whisper-cal-smart-label", text: label});
+	if (opts.count !== undefined && opts.count > 0) {
+		btn.createSpan({cls: "whisper-cal-smart-count", text: String(opts.count)});
 	}
-	if (state === "disabled" || state === "running") {
-		btn.disabled = true;
-	}
+	if (opts.disabled) btn.disabled = true;
 	return btn;
 }
 
@@ -372,6 +377,32 @@ async function healMissingSessionId(
 	console.debug(`[WhisperCal] Healed macwhisper_session_id on ${noteFile.path} from transcript`);
 }
 
+/**
+ * Open the meeting note, creating it first if it doesn't exist yet (unscheduled
+ * events prompt for a name). Shared by the card title link, the rail's note/
+ * summary segments, and the ⋯ menu's "Open note" item — the note-pill click
+ * handler from the old pill row.
+ */
+async function openOrCreateNote(opts: MeetingCardOpts): Promise<void> {
+	const {app, noteCreator, event, onNoteCreated} = opts;
+	if (noteCreator.noteExists(event)) {
+		await healMissingSessionId(app, noteCreator, event);
+		await noteCreator.openExistingNote(event);
+	} else {
+		const isUnscheduled = event.id.startsWith("unscheduled");
+		let targetEvent = event;
+		if (isUnscheduled) {
+			const name = await new NameInputModal(app, {
+				defaultValue: event.subject,
+			}).prompt();
+			if (!name) return;
+			targetEvent = {...event, subject: name};
+		}
+		await noteCreator.createNote(targetEvent);
+		if (onNoteCreated) onNoteCreated(event.id);
+	}
+}
+
 /** Compact, read-only card for all-day calendar events. */
 export function renderAllDayCard(
 	container: HTMLElement,
@@ -427,12 +458,20 @@ export function renderMeetingCard(
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
 
-	const {iconRow} = renderGutter(card, event, timezone, opts);
+	renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
-	// Subject
+	// Subject — the title itself opens (or creates) the meeting note. Static
+	// zone, so the label can't track note state; use a state-neutral phrasing.
 	const subjectRow = content.createDiv({cls: "whisper-cal-card-subject-row"});
-	subjectRow.createDiv({cls: "whisper-cal-card-subject", text: event.subject});
+	const subjectEl = subjectRow.createDiv({
+		cls: "whisper-cal-card-subject whisper-cal-card-subject-link",
+		text: event.subject,
+		attr: {"aria-label": "Open or create meeting note"},
+	});
+	subjectEl.addEventListener("click", () => {
+		void openOrCreateNote(opts);
+	});
 
 	renderMetadata(content, event);
 
@@ -463,28 +502,13 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Collapse toggle — appended to the gutter icon row, pushed right
-	// Restore expand/collapse state across refreshes via module-level set
-	const isExpanded = opts.cardUi.isExpanded(opts.event.id);
-	if (!isExpanded) card.addClass("whisper-cal-card-collapsed");
-	const toggle = iconRow.createDiv({
-		cls: "whisper-cal-card-toggle",
-		attr: {"aria-label": isExpanded ? "Collapse actions" : "Expand actions"},
-	});
-	setIcon(toggle, "chevron-right");
-	toggle.addEventListener("click", (e) => {
-		e.stopPropagation();
-		const willCollapse = !card.hasClass("whisper-cal-card-collapsed");
-		setCardCollapsed(card, opts.event.id, opts.cardUi, willCollapse);
-	});
-
-	// Top-level unscheduled placeholder — just a Note pill, no state lookup
+	// Top-level unscheduled placeholder — just a Create note button, no state lookup
 	if (event.id === "unscheduled") {
 		const actionsWrap = content.createDiv({cls: "whisper-cal-card-actions-wrap"});
 		const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
-		const notePill = renderPill(actions, "file-plus-2", "Meeting note", "incomplete");
-		notePill.addEventListener("click", () => {
-			notePill.disabled = true;
+		const createBtn = renderSmartBtn(actions, "file-plus-2", "Create note…", {ariaLabel: "Create meeting note"});
+		createBtn.addEventListener("click", () => {
+			createBtn.disabled = true;
 			const handleClick = async () => {
 				try {
 					const name = await new NameInputModal(app, {
@@ -494,7 +518,7 @@ export function renderMeetingCard(
 					await noteCreator.createNote({...event, subject: name});
 					if (onNoteCreated) onNoteCreated(event.id);
 				} finally {
-					notePill.disabled = false;
+					createBtn.disabled = false;
 				}
 			};
 			void handleClick();
@@ -554,9 +578,6 @@ function renderCardDynamic(
 	const states = computePillStates(app, noteCreator, event, opts.jobs, opts.cardUi);
 	const noteFile = noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : noteCreator.getNotePath(event);
-	const noteFm: Record<string, unknown> = noteFile
-		? (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {})
-		: {};
 
 	// Keep dataset paths in sync with actual note/transcript paths so that
 	// rerenderCardByPath lookups succeed even when the calendar event subject
@@ -591,130 +612,258 @@ function renderCardDynamic(
 		}
 	}
 
+	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
+	const llmOn = opts.llmEnabled !== false;
+	const {cardUi} = opts;
+
+	// Tear down the recording timer + status so a re-render can't resurrect them.
+	const clearRecordingUi = () => {
+		cardUi.stopDurationTimer(notePath);
+		cardUi.deleteStartTime(notePath);
+		cardUi.deleteStatus(notePath);
+		opts.onStatusUpdate?.();
+	};
+
+	/**
+	 * Start (or restart) an API recording. Shared by the smart Record button and
+	 * the ⋯ menu's Re-record… item — they differ only in the pre-step the caller
+	 * runs first (orphan check vs. nothing) and whether the existing transcript
+	 * frontmatter is reset. startApiRecording's setRecording() fires a re-render
+	 * that rebuilds this card into its Stop state, so there's no manual button
+	 * bookkeeping here. Returns true if capture started.
+	 */
+	const beginCapture = async (resetFrontmatter: boolean): Promise<boolean> => {
+		if (!recordingApiBaseUrl) return false;
+		// Defer to the recording service on whether the mic is free; confirm with
+		// the user if it's mid-recording. Abort cleanly on cancel.
+		if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) return false;
+		await noteCreator.ensureNote(event);
+		await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi});
+		// Reset only once capture is underway — a failed start leaves the note's
+		// existing transcript link intact.
+		if (resetFrontmatter) {
+			await removeFrontmatterKeys(app, notePath, [
+				FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
+			]);
+		}
+		watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi, onStopped: clearRecordingUi, onStatus: onStatusForCard(notePath, opts)});
+		return true;
+	};
+
+	// Reusable LLM-step launchers — the smart button and ⋯ menu share these.
+	const runTagSpeakers = (tf: TFile) => {
+		const transcriptFm = (app.metadataCache.getFileCache(tf)?.frontmatter ?? {}) as Record<string, unknown>;
+		// Single-source recordings (voice memos, single-speaker diarization) often
+		// capture more people than the mic suggests — the instructions modal
+		// carries the hint prompt. Empty Run proceeds normally; cancel aborts.
+		const singleSource = isSingleSourceTranscript(transcriptFm);
+		void (async () => {
+			const instructions = await new LlmInstructionsModal(app, {
+				title: "Tag speakers with instructions",
+				subtitle: singleSource
+					? "Single-mic recording — if more than one person spoke, say how many and who's who."
+					: event.subject,
+				...(singleSource
+					? {placeholder: "e.g. \"Phone call held up to the mic: I am the local speaker, the other voice is Joe Jackson.\""}
+					: {}),
+			}).prompt();
+			if (instructions === null) return; // cancelled
+			onTagSpeakers?.(tf, transcriptFm, notePath, instructions || undefined);
+		})();
+	};
+	const runSummarize = (regen: boolean) => {
+		void (async () => {
+			const instructions = await new LlmInstructionsModal(app, {
+				title: regen ? "Regenerate summary with instructions" : "Summarize with instructions",
+				subtitle: event.subject,
+			}).prompt();
+			if (instructions === null) return; // cancelled
+			onSummarize?.(notePath, regen, instructions || undefined);
+		})();
+	};
+
+	// ⋯ menu — the labeled home for secondary actions, so the action row never
+	// has to grow: new occasional actions become menu items. Opened by the ⋯
+	// mini and by right-clicking the card body.
+	const buildCardMenu = (): Menu => {
+		const menu = new Menu();
+		const tf = states.transcriptFile;
+
+		menu.addItem((item) => item
+			.setTitle(states.note === "complete" ? "Open note" : "Create note")
+			.setIcon(states.note === "complete" ? "notebook-pen" : "file-plus-2")
+			.onClick(() => { void openOrCreateNote(opts); }));
+
+		if (tf) {
+			menu.addItem((item) => item
+				.setTitle("Open transcript")
+				.setIcon("file-text")
+				.onClick(() => { void app.workspace.openLinkText(tf.path, "", false); }));
+		}
+
+		if (llmOn && tf && opts.onReviewSpeakerCandidates && states.speakersCandidatesReady) {
+			// Mirrors the smart Review speakers button so the menu stays a complete
+			// inventory of the card's actions.
+			menu.addItem((item) => item
+				.setTitle("Review speaker candidates")
+				.setIcon("user-round-check")
+				.onClick(() => { opts.onReviewSpeakerCandidates?.(notePath); }));
+		} else if (llmOn && tf && onTagSpeakers && states.speakers === "incomplete" && !states.speakersCandidatesReady) {
+			menu.addItem((item) => item
+				.setTitle("Tag speakers…")
+				.setIcon("user-round-plus")
+				.onClick(() => runTagSpeakers(tf)));
+		} else if (llmOn && tf && opts.onReviewSpeakerCandidates && states.speakers === "complete") {
+			// Edit the applied speaker tags — no LLM re-run; the modal opens
+			// pre-filled with the current assignments so a name can be corrected.
+			// Requires a resolvable transcript like its siblings — with a broken
+			// transcript link there are no tags to edit.
+			menu.addItem((item) => item
+				.setTitle("Edit speaker tags")
+				.setIcon("user-round-cog")
+				.onClick(() => { opts.onReviewSpeakerCandidates?.(notePath); }));
+		}
+
+		// Summarize/regenerate goes through the instructions modal (empty Run =
+		// plain run). Omitted while a summarize job runs.
+		if (llmOn && onSummarize && (states.summary === "incomplete" || states.summary === "complete")) {
+			const regen = states.summary === "complete";
+			menu.addItem((item) => item
+				.setTitle(regen ? "Regenerate summary…" : "Summarize meeting…")
+				.setIcon(regen ? "refresh-cw" : "sparkles")
+				.onClick(() => runSummarize(regen)));
+		}
+
+		// Research — independent of the transcript pipeline, re-runnable, and
+		// auto-creates the parent note if it's missing.
+		if (llmOn && onResearch) {
+			if (states.research === "running") {
+				menu.addItem((item) => item
+					.setTitle("Researching…")
+					.setIcon("book-open")
+					.setDisabled(true));
+			} else {
+				menu.addItem((item) => item
+					.setTitle("Research meeting…")
+					.setIcon("book-open")
+					.onClick(() => {
+						void (async () => {
+							const hadNote = noteFile !== null;
+							const path = await noteCreator.ensureNote(event);
+							if (!hadNote && onNoteCreated) onNoteCreated(event.id);
+							onResearch(path);
+						})();
+					}));
+			}
+		}
+
+		// Re-record… — moved here off the action row; only when a transcript
+		// exists and the recording service is the active source. The record
+		// check closes a transient: right after a re-record starts, the old
+		// transcript link can still be in frontmatter while capture is live.
+		if (states.transcript === "complete" && states.record !== "running" && recordingApiBaseUrl) {
+			menu.addItem((item) => item
+				.setTitle("Re-record…")
+				.setIcon("mic")
+				.onClick(() => {
+					void (async () => {
+						const choice = await new ReRecordConfirmModal(app, {
+							pipelineState: states.pipelineState,
+						}).prompt();
+						if (choice === "view") {
+							const tf2 = states.transcriptFile;
+							if (tf2) void app.workspace.openLinkText(tf2.path, "", false);
+						} else if (choice === "re-record") {
+							try {
+								await beginCapture(true);
+							} catch (err) {
+								new Notice(err instanceof Error ? err.message : "Failed to start recording");
+							}
+						}
+					})();
+				}));
+		}
+
+		// Export needs the meeting's artifacts on disk — offered once a note exists.
+		if (states.note === "complete") {
+			menu.addSeparator();
+			menu.addItem((item) => item
+				.setTitle("Export meeting bundle…")
+				.setIcon("folder-output")
+				.onClick(() => { void exportMeetingBundle(app, notePath); }));
+		}
+
+		return menu;
+	};
+
+	// Status rail — four segments (Note · Transcript · Speakers · Summary).
+	// Rendered directly in the dynamic zone (before the collapsible actions) so
+	// it stays visible when the card is collapsed. Each segment opens its stage's
+	// artifact on click; hovering the rail expands the segments into labeled bars.
+	const rail = zone.createDiv({cls: "whisper-cal-rail"});
+	const openNote = states.note === "complete" ? () => { void openOrCreateNote(opts); } : undefined;
+	const openTranscript = states.transcriptFile
+		? () => { const tf = states.transcriptFile; if (tf) void app.workspace.openLinkText(tf.path, "", false); }
+		: undefined;
+
+	renderRailSeg(rail, "Note", states.note === "complete" ? "done" : "pending", openNote);
+
+	let transcriptSeg: RailSegState;
+	if (states.record === "running") transcriptSeg = "rec";
+	else if (states.transcript === "complete") transcriptSeg = "done";
+	else transcriptSeg = "pending";
+	renderRailSeg(rail, "Transcript", transcriptSeg, openTranscript);
+
+	let speakersSeg: RailSegState;
+	if (states.speakersCandidatesReady) speakersSeg = "attention";
+	else if (states.speakers === "running") speakersSeg = "running";
+	else if (states.speakers === "complete") speakersSeg = "done";
+	else speakersSeg = "pending";
+	renderRailSeg(rail, "Speakers", speakersSeg, openTranscript);
+
+	let summarySeg: RailSegState;
+	if (states.summary === "running") summarySeg = "running";
+	else if (states.summary === "complete") summarySeg = "done";
+	else summarySeg = "pending";
+	renderRailSeg(rail, "Summary", summarySeg, openNote);
+
 	// Actions row (wrapped for collapse animation)
 	const actionsWrap = zone.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Record pill (REST API recording — first in the row)
-	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
-	if (recordingApiBaseUrl) {
-		const recordPill = renderPill(actions, "mic", "Record", states.record);
-		recordPill.addClass("whisper-cal-pill-mic");
-
-		const addRecDot = () => {
-			if (!recordPill.querySelector(".whisper-cal-pill-rec-dot")) {
-				recordPill.createSpan({cls: "whisper-cal-pill-rec-dot"});
+	// Smart action button — always the pipeline's next verb; absent when the
+	// pipeline is complete. Priority order per the state machine.
+	if (states.record === "running") {
+		// 1 — recording in progress: red Stop button with a live timer.
+		if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
+		const stopBtn = actions.createEl("button", {
+			cls: "whisper-cal-smart whisper-cal-smart-stop",
+			attr: {"aria-label": "Stop recording"},
+		});
+		const ico = stopBtn.createSpan({cls: "whisper-cal-smart-icon"});
+		setIcon(ico, "square");
+		stopBtn.createSpan({cls: "whisper-cal-smart-label", text: "Stop · "});
+		// Dedicated elapsed span — startDurationTimer writes the counter here.
+		const elapsedEl = stopBtn.createSpan({cls: "whisper-cal-smart-elapsed"});
+		startDurationTimer(cardUi, notePath, elapsedEl);
+		stopBtn.addEventListener("click", () => {
+			// stopApiRecording deletes the recording entry synchronously (before its
+			// first await) → re-render to the Record button; clearRecordingUi then
+			// tears down the timer/status so the final render can't resurrect them.
+			stopBtn.disabled = true;
+			if (recordingApiBaseUrl) {
+				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi, onStatus: onStatusForCard(notePath, opts)});
 			}
-			recordPill.addClass("whisper-cal-pill-recording");
-		};
-		const removeRecDot = () => {
-			recordPill.querySelector(".whisper-cal-pill-rec-dot")?.remove();
-			recordPill.removeClass("whisper-cal-pill-recording");
-		};
-
-		const {cardUi} = opts;
-		const setRecording = () => {
-			if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
-			const start = cardUi.getStartTime(notePath)!;
-			const elapsed = formatElapsed((Date.now() - start) / 1000);
-			cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
-			opts.onStatusUpdate?.();
-		};
-		const clearRecording = () => {
-			cardUi.stopDurationTimer(notePath);
-			cardUi.deleteStartTime(notePath);
-			cardUi.deleteStatus(notePath);
-			opts.onStatusUpdate?.();
-		};
-
-		if (states.record === "running") {
-			if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
-			const start = cardUi.getStartTime(notePath)!;
-			const elapsed = formatElapsed((Date.now() - start) / 1000);
-			cardUi.setStatus(notePath, {message: elapsed, variant: "recording"});
-			addRecDot();
-		}
-		if (states.record === "complete") {
-			let reRecording = false;
-			recordPill.addEventListener("click", () => {
-				if (reRecording) {
-					// Stop the re-recording. stopApiRecording deletes the recording
-					// entry first (synchronously, before its first await), which fires
-					// the recordings-change subscriber → re-render. clearRecording runs
-					// after so the final render sees fully torn-down state and can't
-					// resurrect the recording status/timer.
-					recordPill.disabled = true;
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
-					clearRecording();
-					removeRecDot();
-					return;
-				}
+			clearRecordingUi();
+		});
+	} else if (states.transcript !== "complete") {
+		// 2 — no transcript yet: Record (API) or Link recording (MacWhisper).
+		if (recordingApiBaseUrl) {
+			const recordBtn = renderSmartBtn(actions, "mic", "Record", {ariaLabel: "Record"});
+			recordBtn.addEventListener("click", () => {
+				recordBtn.disabled = true;
 				void (async () => {
-					const choice = await new ReRecordConfirmModal(app, {
-						pipelineState: states.pipelineState,
-					}).prompt();
-					if (choice === "view") {
-						const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-						if (tf) void app.workspace.openLinkText(tf.path, "", false);
-					} else if (choice === "re-record") {
-						recordPill.disabled = true;
-						try {
-							// Defer to the recording service on whether the mic is free;
-							// confirm with the user if it's mid-recording. Abort cleanly on cancel.
-							if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) {
-								recordPill.disabled = false;
-								return;
-							}
-							// Ensure note exists, then start recording. startApiRecording
-							// runs its readiness checks before any state mutates, so reset the
-							// transcript frontmatter only once the capture is underway — a
-							// failed start leaves the note's existing transcript link intact.
-							await noteCreator.ensureNote(event);
-							await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
-							await removeFrontmatterKeys(app, notePath, [
-								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
-							]);
-							reRecording = true;
-							setRecording();
-							addRecDot();
-							recordPill.disabled = false;
-							watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
-								reRecording = false;
-								recordPill.disabled = true;
-								removeRecDot();
-							}, onStatus: onStatusForCard(notePath, opts)});
-						} catch (err) {
-							new Notice(err instanceof Error ? err.message : "Failed to start recording");
-							recordPill.disabled = false;
-						}
-					}
-				})();
-			});
-		} else if (states.record === "running") {
-			recordPill.disabled = false; // override — running pill is clickable to stop
-			recordPill.addEventListener("click", () => {
-				recordPill.disabled = true;
-				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
-				clearRecording();
-				removeRecDot();
-			});
-		} else if (states.record === "incomplete") {
-			let recording = false;
-			recordPill.addEventListener("click", () => {
-				if (recording) {
-					// Stop. stopApiRecording deletes the recording entry first
-					// (synchronously, before its first await) so the final re-render
-					// from clearRecording sees torn-down state — see the re-record
-					// stop path above.
-					recordPill.disabled = true;
-					void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStatus: onStatusForCard(notePath, opts)});
-					clearRecording();
-					removeRecDot();
-					return;
-				}
-				// Start
-				recordPill.disabled = true;
-				const handleRecord = async () => {
+					let started = false;
 					try {
 						// Detect an orphaned transcript file on disk that the note's
 						// frontmatter doesn't link to (e.g. a prior recording where the
@@ -733,7 +882,6 @@ function renderCardDynamic(
 								linked: false,
 							}).prompt();
 							if (choice === "view") {
-								recordPill.disabled = false;
 								// Heal the broken linkage so the note's pipeline state
 								// reflects reality before we navigate away. Mirrors what
 								// waitAndLink would have written had it not silently failed.
@@ -750,57 +898,28 @@ function renderCardDynamic(
 								void app.workspace.openLinkText(orphanedTranscript.path, "", false);
 								return;
 							}
-							if (choice !== "re-record") {
-								recordPill.disabled = false;
-								return;
-							}
+							if (choice !== "re-record") return;
 							// Defensive: clear any stale pipeline frontmatter that may
 							// have been partially written before the link step failed.
 							await removeFrontmatterKeys(app, notePath, [
 								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 							]);
 						}
-						// Defer to the recording service on whether the mic is free;
-						// confirm with the user if it's mid-recording. Abort cleanly on cancel.
-						if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) {
-							recordPill.disabled = false;
-							return;
-						}
-						await noteCreator.ensureNote(event);
-						await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi});
-						recording = true;
-						recordPill.disabled = false;
-						setRecording();
-						addRecDot();
-						watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi: opts.cardUi, onStopped: () => {
-							recording = false;
-							recordPill.disabled = true;
-							removeRecDot();
-						}, onStatus: onStatusForCard(notePath, opts)});
+						started = await beginCapture(false);
 					} catch (err) {
 						new Notice(err instanceof Error ? err.message : "Failed to start recording");
-						recordPill.disabled = false;
+					} finally {
+						// A successful start re-renders the card (this button is gone);
+						// on any non-start path, re-enable it.
+						if (!started) recordBtn.disabled = false;
 					}
-				};
-				void handleRecord();
+				})();
 			});
-		}
-	}
-
-	// Link-recording pill (MacWhisper — hidden when recording API is enabled).
-	// Occupies the record slot: it attaches a recording to the note.
-	if (!recordingApiBaseUrl) {
-		const linkPill = renderPill(actions, "mic", "Link recording", states.transcript);
-		linkPill.addClass("whisper-cal-pill-mic");
-		if (states.transcript !== "disabled") {
-			linkPill.addEventListener("click", () => {
-				if (states.transcript === "complete") {
-					const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-					if (tf) void app.workspace.openLinkText(tf.path, "", false);
-					return;
-				}
-				linkPill.disabled = true;
-				const handleMic = async () => {
+		} else {
+			const linkBtn = renderSmartBtn(actions, "mic", "Link recording", {ariaLabel: "Link recording"});
+			linkBtn.addEventListener("click", () => {
+				linkBtn.disabled = true;
+				void (async () => {
 					let linked = false;
 					try {
 						await noteCreator.ensureNote(event);
@@ -818,209 +937,89 @@ function renderCardDynamic(
 							onStatus: onStatusForCard(notePath, opts),
 						});
 					} finally {
-						if (!linked) linkPill.disabled = false;
+						if (!linked) linkBtn.disabled = false;
 					}
-				};
-				void handleMic();
+				})();
 			});
 		}
+	} else if (states.speakers === "running") {
+		// 3 — speaker-tag job running.
+		renderSmartBtn(actions, "users-round", "Tagging speakers…", {cls: "whisper-cal-smart-busy", disabled: true, ariaLabel: "Tagging speakers"});
+	} else if (states.summary === "running") {
+		// 4 — summarize job running.
+		renderSmartBtn(actions, "sparkles", "Summarizing…", {cls: "whisper-cal-smart-busy", disabled: true, ariaLabel: "Summarizing"});
+	} else if (llmOn && states.speakersCandidatesReady && opts.onReviewSpeakerCandidates) {
+		// 5 — cached speaker candidates await review.
+		const count = countCachedProposals(app, states.transcriptPath);
+		const reviewBtn = renderSmartBtn(actions, "user-round-check", "Review speakers", {cls: "whisper-cal-smart-review", count, ariaLabel: "Review speakers"});
+		reviewBtn.addEventListener("click", () => { opts.onReviewSpeakerCandidates?.(notePath); });
+	} else if (llmOn && !states.speakersCandidatesReady && states.speakers === "incomplete" && onTagSpeakers && states.transcriptFile) {
+		// 6 — speakers incomplete: manual Tag speakers step.
+		const tf = states.transcriptFile;
+		const tagBtn = renderSmartBtn(actions, "user-round-plus", "Tag speakers…", {ariaLabel: "Tag speakers"});
+		tagBtn.addEventListener("click", () => runTagSpeakers(tf));
+	} else if (llmOn && states.speakers === "complete" && states.summary === "incomplete" && onSummarize) {
+		// 7 — speakers done, summary pending: manual Summarize step.
+		const sumBtn = renderSmartBtn(actions, "sparkles", "Summarize meeting…", {ariaLabel: "Summarize meeting"});
+		sumBtn.addEventListener("click", () => runSummarize(false));
 	}
+	// 8 — pipeline complete (or LLM off with a linked transcript): no button.
 
-	// Spacer + delimiter separating the recording pill from the rest of the
-	// row, so the mic is harder to hit by accident.
-	actions.createDiv({cls: "whisper-cal-pill-divider"});
-
-	// Meeting note pill — notebook-pen (vs generic file-text) keeps it visually
-	// distinct from the Transcript pill.
-	// The accent "complete" border means the meeting is fully summarized —
-	// an existing-but-unsummarized note is still in progress, so it keeps
-	// the neutral border.
-	const noteIcon = states.note === "complete" ? "notebook-pen" : "file-plus-2";
-	const notePillState: PillState =
-		states.note === "complete" && states.summary === "complete" ? "complete" : "incomplete";
-	const noteWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-	const notePill = renderPill(noteWrap, noteIcon, "Meeting note", notePillState);
-	// Pulsing accent border while summarization runs (pill stays clickable)
-	if (states.summary === "running") notePill.addClass("whisper-cal-pill-busy");
-	notePill.addEventListener("click", () => {
-		notePill.disabled = true;
-		const handleClick = async () => {
-			try {
-				if (noteCreator.noteExists(event)) {
-					await healMissingSessionId(app, noteCreator, event);
-					await noteCreator.openExistingNote(event);
-				} else {
-					const isUnscheduled = event.id.startsWith("unscheduled");
-					let targetEvent = event;
-					if (isUnscheduled) {
-						const name = await new NameInputModal(app, {
-							defaultValue: event.subject,
-						}).prompt();
-						if (!name) return;
-						targetEvent = {...event, subject: name};
-					}
-					await noteCreator.createNote(targetEvent);
-					if (onNoteCreated) onNoteCreated(event.id);
-				}
-			} finally {
-				notePill.disabled = false;
-			}
-		};
-		void handleClick();
+	// ⋯ mini — opens the secondary-actions menu; also bound to right-click on
+	// the card body. Always available (its items adapt to state, and Open note/
+	// Research create the note themselves). Goes quiet (borderless) once the
+	// pipeline is complete so the card reads as done.
+	const quiet = states.summary === "complete" || (!llmOn && states.transcript === "complete");
+	const moreMini = actions.createEl("button", {
+		cls: "whisper-cal-mini" + (quiet ? " whisper-cal-mini-quiet" : ""),
+		attr: {"aria-label": "More actions"},
+	});
+	const moreIco = moreMini.createSpan({cls: "whisper-cal-mini-icon"});
+	setIcon(moreIco, "ellipsis");
+	moreMini.addEventListener("click", () => {
+		const rect = moreMini.getBoundingClientRect();
+		buildCardMenu().showAtPosition({x: rect.left, y: rect.bottom + 4});
 	});
 
-	// Summary corner badge — replaces the old Summary pill (a completed
-	// summary's pill was just a second "open note" button). Ready state is a
-	// visible call-to-action; complete state is hover-revealed for the rare
-	// regenerate. Clicks go through the instructions modal (empty Run = plain
-	// run) so per-run custom instructions keep their entry point.
-	if (opts.llmEnabled !== false && onSummarize && states.summary !== "disabled") {
-		const badge = noteWrap.createEl("button", {cls: "whisper-cal-pill-corner-badge"});
-		// All corner badges use a "+" — the tooltip carries the meaning.
-		setIcon(badge, "plus");
-		if (states.summary === "running") {
-			badge.addClass("is-running");
-			badge.setAttribute("aria-label", "Summarizing…");
-			badge.disabled = true;
-		} else {
-			const regen = states.summary === "complete";
-			if (!regen) badge.addClass("is-ready");
-			badge.setAttribute("aria-label", regen ? "Re-run summarization with optional instructions" : "Summarize meeting");
-			badge.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void (async () => {
-					const instructions = await new LlmInstructionsModal(app, {
-						title: regen ? "Regenerate summary with instructions" : "Summarize with instructions",
-						subtitle: event.subject,
-					}).prompt();
-					if (instructions === null) return; // cancelled
-					onSummarize(notePath, regen, instructions || undefined);
-				})();
-			});
-		}
-	}
+	// Right-click anywhere on the card opens the same menu. Links keep
+	// Obsidian's own context menu (instanceof Element, not HTMLElement —
+	// setIcon targets inside a link are SVG), and an active text selection
+	// keeps the native copy menu. Property assignment rather than
+	// addEventListener — renderCardDynamic re-runs on every card update
+	// and must replace the handler, not stack another.
+	cardEl.oncontextmenu = (e) => {
+		if (e.target instanceof Element && e.target.closest("a")) return;
+		const selection = window.getSelection();
+		if (selection && !selection.isCollapsed) return;
+		e.preventDefault();
+		buildCardMenu().showAtMouseEvent(e);
+	};
 
-	// Transcript pill — opens the transcript file; disabled until one exists.
-	// Speaker tagging lives in the corner badge (mirroring the Meeting note pill's
-	// summary badge), so the transcript stays reachable while tagging runs.
-	{
-		const transcriptWrap = actions.createDiv({cls: "whisper-cal-pill-wrap"});
-		const transcriptPillState: PillState = states.speakers === "disabled" ? "disabled"
-			: states.speakers === "complete" ? "complete"
-			: "incomplete";
-		const transcriptPill = renderPill(transcriptWrap, "users-round", "Transcript", transcriptPillState);
-		// Pulsing accent border while tagging runs (pill stays clickable)
-		if (states.speakers === "running") transcriptPill.addClass("whisper-cal-pill-busy");
-		if (transcriptPillState !== "disabled") {
-			transcriptPill.addEventListener("click", () => {
-				const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-				if (tf) void app.workspace.openLinkText(tf.path, "", false);
-			});
-		}
-
-		// Speakers corner badge: visible call-to-action while tagging is
-		// pending (dot overlay when cached candidates await review), pulsing
-		// while running, hover-revealed "+" re-run once tags are applied.
-		if (opts.llmEnabled !== false && states.speakers !== "disabled") {
-			const badge = transcriptWrap.createEl("button", {cls: "whisper-cal-pill-corner-badge"});
-			// All corner badges use a "+" — the tooltip carries the meaning.
-			setIcon(badge, "plus");
-			if (states.speakers === "running") {
-				badge.addClass("is-running");
-				badge.setAttribute("aria-label", "Post-processing transcript…");
-				badge.disabled = true;
-			} else if (states.speakers === "complete") {
-				// Review/edit the applied speaker tags (hover-revealed). No LLM re-run —
-				// opens the modal pre-filled with the current assignments so you can correct
-				// a name; Apply re-labels the body and re-writes the tags.
-				badge.setAttribute("aria-label", "Review and edit speaker tags");
-				badge.addEventListener("click", (e) => {
-					e.stopPropagation();
-					opts.onReviewSpeakerCandidates?.(notePath);
-				});
-			} else if (states.speakersCandidatesReady) {
-				// Unapproved candidates cached: green badge, click resumes the
-				// review directly. Re-run becomes available after approval.
-				badge.addClass("is-ready");
-				badge.addClass("has-candidates");
-				badge.setAttribute("aria-label", "Review speaker candidates");
-				badge.addEventListener("click", (e) => {
-					e.stopPropagation();
-					opts.onReviewSpeakerCandidates?.(notePath);
-				});
-			} else if (onTagSpeakers) {
-				badge.addClass("is-ready");
-				badge.setAttribute("aria-label", "Tag speakers");
-				badge.addEventListener("click", (e) => {
-					e.stopPropagation();
-					const tf = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-					if (!tf) return;
-					const transcriptFm = (app.metadataCache.getFileCache(tf)?.frontmatter ?? {}) as Record<string, unknown>;
-					// Single-source recordings (voice memos, single-speaker
-					// diarization) often capture more people than the mic
-					// suggests — the instructions modal carries the hint prompt.
-					// Empty Run proceeds normally; cancel aborts.
-					const singleSource = isSingleSourceTranscript(transcriptFm);
-					void (async () => {
-						const instructions = await new LlmInstructionsModal(app, {
-							title: "Tag speakers with instructions",
-							subtitle: singleSource
-								? "Single-mic recording — if more than one person spoke, say how many and who's who."
-								: event.subject,
-							...(singleSource
-								? {placeholder: "e.g. \"Phone call held up to the mic: I am the local speaker, the other voice is Joe Jackson.\""}
-								: {}),
-						}).prompt();
-						if (instructions === null) return; // cancelled
-						onTagSpeakers(tf, transcriptFm, notePath, instructions || undefined);
-					})();
-				});
-			}
-		}
-	}
-
-	// Research pill (LLM feature, independent of pipeline workflow)
-	if (opts.llmEnabled !== false) {
-		const researchPill = renderPill(actions, "book-open", "Research", states.research);
-		// Research is re-runnable: clicking re-opens the research flow whether or not a
-		// prior run finished. Series prep in particular expects multiple reruns, so the
-		// "complete" state must stay a live re-run button (the checkmark is just a
-		// "done once" marker) — not a dead-end that only opens the note. Opening the
-		// note is already covered by the note pill. A "running" pill is disabled by
-		// renderPill, so it's excluded here.
-		if (onResearch && (states.research === "incomplete" || states.research === "complete")) {
-			researchPill.addEventListener("click", () => {
-				researchPill.disabled = true;
-				void (async () => {
-					try {
-						// Auto-create the parent note if it's missing, then research.
-						const hadNote = noteFile !== null;
-						const path = await noteCreator.ensureNote(event);
-						if (!hadNote && onNoteCreated) onNoteCreated(event.id);
-						onResearch(path);
-					} finally {
-						researchPill.disabled = false;
-					}
-				})();
-			});
-		}
-	}
-
-	// Unified card status — renders from CardUiState
+	// Unified card status — renders from CardUiState. The recording variant is
+	// skipped: while recording, the live timer lives inside the Stop button, not
+	// a status line. Every other variant (transcribing progress, auto-tag
+	// notices, done/warning) still renders here.
 	const cs = opts.cardUi.getStatus(notePath);
-	if (cs) {
+	if (cs && cs.variant !== "recording") {
 		const variant = cs.variant ?? "progress";
 		const statusEl = zone.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
 		if (cs.icon) {
 			const ico = statusEl.createSpan({cls: "whisper-cal-card-status-icon"});
 			setIcon(ico, cs.icon);
 		}
-		const textSpan = statusEl.createSpan({text: cs.message});
-		// Live duration counter — updates the text span directly every second
-		if (variant === "recording" && opts.cardUi.getStartTime(notePath) !== undefined) {
-			startDurationTimer(opts.cardUi, notePath, textSpan);
-		}
+		statusEl.createSpan({text: cs.message});
 	}
+
+	// Cards rest collapsed and expand on hover — but pin one open while
+	// anything is happening on it (recording, LLM jobs, a status line,
+	// candidates awaiting review) so live activity is never hidden.
+	const pinned = states.record === "running"
+		|| states.speakers === "running"
+		|| states.summary === "running"
+		|| states.research === "running"
+		|| states.speakersCandidatesReady
+		|| cs !== undefined;
+	cardEl.toggleClass("whisper-cal-card-active", pinned);
 }
 
 /** Update only the dynamic parts of an existing meeting card in-place. */

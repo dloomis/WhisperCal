@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile, TFolder, normalizePath} from "obsidian";
 import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} from "./UnlinkedRecordingProvider";
 import type {WhisperCalSettings} from "../settings";
-import {resolveWikiLink} from "../utils/vault";
+import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "../utils/vault";
 import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
 import {parseDurationSeconds} from "../utils/time";
@@ -66,6 +66,11 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			return false;
 		}
 
+		// Capture the transcript's ORIGINAL frontmatter before enrichment rewrites it.
+		// The `recording:`/`voiceprints:` pointers Tome wrote here name the sibling audio
+		// and sidecar after the original recording; we need them to follow the rename below.
+		const originalFm = (this.app.metadataCache.getFileCache(freshFile)?.frontmatter ?? {}) as Record<string, unknown>;
+
 		// Read meeting note frontmatter for wiki-link invitees + calendar context
 		const noteFile = opts.app.vault.getAbstractFileByPath(opts.notePath);
 		const noteFm = (noteFile instanceof TFile)
@@ -110,14 +115,26 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			return false;
 		}
 
-		// 2. Rename transcript to match linked naming convention: "{noteBasename} - Transcript.md"
-		const expectedName = `${noteBasename} - Transcript.md`;
-		const expectedPath = normalizePath(`${opts.transcriptFolderPath}/${expectedName}`);
+		// 2. Rename transcript to match linked naming convention: "{noteBasename} - Transcript.md",
+		//    bringing its sibling audio (.m4a) and voiceprint sidecar (.voiceprints.json) along so
+		//    all three keep the same basename. Both companions are resolved by the transcript's
+		//    basename as a fallback (resolveTranscriptAudio / loadSidecar), so leaving them behind
+		//    orphans click-to-play audio and breaks acoustic enrollment.
+		const expectedBasename = `${noteBasename} - Transcript`;
+		const expectedPath = normalizePath(`${opts.transcriptFolderPath}/${expectedBasename}.md`);
 		let transcriptFile: TFile = freshFile;
 		if (freshFile.path !== expectedPath) {
+			// Resolve companions while the transcript still carries its original name.
+			const audioFile = resolveTranscriptAudio(this.app, freshFile, originalFm);
+			const sidecarPath = await this.resolveSidecarPath(freshFile, originalFm);
+
 			await this.app.fileManager.renameFile(freshFile, expectedPath);
 			const renamed = this.app.vault.getAbstractFileByPath(expectedPath);
 			if (renamed instanceof TFile) transcriptFile = renamed;
+
+			// Best-effort: a missing or unrenameable companion never fails the link.
+			await this.renameAudio(audioFile, expectedBasename);
+			await this.renameSidecar(transcriptFile, sidecarPath, expectedBasename);
 		}
 
 		// 3. Link transcript on the meeting note side
@@ -131,6 +148,86 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 
 	isNoteLinked(fm: Record<string, unknown>): boolean {
 		return !!fm[FM.TRANSCRIPT];
+	}
+
+	/**
+	 * Locate the transcript's voiceprint sidecar on disk, mirroring loadSidecar's
+	 * resolution order: the `voiceprints:` pointer (wiki-link, then bare filename
+	 * relative to the transcript's folder / vault root), then the sibling convention
+	 * `<transcript-basename>.voiceprints.json`. Returns the first path that exists.
+	 */
+	private async resolveSidecarPath(file: TFile, fm: Record<string, unknown>): Promise<string | null> {
+		const candidates: string[] = [];
+		const linked = resolveWikiLink(this.app, fm, FM.VOICEPRINTS, file.path);
+		if (linked) candidates.push(linked.path);
+		const raw = fm[FM.VOICEPRINTS];
+		if (typeof raw === "string" && raw.trim()) {
+			const name = stripWikiLink(raw);
+			const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+			if (dir) candidates.push(normalizePath(`${dir}/${name}`));
+			candidates.push(name);
+		}
+		candidates.push(file.path.replace(/\.md$/, ".voiceprints.json"));
+		for (const path of candidates) {
+			try {
+				if (await this.app.vault.adapter.exists(path)) return path;
+			} catch { /* try the next candidate */ }
+		}
+		return null;
+	}
+
+	/**
+	 * Rename the audio recording to `<newBasename>.<ext>`, keeping it in its own folder
+	 * (Tome may store audio outside the transcript folder). renameFile updates the
+	 * transcript's `recording:` wiki-link automatically. Best-effort — never throws.
+	 */
+	private async renameAudio(audioFile: TFile | null, newBasename: string): Promise<void> {
+		if (!audioFile) return;
+		const dir = audioFile.path.includes("/") ? audioFile.path.slice(0, audioFile.path.lastIndexOf("/")) : "";
+		const target = normalizePath(dir ? `${dir}/${newBasename}.${audioFile.extension}` : `${newBasename}.${audioFile.extension}`);
+		if (audioFile.path === target) return;
+		try {
+			await this.app.fileManager.renameFile(audioFile, target);
+		} catch (err) {
+			console.error(`[WhisperCal] Failed to rename recording ${audioFile.path} -> ${target} (transcript linked, audio left behind):`, err);
+		}
+	}
+
+	/**
+	 * Rename the voiceprint sidecar to `<newBasename>.voiceprints.json` (kept in its own
+	 * folder) and repoint the transcript's `voiceprints:` frontmatter at it. The pointer
+	 * is a `.json` path Obsidian's link index doesn't track, so renameFile can't
+	 * update it — we rewrite it here. Best-effort — never throws.
+	 */
+	private async renameSidecar(transcriptFile: TFile, sidecarPath: string | null, newBasename: string): Promise<void> {
+		if (!sidecarPath) return;
+		const dir = sidecarPath.includes("/") ? sidecarPath.slice(0, sidecarPath.lastIndexOf("/")) : "";
+		const targetName = `${newBasename}.voiceprints.json`;
+		const target = normalizePath(dir ? `${dir}/${targetName}` : targetName);
+		if (sidecarPath === target) return;
+		try {
+			const existing = this.app.vault.getAbstractFileByPath(sidecarPath);
+			if (existing instanceof TFile) {
+				await this.app.fileManager.renameFile(existing, target);
+			} else {
+				await this.app.vault.adapter.rename(sidecarPath, target);
+			}
+		} catch (err) {
+			console.error(`[WhisperCal] Failed to rename voiceprint sidecar ${sidecarPath} -> ${target}:`, err);
+			return;
+		}
+		try {
+			await this.app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
+				// Vault-relative path, not the bare filename: loadSidecar resolves a
+				// bare name only against the transcript's folder and vault root, so a
+				// sidecar kept in another folder (Tome stores it next to the audio)
+				// would become unreachable. The full path always resolves via the
+				// vault-root candidate.
+				fm[FM.VOICEPRINTS] = target;
+			});
+		} catch (err) {
+			console.error(`[WhisperCal] Renamed voiceprint sidecar but failed to update pointer on ${transcriptFile.path}:`, err);
+		}
 	}
 
 	private toUnlinked(file: TFile, fm: Record<string, unknown>): UnlinkedRecording {

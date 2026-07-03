@@ -44,7 +44,9 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Navigation](#navigation)
   - [Status Indicator](#status-indicator)
   - [Meeting Cards](#meeting-cards)
-  - [Collapsible Cards](#collapsible-cards)
+  - [The Card Actions Menu](#the-card-actions-menu)
+  - [Exporting a Meeting Bundle](#exporting-a-meeting-bundle)
+  - [Hover-Expanding Cards](#hover-expanding-cards)
   - [All-Day Events](#all-day-events)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Merging Meetings](#merging-meetings)
@@ -54,7 +56,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Gutter Icons](#gutter-icons)
   - [Gutter Background Colors](#gutter-background-colors)
   - [Category Bar](#category-bar)
-  - [Button Highlights](#button-highlights)
+  - [The Status Rail](#the-status-rail)
   - [Non-Accepted Meeting Indicator](#non-accepted-meeting-indicator)
   - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
@@ -107,7 +109,8 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Transcript post-processing — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An optional LLM pass (enabled by setting a post-processing prompt) fixes transcription and diarization errors in the transcript itself and proposes names for speakers voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
 - **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals. Optionally **auto-tag** recordings where every speaker is a high-confidence match — these silent auto-tags skip the modal but never write back to a library, guarding against voiceprint drift.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
-- **Per-run custom instructions** — The pill corner badges (speaker tagging on the Transcript pill, summarization on the Meeting note pill) open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
+- **Per-run custom instructions** — The card's smart action button (and the matching ⋯ menu items) for speaker tagging and summarization open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
+- **Meeting export** — Bundle a meeting's note, transcript, and source audio into a folder outside the vault (⋯ menu > Export meeting bundle), ready to hand to someone who doesn't use Obsidian.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -135,7 +138,7 @@ MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and 
 
 ## Prerequisites
 
-- **Obsidian** 1.4.10 or later (desktop only — macOS or Windows)
+- **Obsidian** 1.6.0 or later (desktop only — macOS or Windows)
 - A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
 - For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
@@ -282,20 +285,51 @@ Each calendar event is displayed as a two-column card:
 
 - **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
 - **Content** (right):
-  - **Subject** — The meeting title.
+  - **Subject** — The meeting title. Clicking it **opens the meeting note** (creating it first if it doesn't exist yet; unscheduled cards prompt for a name). A dotted underline appears on hover.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
   - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
-  - **Workflow pills** — in order: Record (or Link recording for MacWhisper), Note (with a **+** summarize badge), Transcript (with a **+** speaker-tagging badge), Research (see [The Five-Stage Pipeline](#the-five-stage-pipeline)). Hover a badge for the tooltip naming its action.
+  - **Status rail** — Four slim segments (Note · Transcript · Speakers · Summary) tracking pipeline progress. Each is clickable and opens its stage's artifact (see [The Status Rail](#the-status-rail)).
+  - **Smart action button + ⋯ menu** — One button showing the pipeline's next verb (Record / Stop / Tag speakers / Review speakers / Summarize), plus a **⋯ mini button** opening the menu of every other action, Research included (see [The Card Actions Menu](#the-card-actions-menu)). When the pipeline is complete the button disappears and the ⋯ mini goes quiet.
 
-Cards can be [collapsed](#collapsible-cards) to hide their action pills. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
+Cards rest compact — the action row is [revealed by hovering the card](#hover-expanding-cards) (the status rail and any status line stay visible). All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
-### Collapsible Cards
+### The Card Actions Menu
 
-Each card has a **chevron toggle** in the gutter icon row. Click it to collapse or expand the card's action pills. Collapsed cards show only the subject, organizer, and metadata — useful for a compact view of a busy day. The expanded/collapsed state persists across calendar refreshes.
+The **⋯** mini button — or right-clicking anywhere on the card (except links) — opens a menu of the card's secondary actions. The menu is always available, and its items adapt to the pipeline state:
+
+| Item | Shown when | What it does |
+|------|-----------|--------------|
+| **Open note** / **Create note** | Always | Opens the meeting note, or creates it first if it doesn't exist (same as clicking the title) |
+| **Open transcript** | A transcript is linked | Opens the transcript file (same as the transcript rail segment) |
+| **Review speaker candidates** | Cached speaker proposals await review | Opens the confirmation modal (same as the Review speakers button) |
+| **Tag speakers…** | Transcript linked, speakers not yet tagged | Opens the instructions dialog, then runs LLM speaker tagging |
+| **Edit speaker tags** | Speaker tags applied | Re-opens the confirmation modal pre-filled with the current assignments — no LLM re-run |
+| **Summarize meeting…** / **Regenerate summary…** | Speakers tagged / summary complete | Opens the instructions dialog, then runs summarization |
+| **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
+| **Re-record…** | Transcript linked, Recording API mode | Confirms, then clears the transcript and starts a fresh recording |
+| **Export meeting bundle…** | A meeting note exists | Copies the meeting's artifacts to a folder outside the vault (see below) |
+
+The everyday next step stays one click on the smart button; the menu keeps everything else reachable without growing the action row.
+
+### Exporting a Meeting Bundle
+
+**Export meeting bundle…** (in the ⋯ menu) copies a meeting's artifacts to a folder outside your vault:
+
+- The **meeting note** — which carries the summary and any research section
+- The linked **transcript**
+- The transcript's **source audio** (`.m4a`), when present
+
+A system folder picker asks where to put the bundle (falling back to `~/Downloads` if the picker is unavailable). The files land in a folder named after the meeting note, which is then revealed in Finder/Explorer. Files are copied verbatim into a flat folder, so the wiki links between them still resolve by basename if the folder is ever opened as an Obsidian vault.
+
+### Hover-Expanding Cards
+
+Cards rest in a compact state showing the subject, organizer, metadata, and the slim status rail. **Hovering a card expands it**: the rail segments grow into labeled bars and the action row (smart button + ⋯ mini) slides open. Move the mouse away and the card settles back down.
+
+A card with **live activity stays expanded** without hover — while recording, while an LLM job runs, while a status line is showing (e.g. transcription progress), or while speaker candidates await review — so nothing that needs your attention is ever hidden.
 
 ### All-Day Events
 
-When **"Show all-day events"** is enabled in settings, all-day events appear at the top of the calendar as compact, read-only cards. They show the event subject and category color bar but have no action pills — they are informational only.
+When **"Show all-day events"** is enabled in settings, all-day events appear at the top of the calendar as compact, read-only cards. They show the event subject and category color bar but have no action button — they are informational only.
 
 ### Unscheduled Meetings
 
@@ -360,18 +394,23 @@ The gutter background tint reflects the pipeline workflow state:
 
 The vertical bar on the left edge of the card indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
 
-### Button Highlights
+### The Status Rail
 
-The four pipeline pill buttons show their completion state via border color:
+Under the meta rows, a **four-segment rail** tracks pipeline progress: **Note · Transcript · Speakers · Summary**. Each segment is a slim clickable bar that opens its stage's artifact (note / transcript / transcript / note). Hovering the card expands the segments into labeled bars — a bigger click target, with each stage's name shown right on the bar. Segment colors:
 
 | State | Appearance |
 |-------|------------|
-| **Default** | Neutral border, theme icon color. |
-| **Complete** | Accent-colored border and glow (`--interactive-accent`). |
-| **Hover** | Accent-tinted background and border. |
-| **Running** | Pulsing accent background, disabled. |
+| **Pending** | Neutral border color; disabled if its artifact doesn't exist yet. |
+| **Done** | Green fill (`--text-success`). |
+| **Running** | Accent fill (`--interactive-accent`), pulsing (a background LLM job for that stage). |
+| **Needs you** | Warning fill (`--text-warning`) — Speakers, when candidates await review. |
+| **Recording** | Red fill (`--text-error`), pulsing — Transcript, while a live recording is running. |
 
-The Meeting note pill shows its accent border only once the meeting is **summarized** — an existing-but-unsummarized note keeps the neutral border (its notebook icon marks that the note exists; the warning-tinted gutter marks the remaining work). The Transcript pill's accent border means speaker tagging is applied.
+All segment colors are Obsidian semantic theme variables, so they follow your theme and light/dark mode.
+
+The slim rail is always visible, even on cards at rest, so a busy day still shows every meeting's progress at a glance. [Hovering the card](#hover-expanding-cards) grows the segments into labeled bars.
+
+Below the rail sits the **smart action button** — always the pipeline's next verb (Record, Stop, Tag speakers, Review speakers, Summarize), fully labeled. A running job disables it with a pulse; the Stop button carries a red tint and a live timer; Review speakers is accent-tinted with a count of the speakers awaiting confirmation. When the pipeline is complete there is no button — the card goes quiet and the ⋯ mini turns borderless.
 
 ### Non-Accepted Meeting Indicator
 
@@ -409,7 +448,7 @@ The section is collapsed by default and only appears when the count is greater t
 
 ## The Five-Stage Pipeline
 
-Each meeting card has up to five **pill buttons** that track your progress through the meeting workflow. Pills are filled with a checkmark when complete, outlined when ready to act on, and grayed out when their prerequisites aren't met.
+Each meeting card tracks your progress through the meeting workflow with three separated controls: the **title** opens the note, the **[status rail](#the-status-rail)** shows each stage's state, and one **smart action button** offers the pipeline's next step (with the rest of the actions in the [⋯ menu](#the-card-actions-menu)). The rail fills green as stages complete and greys out stages whose prerequisites aren't met.
 
 ```
 Note  -->  Record/Transcript  -->  Speakers  -->  Summary
@@ -418,7 +457,7 @@ Note  -->  Record/Transcript  -->  Speakers  -->  Summary
 
 ### Stage 1 — Note
 
-**Click the "Meeting note" pill** to create a meeting note from the calendar event.
+**Click the meeting title** to create a meeting note from the calendar event.
 
 - A new Markdown file is created in your configured notes folder using your template.
 - The filename follows your configured pattern (default: `YYYY-MM-DD - Subject.md`).
@@ -427,60 +466,60 @@ Note  -->  Record/Transcript  -->  Speakers  -->  Summary
 - The organizer is shown with a People note link if matched.
 - The note opens in a new tab with the cursor placed after the `# Notes` heading.
 
-Once the note exists, clicking the pill opens it.
+Once the note exists, clicking the title opens it.
 
 ### Stage 2 — Record / Transcript
 
-The second pill adapts based on your configured [recording source](#recording-sources):
+The smart action button adapts based on your configured [recording source](#recording-sources):
 
-**MacWhisper mode** — The pill is labeled "Transcript". Click it to link an existing MacWhisper recording:
+**MacWhisper mode** — The button is labeled "Link recording". Click it to link an existing MacWhisper recording:
 - A picker modal shows MacWhisper recordings that started near the meeting time.
 - Select a recording, and WhisperCal writes the session ID to frontmatter, sets the recording title in MacWhisper, waits for transcription, creates a transcript file, and links everything together.
 
-**Recording API mode** — The pill is labeled "Record". Click it to start a live recording:
-- The recording starts via the configured API, and a **live elapsed timer** appears on the card with a pulsing red dot.
-- Click again to stop the recording. WhisperCal polls for transcription completion, then links the transcript file to the meeting note.
+**Recording API mode** — The button is labeled "Record". Click it to start a live recording:
+- The recording starts via the configured API. The button turns into a red **Stop · MM:SS** button with a live elapsed timer, and the Transcript rail segment pulses red.
+- Click Stop to end the recording. WhisperCal polls for transcription completion, then links the transcript file to the meeting note. (The button returns to **Record** immediately — recording again during transcription is allowed.)
 
-Once the transcript exists, clicking the pill opens it.
+Once the transcript exists, open it from the Transcript rail segment (or **Open transcript** in the ⋯ menu). To capture a fresh take, use **Re-record…** in the ⋯ menu.
 
 ### Stage 3 — Speakers
 
-**Click the + corner badge on the Transcript pill** to run LLM speaker tagging in the background. (The Transcript pill itself opens the transcript file — it's disabled until one exists. Once tags are applied, the badge becomes hover-revealed and re-runs speaker tagging: it resets the pipeline to `titled`, re-tags, and the normal review/apply flow — including auto-summarize in automatic mode — picks up from there.)
+Once a transcript exists, the smart action button becomes **Tag speakers…** — click it to run LLM speaker tagging in the background. (The same action is in the ⋯ menu. Once tags are applied, the menu offers **Edit speaker tags** instead — see [Reviewing or Editing Tags Later](#reviewing-or-editing-tags-later).)
 
-- The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or add one-off hints. Single-mic recordings get a tailored prompt asking who's who.
+- The button opens an instructions dialog — leave it empty and hit **Run** for a normal run, or add one-off hints. Single-mic recordings get a tailored prompt asking who's who.
 - The LLM reads your post-processing prompt and the transcript, **fixes transcription and diarization errors in place** (confirmed voiceprint matches are passed in as fixed anchors), then outputs proposed identities for the remaining speakers.
 - A **confirmation modal** appears inside Obsidian showing each speaker with the LLM's proposed name, confidence level, evidence, and [transcript excerpts](#per-speaker-transcript-excerpts).
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
-The badge pulses while the LLM is running (the transcript stays openable in the meantime). If you dismiss the confirmation modal without applying, the proposals stay cached and the badge turns **green** — clicking it resumes the review directly. Once tags are applied, the badge returns to the normal hover-revealed **+** that re-runs speaker tagging with optional instructions.
+The smart button shows **Tagging speakers…** with a pulse while the LLM is running (the transcript stays openable from the rail in the meantime), and the Speakers rail segment pulses. If you dismiss the confirmation modal without applying, the proposals stay cached and the button **becomes an accent-tinted "Review speakers · N"** (N = speakers awaiting confirmation) with the Speakers segment turning warning-colored — clicking it resumes the review directly. Once tags are applied, the button advances to Summarize and the ⋯ menu offers **Edit speaker tags**.
 
-**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no badge click needed. The run stops after caching the proposals: **tags are not applied without your review** (unless you also enable auto-tagging for confident matches — see below). The badge turns **green** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
+**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no clicks needed. The run stops after caching the proposals: **tags are not applied without your review** (unless you also enable auto-tagging for confident matches — see below). The smart button becomes **Review speakers · N** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
 
-**Skip the modal for confident matches:** Turn on **"Auto-tag when all speakers match"** to let WhisperCal apply tags without the confirmation modal — but only when *every* speaker in a recording is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`, deliberately high). A single unmatched or below-floor speaker falls through to the normal review. **Crucially, a silent auto-tag never enrolls or corrects any voiceprint library** — only confirming a recording in the modal updates your libraries. This is the drift guard: it stops an unattended run from gradually teaching a person's voiceprint a misattributed or noisy centroid (cross-talk, stray utterances). The toggle works together with **Automatic mode** to decide the trigger:
+**Skip the modal for confident matches:** Turn on **"Auto-tag when all speakers match"** to let WhisperCal apply tags without the confirmation modal — but only when *every* speaker in a recording is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`, deliberately high). A single unmatched or below-floor speaker falls through to the normal review — with one exception: diarizers often emit a junk speaker for crosstalk or stray utterances that never matches anything and you'd always leave blank anyway. The **"Ignore minor speakers"** setting (default `0.05`) lets an unmatched speaker holding at most that share of the transcript's lines pass the gate *untagged* instead of blocking it; set it to `0` to require every speaker to match. **Crucially, a silent auto-tag never enrolls or corrects any voiceprint library** — only confirming a recording in the modal updates your libraries. This is the drift guard: it stops an unattended run from gradually teaching a person's voiceprint a misattributed or noisy centroid (cross-talk, stray utterances). The toggle works together with **Automatic mode** to decide the trigger:
 
-- **Automatic mode off** — the background tagger doesn't run; clicking the green badge applies the matches and skips the modal (when all speakers clear the floor), otherwise the modal opens as usual.
-- **Automatic mode on** — the background run itself applies the matches with no click at all. The card briefly shows *"Auto-tagging speakers by voiceprint…"*, then *"N speaker(s) auto-tagged by voiceprint"*, then summarization starts. If not all speakers clear the floor, it falls back to caching candidates and turning the badge green for review.
+- **Automatic mode off** — the background tagger doesn't run; clicking the **Review speakers** button applies the matches and skips the modal (when all speakers clear the floor), otherwise the modal opens as usual.
+- **Automatic mode on** — the background run itself applies the matches with no click at all. The card briefly shows *"Auto-tagging speakers by voiceprint…"*, then *"N speaker(s) auto-tagged by voiceprint"*, then summarization starts. If not all speakers clear the floor, it falls back to caching candidates and turning the smart button into **Review speakers** for review.
 
 ### Stage 4 — Summary
 
-**Click the + corner badge on the Meeting note pill** to run LLM summarization in the background. (There is no separate Summary pill — a finished summary's pill would just duplicate the Meeting note pill's open-note click.)
+Once speakers are tagged, the smart action button becomes **Summarize meeting…** — click it to run LLM summarization in the background. (The same action is in the ⋯ menu.)
 
-- The badge appears once speakers are tagged and stays visible as a call-to-action; clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
-- While running, the badge pulses and a "Summarizing…" banner appears at the top of the meeting note editor.
+- Clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
+- While running, the button shows **Summarizing…** with a pulse (as does the Summary rail segment) and a "Summarizing…" banner appears at the top of the meeting note editor.
 - The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
 - When finished, the plugin sets `pipeline_state: summarized` and the banner disappears.
 
-Once the summary is complete, the badge becomes hover-revealed on the Meeting note pill and re-runs summarization (regenerate), with the same optional instructions dialog. All corner badges use the **+** icon — hover tooltips name each action (e.g. "Summarize meeting", "Re-run speaker tagging with optional instructions").
+Once the summary is complete, the menu item becomes **Regenerate summary…**, with the same optional instructions dialog.
 
 ### Stage 5 — Research
 
-**Click the "Research" pill** to run LLM-powered meeting research. This stage is **independent** of the transcript pipeline — you can run it anytime after creating a meeting note, even before a recording exists.
+**Choose "Research meeting…" from the card's ⋯ menu** to run LLM-powered meeting research. This stage is **independent** of the transcript pipeline — you can run it anytime, even before a recording exists (the meeting note is created first if it doesn't exist yet).
 
 - For a **recurring meeting** with a [series note](#recurring-meetings--series-prep), the modal opens clean: a tag links to the series note whose prompt and default context notes are already pulled in, and you just click **Research**.
 - For everything else, expand **"Add context notes or customize the prompt"** to **search and select vault notes** as context (project plans, policies, prior meeting notes, etc.), add instructions, or override the prompt entirely.
 - The LLM reads your research prompt along with the selected notes and meeting context, then writes its findings into the meeting note.
-- When complete, `research_notes` is added to the meeting note's frontmatter and the Research pill fills in.
+- When complete, `research_notes` is added to the meeting note's frontmatter. The menu item stays available to re-run research.
 
 This is useful for pre-meeting preparation or post-meeting fact-checking against organizational documents.
 
@@ -573,7 +612,7 @@ The default source. WhisperCal reads directly from [MacWhisper](https://goodsnoo
 
 A **microphone ribbon icon** is provided to quickly launch MacWhisper.
 
-**How recording matching works:** When you click the Link recording pill, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
+**How recording matching works:** When you click the Link recording button, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
 
 - **Default window:** 15 minutes before or after the meeting start.
 - **Unscheduled meetings:** 720-minute window (12 hours).
@@ -590,7 +629,7 @@ If multiple recordings match, a picker modal lets you choose. The picker shows t
 
 ### Recording API
 
-An alternative source that records meetings directly via a REST API. The Record pill on meeting cards starts and stops recordings without leaving Obsidian. Any app that implements the required endpoints on localhost will work (e.g., [Tome fork with REST API support](https://github.com/dloomis/Tome) — upstream Tome does not support REST API as of this writing).
+An alternative source that records meetings directly via a REST API. The Record button on meeting cards starts and stops recordings without leaving Obsidian. Any app that implements the required endpoints on localhost will work (e.g., [Tome fork with REST API support](https://github.com/dloomis/Tome) — upstream Tome does not support REST API as of this writing).
 
 **Requirements:**
 - A recording application running a compatible REST API on localhost.
@@ -599,14 +638,14 @@ An alternative source that records meetings directly via a REST API. The Record 
 **API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for a port file at `~/Library/Application Support/Tome/api-port` and constructs the URL automatically. Apps that write a port number to this path will be detected without any configuration.
 
 **Recording flow:**
-1. Click the Record pill — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
-2. A **pulsing red dot** and **live elapsed timer** appear on the card while recording.
-3. Click again to stop — WhisperCal polls `/status` every 3 seconds until transcription is complete (up to 5 minutes).
+1. Click the Record button — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
+2. The button turns into a red **Stop · MM:SS** button with a **live elapsed timer**, and the Transcript rail segment pulses red.
+3. Click Stop — WhisperCal polls `/status` every 3 seconds until transcription is complete (up to 5 minutes).
 4. The transcript file is located in the vault's transcripts folder, enriched with pipeline frontmatter (meeting subject, invitees, date, organizer, location), and linked to the meeting note.
 
 ### Re-Recording
 
-If a meeting already has a linked transcript, clicking the Record (or Link recording) pill shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
+If a meeting already has a linked transcript, choose **Re-record…** from the card's ⋯ menu. It shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
 
 ---
 
@@ -693,7 +732,7 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library. How strict matching is can be tuned with the **Voiceprint match floor** setting.
 
-**Auto-tagging confident recordings (optional).** By default every recording is reviewed in the confirmation modal. Enable **"Auto-tag when all speakers match"** to skip the modal and apply tags automatically when *every* speaker is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`). To guard against voiceprint **drift**, these silent auto-tags **never enroll or correct a library** — the self-improving / self-healing behavior above only happens when you confirm a recording in the modal. That's intentional: if auto-tagging also wrote back to your libraries unattended, a misattributed speaker or noise (cross-talk, stray utterances) could quietly poison a person's voiceprint over time. Whether the trigger is the green badge (Automatic mode off) or a fully background run (Automatic mode on) is covered in [Stage 3 — Speakers](#stage-3--speakers).
+**Auto-tagging confident recordings (optional).** By default every recording is reviewed in the confirmation modal. Enable **"Auto-tag when all speakers match"** to skip the modal and apply tags automatically when *every* speaker is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`). To guard against voiceprint **drift**, these silent auto-tags **never enroll or correct a library** — the self-improving / self-healing behavior above only happens when you confirm a recording in the modal. That's intentional: if auto-tagging also wrote back to your libraries unattended, a misattributed speaker or noise (cross-talk, stray utterances) could quietly poison a person's voiceprint over time. The junk speaker diarizers emit for crosstalk doesn't block the gate: an unmatched speaker below the **"Ignore minor speakers"** line-share threshold is left untagged rather than forcing a review (see [Stage 3 — Speakers](#stage-3--speakers)). Whether the trigger is a **Review speakers** button click (Automatic mode off) or a fully background run (Automatic mode on) is covered in [Stage 3 — Speakers](#stage-3--speakers).
 
 Voiceprint libraries stay **aligned 1:1 with your People notes**: a confirmed name (whether proposed by voiceprint, the LLM, or typed by you) is canonicalized to its People-note basename before enrolling — so a library always maps to a real person note, the same target `confirmed_speakers` wikilinks resolve to. If you enroll someone who has no People note yet, a Notice nudges you to create one. (Email-derived name variants help here: a note emailed `douglas.sperber@…` still matches the LLM's formal "Douglas Sperber" even when its basename is "Doug Sperber".)
 
@@ -711,8 +750,8 @@ The optional **transcript post-processing** LLM pass runs whenever LLM features 
 
 **Usage:**
 
-1. Click the **+ badge on the Transcript pill** of a meeting card, or run the **"Tag speakers in transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
-2. The pill shows a spinning indicator while the LLM runs in the background.
+1. Click the **Tag speakers…** smart button (or choose it from the card's ⋯ menu), or run the **"Tag speakers in transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
+2. The smart button shows **Tagging speakers…** and the Speakers rail segment pulses while the LLM runs in the background.
 3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
 4. Review the proposed mappings, edit any names, and click **Apply**.
 5. WhisperCal replaces speaker labels in the transcript body and sets `pipeline_state: tagged`.
@@ -798,7 +837,7 @@ When you click **Apply** in the modal, WhisperCal:
 
 #### Reviewing or Editing Tags Later
 
-Once a transcript is tagged, the Transcript pill's **+ badge** re-opens the confirmation modal pre-filled with the current assignments — **no LLM re-runs**. Correct a name and click **Apply** to re-label the transcript body and update the tags. The names you already confirmed are kept as the starting point — a fresh voiceprint match won't silently overwrite them — and applying a correction reconciles the voiceprint libraries, so a fixed name teaches the library for next time.
+Once a transcript is tagged, **"Edit speaker tags"** in the card's ⋯ menu re-opens the confirmation modal pre-filled with the current assignments — **no LLM re-runs**. Correct a name and click **Apply** to re-label the transcript body and update the tags. The names you already confirmed are kept as the starting point — a fresh voiceprint match won't silently overwrite them — and applying a correction reconciles the voiceprint libraries, so a fixed name teaches the library for next time.
 
 ### Word Replacements
 
@@ -841,14 +880,14 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Click the **+ badge on the Meeting note pill** of a meeting card, or run the **"Summarize meeting transcript"** command. The badge opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the badge is hover-revealed and regenerates the summary the same way.
+1. Choose **"Summarize meeting…"** from the meeting card's ⋯ menu, or run the **"Summarize meeting transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the item reads **"Regenerate summary…"** and regenerates the same way.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
 4. The banner disappears and the card gutter shows the completed (accent) highlight.
 
 The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
 
-**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no badge click needed. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
+**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no clicks needed. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
 
 ### Meeting Research
 
@@ -861,7 +900,7 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
 
 **Usage:**
 
-1. Click the **Research pill** on a meeting card, or run the **"Research meeting"** command.
+1. Choose **"Research meeting…"** from the meeting card's ⋯ menu, or run the **"Research meeting"** command.
 2. The modal adapts to the meeting:
    - **Recurring meeting with series prep** — it opens minimal. A tag at the top links to the [series note](#recurring-meetings--series-prep) whose prompt and default context notes are pre-filled; just click **Research**.
    - **Everything else** — expand **"Add context notes or customize the prompt"** (shown by default when there's no series prep) to reveal the advanced controls:
@@ -922,8 +961,9 @@ If any check fails, an Obsidian notice explains the problem.
 | **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
 | **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. Library names align 1:1 with your People notes — a confirmed name is canonicalized to its People-note basename before enrolling. |
 | **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) required to accept an acoustic speaker match. Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. Solo-library matches always use at least `0.55`. |
-| **Auto-tag when all speakers match** | Off | Skip the speaker-tagging modal and apply tags automatically when *every* speaker is a voiceprint match at/above the confidence floor below. Silent auto-tags **never** enroll or correct a voiceprint library (the drift guard) — only confirming in the modal does. Works with **Automatic mode** to decide whether the trigger is a green-badge click or a fully background run. |
+| **Auto-tag when all speakers match** | Off | Skip the speaker-tagging modal and apply tags automatically when *every* speaker is a voiceprint match at/above the confidence floor below. Silent auto-tags **never** enroll or correct a voiceprint library (the drift guard) — only confirming in the modal does. Works with **Automatic mode** to decide whether the trigger is a **Review speakers** click or a fully background run. |
 | **Auto-tag confidence floor** | `0.80` | Minimum cosine similarity (0–1) *every* speaker must reach for the modal to be skipped. Only shown/used when "Auto-tag when all speakers match" is on. Kept high so unattended tagging stays strict. |
+| **Ignore minor speakers** | `0.05` | Max share of transcript lines (0–1) below which an unmatched speaker (crosstalk, stray utterances) no longer blocks an auto-tag — it's left untagged, as you would in the modal. At least one speaker must still genuinely match. `0` requires every speaker to match. Only shown/used when "Auto-tag when all speakers match" is on. |
 | **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
 | **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
@@ -936,7 +976,7 @@ If any check fails, an Obsidian notice explains the problem.
 | **Meeting series notes folder** | *(empty)* | Vault folder of per-series notes for recurring meetings. Each note holds default context notes (`research_notes`) and bespoke instructions (under a `## Research instructions` heading) that pre-fill the Research modal for that series. Leave empty to disable. See [Recurring Meetings & Series Prep](#recurring-meetings--series-prep). |
 | **LLM timeout (minutes)** | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
 | **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
-| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the Transcript pill's badge turns green when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
+| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the smart action button becomes **Review speakers** when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
 | **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
 | **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
@@ -1111,7 +1151,7 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 ### Auto-tag never skips the modal
 - **"Auto-tag when all speakers match"** only fires when *every* speaker is a voiceprint match at/above the **Auto-tag confidence floor** (default `0.80`). One unmatched or below-floor speaker sends the whole recording to the modal — turn on **Debug logging** to see each speaker's cosine.
 - It also requires the recording to have a Tome voiceprint sidecar and enrolled libraries to match against; with nothing to match, nothing auto-tags.
-- For a fully hands-off background run (no badge click), **Automatic mode** must also be on. With Automatic mode off, the auto-tag applies when you click the green badge.
+- For a fully hands-off background run (no clicks), **Automatic mode** must also be on. With Automatic mode off, the auto-tag applies when you click the **Review speakers** button.
 - Re-reviewing an already-tagged transcript never auto-skips — confirmed names are treated as ground truth and aren't re-matched.
 
 ### Auto-tagged speakers aren't improving my voiceprints
@@ -1123,11 +1163,13 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 ### LLM process timed out
 - The default timeout is 10 minutes. For long transcripts, increase the **LLM timeout** setting. Set to `0` to disable the timeout entirely.
 
-### Pipeline pills are grayed out
-Pills are disabled when their prerequisites aren't met:
+### Status rail segments are grayed out
+A rail segment stays neutral (and isn't clickable) until its stage's artifact exists — the pipeline advances left to right:
 - **Transcript** requires a meeting note to exist first.
 - **Speakers** requires a linked transcript.
 - **Summary** requires speakers to be tagged (`pipeline_state: tagged`).
+
+The smart action button always shows the single next step that *is* available, so if nothing seems clickable, the button is where to look.
 
 ### Meeting note attendees aren't wiki-linked
 - Set the **People folder** path in settings.

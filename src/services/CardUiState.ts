@@ -39,7 +39,6 @@ export interface CardStatus {
 export class CardUiState {
 	private readonly recordings = new Map<string, RecordingInfo>();
 	private readonly statuses = new Map<string, CardStatus>();
-	private readonly expanded = new Set<string>();
 	private readonly startTimes = new Map<string, number>();
 	private readonly durationTimers = new Map<string, ReturnType<typeof setInterval>>();
 	private readonly recordingsChangeListeners = new Set<() => void>();
@@ -80,11 +79,6 @@ export class CardUiState {
 	setStatus(notePath: string, status: CardStatus): void { this.statuses.set(notePath, status); }
 	deleteStatus(notePath: string): void { this.statuses.delete(notePath); }
 
-	// --- expanded cards ---
-	isExpanded(eventId: string): boolean { return this.expanded.has(eventId); }
-	expand(eventId: string): void { this.expanded.add(eventId); }
-	collapse(eventId: string): void { this.expanded.delete(eventId); }
-
 	// --- recording start times ---
 	getStartTime(notePath: string): number | undefined { return this.startTimes.get(notePath); }
 	setStartTime(notePath: string, ms: number): void { this.startTimes.set(notePath, ms); }
@@ -114,7 +108,6 @@ export class CardUiState {
 		this.stopAllDurationTimers();
 		this.recordings.clear();
 		this.statuses.clear();
-		this.expanded.clear();
 		this.startTimes.clear();
 	}
 }

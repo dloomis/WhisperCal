@@ -11,7 +11,7 @@ import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {MergeConfirmModal} from "./MergeConfirmModal";
 import {computeSmartMergeName, mergeMeetings, resolveMergeParts} from "../services/MeetingMerger";
 import {NoteCreator} from "./NoteCreator";
-import {renderAllDayCard, renderMeetingCard, setCardCollapsed, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
 import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
@@ -424,16 +424,6 @@ export class CalendarView extends ItemView {
 
 	rerenderCard(notePath: string): void {
 		this.rerenderCardByPath(notePath);
-	}
-
-	/** Collapse the card backing a note path (e.g. once its summary completes). */
-	collapseCard(notePath: string): void {
-		for (const [eventId, {el}] of this.cards) {
-			if (el.dataset.notePath === notePath) {
-				setCardCollapsed(el, eventId, this.callbacks.cardUi, true);
-				return;
-			}
-		}
 	}
 
 	private renderLoading(): void {

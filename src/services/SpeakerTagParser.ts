@@ -311,6 +311,18 @@ export function hasCachedProposals(app: App, transcriptPath: string): boolean {
 	return speakers.some(s => "proposed_name" in s);
 }
 
+/**
+ * Number of speakers carrying a non-empty cached proposal — the count shown on
+ * the card's "Review speakers" pill. Deliberately narrower than
+ * hasCachedProposals's `in` check: writeSpeakerProposals stamps
+ * `proposed_name: ""` onto every flat-string attendee it converts, so counting
+ * keys (or unconfirmed stubs) would report the invitee-list length instead of
+ * the number of actual candidates.
+ */
+export function countCachedProposals(app: App, transcriptPath: string): number {
+	return getFrontmatterSpeakers(app, transcriptPath).filter(s => !!s.proposed_name).length;
+}
+
 /** Reconstruct ProposedSpeakerMapping[] from cached proposals on the attendees array. */
 export function buildMappingsFromCache(app: App, transcriptPath: string): ProposedSpeakerMapping[] {
 	const speakers = getFrontmatterSpeakers(app, transcriptPath);

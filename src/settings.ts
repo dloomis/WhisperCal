@@ -91,6 +91,15 @@ export interface WhisperCalSettings {
 	 * modal stays strict.
 	 */
 	voiceprintAutoTagFloor: number;
+	/**
+	 * Max share of transcript lines (0–1) below which an unmatched speaker is treated as
+	 * negligible (crosstalk, stray utterances) and no longer blocks a silent auto-tag — it is
+	 * left untagged, mirroring what a reviewer would do in the modal. Deliberately independent
+	 * of the LLM output so it works regardless of what a user-defined prompt returns.
+	 * 0 disables the exemption (every speaker must match, the pre-0.7.5 behavior).
+	 * Only consulted when voiceprintAutoTagSkipModal is on.
+	 */
+	voiceprintAutoTagMinorMaxShare: number;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -148,6 +157,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
 	voiceprintAutoTagSkipModal: false,
 	voiceprintAutoTagFloor: 0.80,
+	voiceprintAutoTagMinorMaxShare: 0.05,
 };
 
 class LlmConsentModal extends Modal {
@@ -676,10 +686,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			.setName("Automatic mode")
 			.setDesc(
 				"Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
-				"tag speakers in the background and cache the candidates (the Transcript pill's badge turns green " +
-				"when they're ready to review — tags are never applied without your confirmation), then " +
+				"tag speakers in the background and cache the candidates (the card's action button turns into " +
+				"\"Review speakers\" when they're ready — tags are never applied without your confirmation), then " +
 				"start summarization after you apply them. Single-mic recordings are skipped. " +
-				"Off = run each stage manually from the pill badges.",
+				"Off = the card's action button steps through each stage (Tag speakers, Summarize) manually.",
 			)
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
@@ -936,6 +946,26 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					const num = parseFloat(value);
 					if (!isNaN(num) && num >= 0 && num <= 1) {
 						this.plugin.settings.voiceprintAutoTagFloor = num;
+						this.debouncedSave();
+					}
+				}));
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(autoTagSkipSub)
+			.setName("Ignore minor speakers")
+			.setDesc(
+				"Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
+				"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
+				"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
+				"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.05")
+				.setValue(String(this.plugin.settings.voiceprintAutoTagMinorMaxShare))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintAutoTagMinorMaxShare = num;
 						this.debouncedSave();
 					}
 				}));
