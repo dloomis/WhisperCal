@@ -4,6 +4,8 @@ Standalone prompt for summarizing a meeting transcript and writing the summary i
 
 Executed by the WhisperCal plugin: this file is injected into the system prompt; the user message supplies `Meeting note: <path>.` and may supply `Additional instructions: <text>`.
 
+You run headless in print mode: nobody sees intermediate output, and every token of narration between tool calls only slows the run. Work silently; the one-line report (Step 8) is the only text you print.
+
 ---
 
 ## Step 1: Parse Invocation Parameters
@@ -28,7 +30,9 @@ Use the **Read tool** to open the meeting note, then resolve and read its linked
 
 **Resolve transcript:** Strip `[[` and `]]` from the `transcript` link. If the result has no folder prefix, resolve it as `Transcripts/<name>.md`. If that file does not exist, glob for the basename across the vault before erroring.
 
-**Read the full transcript:** Transcripts routinely exceed the Read tool's default length (TOME format is one short utterance per block, so a 25-50 minute meeting runs 2,500-4,300 lines). After the first Read, check whether the output reached the end of the file; if not, continue reading with `offset` until EOF. Never generate the summary from a partial transcript.
+**Read the full transcript:** Transcripts routinely exceed the Read tool's default length (TOME format is one short utterance per block, so a 25-50 minute meeting runs 2,500-4,300 lines), so pass a large `limit` (e.g. 10000) on the first Read to get the whole file in one call. If the output still ends before EOF, continue reading with `offset` until EOF. Never generate the summary from a partial transcript.
+
+Collect everything in this single reading pass — microphone user, speaker roles, decisions, action items, discussion topics. Plan not to read the transcript again.
 
 **Transcript frontmatter fields that matter:**
 
@@ -59,7 +63,7 @@ Before summarizing, gather context:
    - Large meeting (6+ attendees)
    - Recurring meeting (check `is_recurring` in meeting note frontmatter)
 
-2. **Speaker roles:** If `confirmed_speakers` links exist, read at most 4 People notes, preferring the most active speakers. Skip this entirely for meetings with more than 8 attendees. If the calling message includes a `People Roster:` block, use it instead of reading any People notes.
+2. **Speaker roles:** If `confirmed_speakers` links exist, read at most 4 People notes, preferring the most active speakers — issue all of these Read calls together in a single response, not one per turn. Skip this entirely for meetings with more than 8 attendees. If the calling message includes a `People Roster:` block, use it instead of reading any People notes.
 
 3. **Microphone user perspective:** The summary should be written from the perspective of the microphone user — they are the note-taker. Identify what they said, what was directed at them, and what action items they were assigned.
 
@@ -140,6 +144,7 @@ The generated block is exactly these four sections in order: `## Summary`, `## K
 - If the note already contains `## Summary`, replace everything from that heading through the end of the `## Key Discussion Points` section (up to the next `##` heading not in the generated set, or EOF) with the new block, in a single Edit.
 - Otherwise insert the block after the frontmatter and any template/metadata content, before any user-written sections (such as `## Notes`).
 - Never modify frontmatter or user-written content in either file.
+- Do not re-read the note to verify the write — a failed Edit returns an error on its own; only when one fails, re-anchor with more context and retry.
 
 ---
 

@@ -8,6 +8,8 @@ Two jobs, in one pass:
 
 The plugin reviews your proposals with the user before any speaker label becomes a real name. **You only fix the text and propose names — you never finalize identities.**
 
+You run headless in print mode: nobody sees intermediate output, and every token of narration between tool calls only slows the run. Work silently; your final JSON block (Step 6) is the only text that matters.
+
 **No PII in this file.** The examples below use fictional names; never paste real attendee names into this prompt.
 
 ---
@@ -40,7 +42,9 @@ The current working directory is the vault root. Try the `Transcript:` path as-i
 
 ## Step 2: Read the whole transcript
 
-Use the **Read tool**. Transcripts are long (one short utterance per block; a 30-minute meeting can run thousands of lines). After the first Read, if you have not reached EOF, continue reading with `offset` until you have the entire body. **Never edit from a partial read.**
+Use the **Read tool** and pass a large `limit` (e.g. 10000) on the first call — transcripts are long (one short utterance per block; a 30-minute meeting can run thousands of lines) and the default Read length truncates them. If the output still ends before EOF, continue reading with `offset` until you have the entire body. **Never edit from a partial read.**
+
+Collect everything in this single reading pass: transcription errors (Step 3), diarization problems (Step 4), and speaker-identity evidence (Step 5). Plan not to read the file again.
 
 Body format (accept all): a label line such as `**Speaker 2** (4.278)` or `**You** [00:01:15]`, followed by one or more text lines, then a blank line. `**You**` is the microphone user's own channel.
 
@@ -55,6 +59,8 @@ Edit the body to correct **clear** mis-transcriptions, using meeting context and
 - Person / product names to the spelling used in the roster, applied consistently across the file.
 
 Do **not** change wording that is merely informal or disfluent. When unsure whether something is an error, leave it. (The plugin already ran deterministic word-replacements before you — you are catching the context-dependent rest.)
+
+Apply these fixes and the Step 4 diarization fixes in **one editing pass**: when the same region needs both kinds of fix, make them in a single Edit. A clean transcript needs no edits at all — do not make cosmetic changes just to have edited something.
 
 ---
 
@@ -80,7 +86,7 @@ Here `**You**` is echoing Speaker 2. Keep Speaker 2's line; remove the echoed co
 
 Rules: never invent new label numbers; never drop content that appears only once; keep labels and timestamps intact. If a block genuinely mixes two speakers and you cannot confidently split it, leave it and note that in the speaker's `evidence`.
 
-**Editing method:** make targeted Edit calls with enough surrounding context to be unique; you may replace a contiguous run of blocks in a single Edit. If the transcript needs pervasive restructuring you may replace the whole `## Transcript` section in one Edit — but then you MUST reproduce every retained utterance verbatim (only your intended corrections differ), every timestamp, and every label.
+**Editing method:** make targeted Edit calls. Timestamps make every label line unique in the file, so anchor each edit on a label line (e.g. `**Speaker 2** (4.278)`) plus only the lines that change — never include long runs of unchanged text just for context. You may replace a contiguous run of blocks in a single Edit. **Batch independent edits:** send many Edit calls in one response rather than one per turn. Do not re-read the file to verify your edits — a bad Edit returns an error on its own; when one fails, re-anchor that single edit with more context and retry it alone. Only if the transcript needs pervasive restructuring may you replace the whole `## Transcript` section in one Edit — this is the slowest and most error-prone method, a last resort — and then you MUST reproduce every retained utterance verbatim (only your intended corrections differ), every timestamp, and every label.
 
 ---
 

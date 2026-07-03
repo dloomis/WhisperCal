@@ -2,10 +2,9 @@
 
 Standalone prompt for summarizing a meeting transcript and writing the summary into the meeting note. Reads the meeting note to find the linked transcript, extracts content, generates a structured summary, and writes it back into the meeting note.
 
-**Invocation pattern:**
-```
-claude --dangerously-skip-permissions 'Follow the instructions in /abs/path/Meeting Transcript Summarizer Prompt.md. Meeting note: Meetings/2026-03-05 - Weekly Team Sync.md.'
-```
+Executed by the WhisperCal plugin: this file is injected into the system prompt; the user message supplies `Meeting note: <path>.` and may supply `Additional instructions: <text>`.
+
+You run headless in print mode: nobody sees intermediate output, and every token of narration between tool calls only slows the run. Work silently; the one-line report (Step 8) is the only text you print.
 
 ---
 
@@ -13,69 +12,48 @@ claude --dangerously-skip-permissions 'Follow the instructions in /abs/path/Meet
 
 Extract from the calling message:
 - `Meeting note:` → vault-relative path to the meeting note file
+- `Additional instructions:` (optional) → user guidance for this run (emphasis, style, things to include or exclude). It takes precedence over the default guidelines below where they conflict.
 
-**Vault root:** Determine from the absolute path of this prompt file by stripping the filename and any `Prompts/` suffix. For example, if the prompt is at `/vault/Prompts/Meeting Transcript Summarizer Prompt.md`, the vault root is `/vault`.
+**Vault root:** The current working directory is the vault root. All vault-relative paths in the calling message resolve from there.
 
 **Path resolution:** Try the path as-is first. If not found, prepend vault root and try again. If still not found, error with: "Meeting note not found: [path]. Check the path and try again."
 
 ---
 
-## Step 2: Read Meeting Note
+## Step 2: Read Inputs
 
-Use the **Read tool** to open the meeting note. All meeting metadata (subject, date, times, invitees) is already in the frontmatter — the LLM sees it directly when reading the file.
-
-The only fields you need to explicitly extract and act on:
-
-| Field | Purpose |
-|-------|---------|
-| `transcript` | Wiki-link to follow (e.g. `[[Transcripts/...]]`) |
-| `pipeline_state` | Gate check in Step 4 |
-| `is_recurring` | Meeting type detection in Step 5 |
+Use the **Read tool** to open the meeting note, then resolve and read its linked transcript. All meeting metadata (subject, date, times, invitees, `is_recurring`) is already in the meeting note frontmatter — the LLM sees it directly when reading the file.
 
 **Error conditions:**
-- File does not exist → error as described in Step 1
-- No `transcript` field in frontmatter → error: "Meeting note has no linked transcript. Link a recording first."
+- Meeting note does not exist → error as described in Step 1
+- No `transcript` field in meeting note frontmatter → error: "Meeting note has no linked transcript. Link a recording first."
 
-**Resolve transcript:** Strip `[[` and `]]` from the transcript link, then read the transcript file.
+**Resolve transcript:** Strip `[[` and `]]` from the `transcript` link. If the result has no folder prefix, resolve it as `Transcripts/<name>.md`. If that file does not exist, glob for the basename across the vault before erroring.
 
----
+**Read the full transcript:** Transcripts routinely exceed the Read tool's default length (TOME format is one short utterance per block, so a 25-50 minute meeting runs 2,500-4,300 lines), so pass a large `limit` (e.g. 10000) on the first Read to get the whole file in one call. If the output still ends before EOF, continue reading with `offset` until EOF. Never generate the summary from a partial transcript.
 
-## Step 3: Read Transcript
+Collect everything in this single reading pass — microphone user, speaker roles, decisions, action items, discussion topics. Plan not to read the transcript again.
 
-Use the **Read tool** to open the transcript file. Extract from frontmatter:
+**Transcript frontmatter fields that matter:**
 
 | Field | Notes |
 |-------|-------|
-| `speakers` | Array with name, id, confidence, evidence per speaker |
+| `attendees` | Speaker array: `name` (Speaker N or You), `proposed_name`, `confidence`, `evidence`. Ignore `stub`, `id`, and `line_count`. |
+| `confirmed_speakers` | People note wikilinks, present after tagging. May contain duplicates; dedupe. |
 | `pipeline_state` | Current transcript pipeline state |
-| `confirmed_speakers` | Array of People note links for confirmed speakers |
 | `meeting_note` | Backlink to the meeting note |
 
-Read the full transcript body content — this is the source material for summarization.
-
-**Identify the microphone user:** Find the speaker entry where `evidence` contains `microphone` or where `original_name` is `Microphone`. That speaker is the user who recorded the meeting.
+**Identify the microphone user:** the `attendees` entry whose `name` is `You` is the person who recorded the meeting. Pre-tagging, their utterances appear as `**You**` in the body; post-tagging, all body labels (including You) are real names, so use the You entry's `evidence` text (which typically names the person) to map it to a real name. If no You entry exists and no evidence mentions a microphone, say so in the final output and write the summary from a neutral perspective rather than guessing.
 
 ---
 
-## Step 4: Pipeline State Check
+## Step 3: Pipeline State
 
-Read `pipeline_state` from the **meeting note** frontmatter:
-
-- `pipeline_state: summarized` → warn user:
-  ```
-  This meeting has already been summarized (pipeline_state: summarized). Re-run summarization anyway?
-  ```
-  Use AskUserQuestion with options "Re-run" / "Cancel". Stop if user selects Cancel.
-- `pipeline_state: titled` → warn user:
-  ```
-  Speakers have not been tagged yet (pipeline_state: titled). Summarization works best with tagged speakers. Proceed anyway?
-  ```
-  Use AskUserQuestion with options "Proceed" / "Cancel". Stop if user selects Cancel.
-- `pipeline_state: tagged` → proceed normally.
+The plugin verifies pipeline_state before invoking this prompt; do not re-check it and do not ask the user anything. If you nonetheless notice the state is unexpected, mention it in your final output and proceed.
 
 ---
 
-## Step 5: Analyze Meeting Context
+## Step 4: Analyze Meeting Context
 
 Before summarizing, gather context:
 
@@ -85,13 +63,13 @@ Before summarizing, gather context:
    - Large meeting (6+ attendees)
    - Recurring meeting (check `is_recurring` in meeting note frontmatter)
 
-2. **Speaker roles:** Map speakers to their roles based on People notes (if `confirmed_speakers` links exist, read those notes for role/title information).
+2. **Speaker roles:** If `confirmed_speakers` links exist, read at most 4 People notes, preferring the most active speakers — issue all of these Read calls together in a single response, not one per turn. Skip this entirely for meetings with more than 8 attendees. If the calling message includes a `People Roster:` block, use it instead of reading any People notes.
 
 3. **Microphone user perspective:** The summary should be written from the perspective of the microphone user — they are the note-taker. Identify what they said, what was directed at them, and what action items they were assigned.
 
 ---
 
-## Step 6: Generate Summary
+## Step 5: Generate Summary
 
 Create a structured summary with these sections:
 
@@ -111,7 +89,7 @@ Create a structured summary with these sections:
 
 - [ ] Task description — [[Owner]] / [[Requestor]] — YYYY-MM-DD — 🔺
 - [ ] Task with same owner/requestor — [[Owner]] — YYYY-MM-DD
-- [ ] Task for microphone user — [[Dan Loomis]] — YYYY-MM-DD
+- [ ] Task for microphone user — [[Microphone User]] — YYYY-MM-DD
 
 ## Key Discussion Points
 
@@ -128,6 +106,7 @@ Create a structured summary with these sections:
 - **Discussion points format:** Each bullet starts with a **bold topic label** (2-5 words), then a dash, then detailed explanation with `[[Name]]` references, specific details, and context
 - **Skip small talk:** Don't include greetings, weather chat, or off-topic banter
 - **Preserve technical details:** Keep specific numbers, dates, names, and technical terms accurate
+- **No important topics missing:** Verify every significant topic from the transcript is captured before finishing
 - **Flag uncertainty:** If the transcript is unclear on a point, note it with [unclear] rather than guessing
 
 ### Action Item Rules
@@ -136,6 +115,7 @@ Create a structured summary with these sections:
 - If requestor same as owner, omit `/ [[Requestor]]`
 - Fields separated by ` — ` (space-em-dash-space)
 - Priority emoji at end (omit if standard priority)
+- The ` — ` separators in the action item format are functional markers required by downstream processors; they are exempt from prose style rules. Summary and discussion prose follows the vault writing style (no em dashes as sentence punctuation).
 
 **Due Dates:**
 - Default: Meeting Date + 7 calendar days
@@ -155,63 +135,27 @@ Create a structured summary with these sections:
 - Microphone user is NOT facilitator → ALL microphone user items + up to 5-7 important others
 - Default to "not facilitator" when unclear
 
-### Quality Checklist
+---
 
-Before writing the summary, verify:
-- [ ] ALL person names wrapped in `[[Name]]` wikilinks
-- [ ] Every action item uses `— [[Owner]] — YYYY-MM-DD` format with due date
-- [ ] Every Key Discussion Point starts with a **bold topic label**
-- [ ] Key decisions are captured with context
-- [ ] No important topics from the transcript are missing
-- [ ] Meeting ownership correctly determined for action item quantity
+## Step 6: Write Summary to Meeting Note
+
+The generated block is exactly these four sections in order: `## Summary`, `## Key Decisions`, `## Action Items`, `## Key Discussion Points`.
+
+- If the note already contains `## Summary`, replace everything from that heading through the end of the `## Key Discussion Points` section (up to the next `##` heading not in the generated set, or EOF) with the new block, in a single Edit.
+- Otherwise insert the block after the frontmatter and any template/metadata content, before any user-written sections (such as `## Notes`).
+- Never modify frontmatter or user-written content in either file.
+- Do not re-read the note to verify the write — a failed Edit returns an error on its own; only when one fails, re-anchor with more context and retry.
 
 ---
 
-## Step 7: Write Summary to Meeting Note
+## Step 7: Pipeline State
 
-Use the **Edit tool** to insert the summary into the meeting note.
-
-**Placement:** Insert the summary content after the frontmatter closing `---` and any existing template content (like attendee lists or meeting metadata). If the note already has a `## Summary` section, replace it entirely.
-
-**Preserve existing content:** The meeting note may contain hand-written notes (e.g. a `## Notes` section), Teams dial-in blocks, or other user-added content. Any content that is NOT part of the generated summary sections (`## Summary`, `## Key Decisions`, `## Action Items`, `## Key Discussion Points`) must be preserved. Place the generated summary sections between the header/template content and any existing user content.
-
-**Strategy:**
-1. Read the current meeting note content
-2. Identify any user-written content (sections other than Summary/Key Decisions/Action Items/Key Discussion Points, such as `## Notes`, meeting links, etc.)
-3. Find the insertion point (after frontmatter and any header/metadata sections)
-4. If a `## Summary` section already exists, replace only the generated sections (Summary through Key Discussion Points), preserving everything before and after
-5. If no summary exists, insert the generated sections after the last frontmatter/template content and before any user-written sections
-6. Use a single Edit call to write the summary
+> **Do NOT edit `pipeline_state` in either file.** The WhisperCal plugin sets `pipeline_state: summarized` on both the meeting note and its linked transcript automatically after this prompt exits successfully. Do not modify frontmatter on the transcript at all; only edit the meeting note's body to insert the summary (Step 6).
+>
+> Historical note: this prompt used to instruct the LLM to find-and-replace `pipeline_state: tagged` → `pipeline_state: summarized`. Broad `old_string` values silently dropped adjacent frontmatter fields (notably `meeting_note`), which is why the plugin now owns this update.
 
 ---
 
-## Step 8: Update Pipeline State
+## Step 8: Report Results
 
-> **CRITICAL — DO NOT SKIP THIS STEP.** The plugin UI relies on `pipeline_state: summarized` to mark the Summary pill as complete. If you do not update both files, the user will see an incomplete workflow and have to fix it manually. This step is mandatory even if the summary was short or the meeting was trivial.
-
-After successfully writing the summary, you MUST update **both** files:
-
-1. **Meeting note:** Replace `pipeline_state: tagged` with `pipeline_state: summarized` in the frontmatter
-2. **Transcript:** Replace `pipeline_state: tagged` with `pipeline_state: summarized` in the frontmatter
-
-**Edit strategy:** Use the Edit tool to make a targeted find-and-replace of the `pipeline_state: tagged` line in each file's YAML frontmatter. Do this as two separate Edit calls — one for the meeting note, one for the transcript. Do NOT proceed to Step 9 until both edits are confirmed successful.
-
-**Verification:** After editing, re-read the frontmatter of both files and confirm `pipeline_state: summarized` is present. If either edit failed, retry before continuing.
-
----
-
-## Step 9: Report Results
-
-Summarize to the user:
-
-```
-Meeting summary complete for: [meeting note filename]
-
-Sections written:
-- Summary (X sentences)
-- Key Decisions (X items)
-- Action Items (X items, Y assigned to you)
-- Key Discussion Points (X topics)
-
-Pipeline state → summarized
-```
+Print one line: `Summary written to <meeting note filename>: X decisions, Y action items (Z yours), W discussion topics.`

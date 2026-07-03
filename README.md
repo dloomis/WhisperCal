@@ -79,6 +79,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - [People Matching](#people-matching)
   - [Auto-Created People Notes](#auto-created-people-notes)
 - [LLM Integration](#llm-integration)
+  - [Included Prompts](#included-prompts)
   - [Speaker Tagging](#speaker-tagging)
     - [Per-Speaker Transcript Excerpts](#per-speaker-transcript-excerpts)
     - [Required LLM Output Format](#required-llm-output-format)
@@ -726,7 +727,21 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 **Enable LLM features:** LLM features are disabled by default. Toggle **"Enable LLM features"** in settings. On first enable, a consent modal explains that transcripts and note content may be sent to a cloud LLM provider, and asks you to confirm.
 
-**Included prompts:** The plugin ships with ready-to-use prompt files in the `samples/` directory — transcript post-processing, summarization, and meeting research. These are designed to work out of the box as defaults. You can use them as-is or copy them into your vault and customize them to fit your workflow.
+### Included Prompts
+
+The plugin ships with ready-to-use prompt files. The repo's `prompts/` directory holds the bundled copies the plugin auto-installs from; the `samples/` directory holds copies for manual installation, alongside the meeting note template. They work out of the box as defaults — use them as-is, or copy them into your vault and customize them to fit your workflow.
+
+Each prompt can run on its own model (see [Per-Prompt Model Selection](#per-prompt-model-selection)) and at its own reasoning effort. Set effort in that prompt's **Additional flags** setting, e.g. `--effort medium` — the `claude` CLI accepts `low`, `medium`, `high`, `xhigh`, and `max`. Recommendations:
+
+| Prompt file | What it does | Recommended model | Recommended effort |
+|---|---|---|---|
+| `Transcript Post-Processing Prompt.md` | Fixes transcription and diarization errors in the transcript in place and proposes identities for the speakers voiceprints didn't match. Runs on every recording, so latency matters. | Sonnet | `medium` |
+| `Meeting Transcript Summarizer Prompt.md` | Writes the structured summary (decisions, action items, discussion points) into the meeting note. | Sonnet — step up to Opus if downstream automation consumes the summaries and quality outweighs speed | `medium` |
+| `Meeting Research Prompt.md` | Pre-meeting research: synthesizes selected context notes and meeting metadata into findings in the meeting note. The most synthesis-heavy prompt of the set. | Opus | `high` |
+| `Meeting Series Research Prompt.md` | Lighter research variant for recurring meetings driven by a [series note](#recurring-meetings--series-prep). | Sonnet | `medium` |
+| `Speaker Auto-Tag Prompt.md` | Legacy speaker-tagging prompt, superseded by Transcript Post-Processing. Kept for reference only. | — | — |
+
+The reasoning behind the recommendations: post-processing and summarization are high-volume, well-scoped tasks that are comfortably within Sonnet's range, and they sit in the critical path of every recording — a smaller model returns minutes sooner at no practical quality cost. Going below Sonnet is not recommended for post-processing, where verbatim edit fidelity is the whole job. Research runs are infrequent, user-triggered, and synthesis-heavy, which is exactly where a larger model at higher effort earns its extra latency. A prompt with no model selected uses the CLI's default model, and with no `--effort` flag the CLI's default effort.
 
 ### Speaker Tagging
 
