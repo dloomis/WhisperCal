@@ -3,6 +3,7 @@ import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
 import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time";
+import {openMeetingUrl} from "../utils/meetingLink";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
@@ -244,10 +245,15 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 
 	if (event.onlineMeetingUrl) {
 		const joinUrl = event.onlineMeetingUrl;
+		// No href: Obsidian's own external-link handler would open it in the
+		// browser in addition to (and regardless of) our deep-link handler.
 		const locLink = meta.createEl("a", {
 			cls: "whisper-cal-card-meta-item whisper-cal-card-meta-link",
-			href: joinUrl,
-			attr: {"aria-label": "Join online meeting", target: "_blank", rel: "noopener"},
+			attr: {"aria-label": "Join online meeting"},
+		});
+		locLink.addEventListener("click", evt => {
+			evt.preventDefault();
+			void openMeetingUrl(joinUrl);
 		});
 		const locIcon = locLink.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(locIcon, "map-pin");
