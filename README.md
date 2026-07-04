@@ -284,15 +284,15 @@ A small dot below the header shows connection status:
 
 Each calendar event is displayed as a two-column card:
 
-- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
+- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)), and while a job runs, a compact [activity badge](#the-activity-badge) shows what's happening and on which model. A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
 - **Content** (right):
   - **Subject** — The meeting title. Clicking it **opens the meeting note** (creating it first if it doesn't exist yet; unscheduled cards prompt for a name). A dotted underline appears on hover.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
   - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
   - **Status rail** — Four slim segments (Note · Transcript · Speakers · Summary) tracking pipeline progress. Each is clickable and opens its stage's artifact (see [The Status Rail](#the-status-rail)).
-  - **Smart action button + ⋯ menu** — One button showing the pipeline's next verb (Record / Stop / Tag speakers / Review speakers / Summarize), plus a **⋯ mini button** opening the menu of every other action, Research included (see [The Card Actions Menu](#the-card-actions-menu)). When the pipeline is complete the button disappears and the ⋯ mini goes quiet.
+  - **Smart action button + ⋯ menu** — One button showing the pipeline's next verb (Record / Stop / Tag speakers / Review speakers / Summarize), plus a **⋯ mini button** opening the menu of every other action, Research included (see [The Card Actions Menu](#the-card-actions-menu)). When the pipeline is complete the button disappears.
 
-Cards rest compact — the action row is [revealed by hovering the card](#hover-expanding-cards) (the status rail and any status line stay visible). All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
+Cards rest compact — the action row is [revealed by hovering the card](#hover-expanding-cards) (the status rail and the gutter activity badge stay visible). All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
 ### The Card Actions Menu
 
@@ -326,7 +326,7 @@ A system folder picker asks where to put the bundle (falling back to `~/Download
 
 Cards rest in a compact state showing the subject, organizer, metadata, and the slim status rail. **Hovering a card expands it**: the rail segments grow into labeled bars and the action row (smart button + ⋯ mini) slides open. Move the mouse away and the card settles back down.
 
-A card with **live activity stays expanded** without hover — while recording, while an LLM job runs, while a status line is showing (e.g. transcription progress), or while speaker candidates await review — so nothing that needs your attention is ever hidden.
+A card stays expanded without hover **only while a live recording is running**, so the Stop button is never hidden. All other activity — LLM jobs, transcription progress, candidates awaiting review — announces itself through the [activity badge](#the-activity-badge) and the pulsing rail segment instead of holding the card open.
 
 ### All-Day Events
 
@@ -351,8 +351,8 @@ When one long meeting ends up as several back-to-back recordings (e.g., "Plannin
 - Builds one **merged transcript** with a `### Part N` heading per recording (original timestamps and recording embeds preserved), a combined Context section, and the total duration summed across parts.
 - **Renumbers raw "Speaker N" stubs** so they stay unique across parts ("You" and already-tagged names pass through unchanged). Attendees, confirmed speakers, and tags are unioned.
 - Keeps the **calendar-linked part** (or the earliest part) as the merged note, renames it to the merged name, and appends the other parts' note bodies as `## Part — …` sections so per-part summaries aren't lost.
-- Moves the original part transcripts and notes to the **merge archive folder** (default: `WhisperCal Archive`; configurable in settings, must be outside the notes and transcripts folders).
-- Records every source MacWhisper session in `macwhisper_session_ids` and links the archived originals in `merged_from` frontmatter.
+- Leaves the original part notes and transcripts **in place** — each part note just gains a `merged_into` backlink, which hides its calendar card in favor of the merged one.
+- Records every source MacWhisper session in `macwhisper_session_ids` and links the originals in `merged_from` frontmatter.
 - Sets `pipeline_state: tagged` if every part was already tagged, otherwise `titled` — so you can run Speakers and Summary on the merged transcript as usual.
 
 Parts can be in any pipeline state — calendar-linked, ad hoc, tagged, or raw — and can be mixed freely in one merge.
@@ -391,6 +391,15 @@ The gutter background tint reflects the pipeline workflow state:
 | **Warning tint** (amber/yellow, `--text-warning`) | Meeting note exists but the pipeline is incomplete — recording, speaker tagging, or summarization still needed. |
 | **Accent tint** (your theme accent color, `--interactive-accent`) | All four pipeline stages are complete. |
 
+### The Activity Badge
+
+While anything is happening on a meeting — an LLM job, voiceprint matching, transcript linking — a compact **activity badge** appears in the time gutter, level with the status rail:
+
+- **Line 1** — a one-word verb for the work in flight: *Processing* (transcript post-processing + speaker tagging), *Summarizing*, *Researching*, *Matching* (voiceprint), *Transcribing*, *Linking*, *Waiting*, *Enriching*.
+- **Line 2** (LLM jobs only) — the model running the job, e.g. *Opus 4.8* or *Sonnet 5*.
+
+When the work finishes, the badge briefly shows the outcome — *Linked*, *Tagged*, *Summarized*, *Researched*, or a warning like *Failed* / *Not ready* — then clears. Hovering the badge shows the full status message as a tooltip. The badge replaces the older verbose status line under the rail, and the collapsed card grows just enough to fit it while it's visible.
+
 ### Category Bar
 
 The vertical bar on the left edge of the card indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
@@ -404,14 +413,14 @@ Under the meta rows, a **four-segment rail** tracks pipeline progress: **Note ·
 | **Pending** | Neutral border color; disabled if its artifact doesn't exist yet. |
 | **Done** | Green fill (`--text-success`). |
 | **Running** | Accent fill (`--interactive-accent`), pulsing (a background LLM job for that stage). |
-| **Needs you** | Warning fill (`--text-warning`) — Speakers, when candidates await review. |
+| **Needs you** | Warning fill (`--text-warning`) — the pipeline is mid-flight and waiting on you: Speakers once a transcript is in (candidates to review or manual tagging), Summary once speakers are tagged. |
 | **Recording** | Red fill (`--text-error`), pulsing — Transcript, while a live recording is running. |
 
 All segment colors are Obsidian semantic theme variables, so they follow your theme and light/dark mode.
 
 The slim rail is always visible, even on cards at rest, so a busy day still shows every meeting's progress at a glance. [Hovering the card](#hover-expanding-cards) grows the segments into labeled bars.
 
-Below the rail sits the **smart action button** — always the pipeline's next verb (Record, Stop, Tag speakers, Review speakers, Summarize), fully labeled. A running job disables it with a pulse; the Stop button carries a red tint and a live timer; Review speakers is accent-tinted with a count of the speakers awaiting confirmation. When the pipeline is complete there is no button — the card goes quiet and the ⋯ mini turns borderless.
+Below the rail sits the **smart action button** — always the pipeline's next verb (Record, Stop, Tag speakers, Review speakers, Summarize), fully labeled. A running job disables it with a pulse; the Stop button carries a red tint and a live timer; Review speakers is accent-tinted with a count of the speakers awaiting confirmation. When the pipeline is complete there is no button — only the ⋯ mini remains.
 
 ### Non-Accepted Meeting Indicator
 
@@ -1035,17 +1044,49 @@ All commands are available from the command palette (`Cmd+P`):
 
 ## Settings Reference
 
-### Notes
+Settings are organized into six tabs, grouped by pipeline stage: **Calendar · Notes & people · Recording · Speakers · Summary & research · LLM engine**.
+
+### Calendar
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **People folder** | *(empty)* | Vault folder containing people notes. Matched attendees render as `[[wiki links]]`. |
+| **Calendar provider** | Microsoft 365 | Which calendar service to connect to (Microsoft 365 or Google Calendar). The matching account section below the dropdown swaps with this choice. |
+| **Timezone** | *(system locale)* | IANA timezone for displaying meeting times. Defaults to your system's timezone. |
+| **Time format** | Auto | 12-hour, 24-hour, or auto-detect from system locale. |
+| **Show all-day events** | Off | Display all-day events in the calendar view. |
+| **Important organizers** | *(empty)* | Organizers whose meetings show an alert icon in the gutter. Autocomplete from your calendar provider. |
+| **Refresh interval** | `5` min | Auto-refresh frequency for the calendar view. |
+| **Cache future days** | `5` | Number of upcoming days to pre-fetch. |
+| **Cache retention** | `30` days | How long past calendar data is kept locally. |
+
+**Microsoft account** (shown when the provider is Microsoft 365):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Tenant ID** | *(empty)* | Directory (tenant) ID from your Azure AD app registration. Leave empty to auto-detect from your account at sign-in. |
+| **Client ID** | *(empty)* | Application (client) ID from your Azure AD app registration. |
+| **Cloud instance** | Public | Microsoft cloud environment. |
+
+**Google account** (shown when the provider is Google Calendar):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Client ID** | *(empty)* | OAuth client ID from your Google Cloud Console desktop app credentials. |
+| **Client secret** | *(empty)* | OAuth client secret from your Google Cloud Console desktop app credentials. |
+
+### Notes & people
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | **Notes folder** | `Meetings` | Where meeting notes are created. |
-| **Transcripts folder** | `Transcripts` | Where transcript files are created. |
 | **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}` (YYYY-MM-DD), `{{time}}` (HHmm, 24-hour), `{{subject}}`. Add `{{time}}` to keep two same-subject meetings on the same day in separate notes. |
-| **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
-| **Merge archive folder** | `WhisperCal Archive` | Where original part notes and transcripts are moved after [merging meetings](#merging-meetings). Must be outside the notes and transcripts folders. |
 | **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
+| **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
+| **Transcripts folder** | `Transcripts` | Where transcript files are created. |
+| **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
+| **People folder** | *(empty)* | Vault folder containing people notes. Matched attendees render as `[[wiki links]]`. |
+| **Auto-create people notes** | Off | Automatically create people notes for meeting organizers and newly tagged speakers without one. |
+| **People template** | *(empty)* | Template for auto-created people notes. Available: `{{full_name}}`, `{{nickname}}`, `{{email}}`, `{{organization}}`. |
 
 ### Recording
 
@@ -1057,62 +1098,48 @@ All commands are available from the command palette (`Cmd+P`):
 | **Unlinked lookback** | `30` days | How far back to check for unlinked recordings (MacWhisper source only). |
 | **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from the port file at `~/Library/Application Support/Tome/api-port` (Recording API source only). |
 
-### LLM
+### Speakers
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Speaker voiceprints folder** | `Caches/Voiceprints` | Where per-speaker voice embeddings are stored for acoustic matching. |
+| **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) to accept an acoustic speaker match. Higher = stricter. Solo-library matches use at least `0.55`. |
+| **Auto-tag when all speakers match** | Off | Skip the modal and apply tags when every speaker is a voiceprint match at/above the floor below. Never enrolls/heals a library (drift guard). |
+| **Auto-tag confidence floor** | `0.80` | Cosine floor (0–1) every speaker must clear to skip the modal. Only used when the toggle above is on. |
+| **Ignore minor speakers** | `0.05` | An unmatched speaker with at most this share of transcript lines no longer blocks a silent auto-tag — it is left untagged. `0` requires every speaker to match. |
+| **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the transcript post-processing prompt file. Leave empty to skip the LLM step (voiceprint + by-ear confirmation still work). |
+| **Transcript post-processing model** | *(default)* | Claude model for transcript post-processing. |
+| **Additional flags** | *(empty)* | Extra CLI flags for this prompt only, appended after the global flags. |
+| **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
+| **Roster enrichment cap** | `20` | Max invitees enriched with People note context for speaker tagging. |
+| **Speaker clip length** | `5` s | How long timestamp-click audio playback runs in the tagging modal. |
+
+### Summary & research
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
+| **Summarizer model** | *(default)* | Claude model for summarization. |
+| **Additional flags** | *(empty)* | Extra CLI flags for summarization only. |
+| **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your research prompt file. |
+| **Research model** | *(default)* | Claude model for meeting research. |
+| **Additional flags** | *(empty)* | Extra CLI flags for research only. |
+| **Meeting series notes folder** | *(empty)* | Folder of per-series notes whose `## Research instructions` sections pre-fill the Research modal for recurring meetings. |
+
+### LLM engine
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. |
-| **CLI command** | `claude` | LLM CLI executable name or path. |
-| **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
-| **Microphone user** | *(empty)* | Your full name, passed to the LLM to identify your voice. |
-| **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the transcript post-processing prompt file. |
-| **Transcript post-processing model** | *(default)* | Claude model for transcript post-processing. |
-| **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
-| **Summarizer model** | *(default)* | Claude model for summarization. |
-| **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your research prompt file. |
-| **Research model** | *(default)* | Claude model for meeting research. |
-| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
-| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
-| **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
 | **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. |
 | **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
-| **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) to accept an acoustic speaker match. Higher = stricter. Solo-library matches use at least `0.55`. |
-| **Auto-tag when all speakers match** | Off | Skip the modal and apply tags when every speaker is a voiceprint match at/above the floor below. Never enrolls/heals a library (drift guard). |
-| **Auto-tag confidence floor** | `0.80` | Cosine floor (0–1) every speaker must clear to skip the modal. Only used when the toggle above is on. |
+| **CLI command** | `claude` | LLM CLI executable name or path. |
+| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
+| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
+| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
+| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
+| **Debug mode** | Off | Open LLM commands in Terminal instead of background (macOS only). |
 | **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I`). Off by default to avoid leaking meeting content. |
-| **Debug mode** | Off | Open LLM commands in Terminal instead of background. |
-
-### Calendar
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Calendar provider** | Microsoft 365 | Which calendar service to connect to (Microsoft 365 or Google Calendar). |
-| **Timezone** | *(system locale)* | IANA timezone for displaying meeting times. Defaults to your system's timezone. |
-| **Time format** | Auto | 12-hour, 24-hour, or auto-detect from system locale. |
-| **Refresh interval** | `5` min | Auto-refresh frequency for the calendar view. |
-| **Show all-day events** | Off | Display all-day events in the calendar view. |
-| **Important organizers** | *(empty)* | Organizers whose meetings show an alert icon in the gutter. Autocomplete from your calendar provider. |
-| **Cache future days** | `5` | Number of upcoming days to pre-fetch. |
-| **Cache retention** | `30` days | How long past calendar data is kept locally. |
-
-### Microsoft Account
-
-Shown when Calendar provider is set to "Microsoft 365".
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Tenant ID** | *(empty)* | Directory (tenant) ID from your Azure AD app registration. Leave empty to auto-detect from your account at sign-in. |
-| **Client ID** | *(empty)* | Application (client) ID from your Azure AD app registration. |
-| **Cloud instance** | Public | Microsoft cloud environment. |
-
-### Google Account
-
-Shown when Calendar provider is set to "Google Calendar".
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Client ID** | *(empty)* | OAuth client ID from your Google Cloud Console desktop app credentials. |
-| **Client secret** | *(empty)* | OAuth client secret from your Google Cloud Console desktop app credentials. |
 
 ---
 
@@ -1183,6 +1210,8 @@ A rail segment stays neutral (and isn't clickable) until its stage's artifact ex
 - **Transcript** requires a meeting note to exist first.
 - **Speakers** requires a linked transcript.
 - **Summary** requires speakers to be tagged (`pipeline_state: tagged`).
+
+Once a stage is reached and waiting on you (speakers to tag, summary to run), its segment turns the warning color instead of gray — gray always means "not reached yet".
 
 The smart action button always shows the single next step that *is* available, so if nothing seems clickable, the button is where to look.
 
