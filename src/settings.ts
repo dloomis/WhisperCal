@@ -209,12 +209,18 @@ class LlmConsentModal extends Modal {
 	}
 }
 
+type SettingsTabId = "calendar" | "notes" | "recording" | "speakers" | "summary" | "llm";
+
 export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
 	private authStatusEl: HTMLElement | null = null;
 	private authUnsubscribe: (() => void) | null = null;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchTimer: number | null = null;
+	/** Active settings tab; persists across re-renders for the session. */
+	private activeTab: SettingsTabId = "calendar";
+	/** Model dropdowns rendered by the active tab, keyed for refreshModels(). */
+	private modelSelects: {sel: HTMLSelectElement; key: "speakerTagModel" | "summarizerModel" | "researchModel"}[] = [];
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
 		super(app, plugin);
@@ -344,9 +350,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		// Unsubscribe any previous auth listener to prevent stacking on re-render
+		// Unsubscribe any previous auth listener to prevent stacking on re-render.
+		// The auth status element only exists while the Calendar tab is rendered.
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
+		this.authStatusEl = null;
+		// Model dropdowns re-register with whichever tab renders them.
+		this.modelSelects = [];
 
 		const {containerEl} = this;
 		containerEl.empty();
@@ -357,118 +367,47 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			text: `v${this.plugin.manifest.version}`,
 		});
 
-		new Setting(containerEl)
-			.setName("Notes")
-			.setHeading();
+		// Tab bar — settings grouped by pipeline stage. Obsidian has no native
+		// tab API for plugin settings, so this is a plain button row; the active
+		// tab persists on the instance for the session.
+		const tabs: {id: SettingsTabId; label: string}[] = [
+			{id: "calendar", label: "Calendar"},
+			{id: "notes", label: "Notes & people"},
+			{id: "recording", label: "Recording"},
+			{id: "speakers", label: "Speakers"},
+			{id: "summary", label: "Summary & research"},
+			 
+			{id: "llm", label: "LLM engine"},
+		];
+		const tabBar = containerEl.createDiv({cls: "whisper-cal-settings-tabbar"});
+		for (const tab of tabs) {
+			const btn = tabBar.createEl("button", {
+				cls: "whisper-cal-settings-tab" + (tab.id === this.activeTab ? " whisper-cal-settings-tab-active" : ""),
+				text: tab.label,
+			});
+			btn.addEventListener("click", () => {
+				if (this.activeTab === tab.id) return;
+				this.activeTab = tab.id;
+				this.display();
+			});
+		}
 
-		this.addTextSetting({
-			container: containerEl,
-			name: "People folder",
-			desc: "Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.",
-			placeholder: "People",
-			get: () => this.plugin.settings.peopleFolderPath,
-			set: v => { this.plugin.settings.peopleFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
+		const pane = containerEl.createDiv({cls: "whisper-cal-settings-pane"});
+		switch (this.activeTab) {
+			case "calendar": this.renderCalendarTab(pane); break;
+			case "notes": this.renderNotesTab(pane); break;
+			case "recording": this.renderRecordingTab(pane); break;
+			case "speakers": this.renderSpeakersTab(pane); break;
+			case "summary": this.renderSummaryTab(pane); break;
+			case "llm": this.renderLlmTab(pane); break;
+		}
 
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Auto-create people notes",
-			desc: "Automatically create people notes for meeting organizers and newly-tagged speakers without one. Organizers need a people template; tagged speakers fall back to a minimal note.",
-			get: () => this.plugin.settings.autoCreatePeopleNotes,
-			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
-		});
+		// Populate any model dropdowns the active tab registered.
+		void this.refreshModels();
+	}
 
-		this.addTextSetting({
-			container: containerEl,
-			name: "People template",
-			desc: "Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}",
-			placeholder: "Templates/Person.md",
-			get: () => this.plugin.settings.peopleTemplatePath,
-			set: v => { this.plugin.settings.peopleTemplatePath = v; },
-			suggest: "file",
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Notes folder",
-			desc: "Vault folder where meeting notes are created",
-			placeholder: "Meetings",
-			get: () => this.plugin.settings.noteFolderPath,
-			set: v => { this.plugin.settings.noteFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Transcripts folder",
-			desc: "Vault folder where transcript files are created when linking recordings",
-			placeholder: "Transcripts",
-			get: () => this.plugin.settings.transcriptFolderPath,
-			set: v => { this.plugin.settings.transcriptFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Note filename template",
-			desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
-			placeholder: "{{date}} {{time}} - {{subject}}",
-			get: () => this.plugin.settings.noteFilenameTemplate,
-			set: v => { this.plugin.settings.noteFilenameTemplate = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Unscheduled note subject",
-			desc: "Subject used for ad-hoc meeting notes not tied to a calendar event",
-			placeholder: "Unscheduled Meeting",
-			get: () => this.plugin.settings.unscheduledSubject,
-			set: v => { this.plugin.settings.unscheduledSubject = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Note template",
-			desc: "Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.",
-			placeholder: "Templates/WhisperCal Meeting.md",
-			get: () => this.plugin.settings.noteTemplatePath,
-			set: v => { this.plugin.settings.noteTemplatePath = v; },
-			suggest: "file",
-		});
-
-		new Setting(containerEl)
-			.setName("Word replacement file")
-			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Word Replacements.md")
-					.setValue(this.plugin.settings.replacementFilePath)
-					.onChange((value) => {
-						this.plugin.settings.replacementFilePath = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			})
-			.addButton(button => button
-				.setButtonText("Open")
-				.onClick(async () => {
-					const filePath = this.plugin.settings.replacementFilePath;
-					if (!filePath) {
-						return;
-					}
-					if (!this.app.vault.getAbstractFileByPath(filePath)) {
-						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
-					}
-					void this.app.workspace.openLinkText(filePath, "", false);
-				}));
-
-		new Setting(containerEl)
-			.setName("Calendar")
-			.setHeading();
-
+	/** Calendar tab — provider + credentials, display options, refresh/cache. */
+	private renderCalendarTab(containerEl: HTMLElement): void {
 		new Setting(containerEl)
 			.setName("Calendar provider")
 			.setDesc("Which calendar service to connect to")
@@ -573,11 +512,121 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.cacheRetentionDays,
 			set: v => { this.plugin.settings.cacheRetentionDays = v; },
 		});
+	}
+
+	/** Notes & people tab — where notes land and how they're templated. */
+	private renderNotesTab(containerEl: HTMLElement): void {
+		this.addSubHeading(containerEl, "Meeting notes");
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Notes folder",
+			desc: "Vault folder where meeting notes are created",
+			placeholder: "Meetings",
+			get: () => this.plugin.settings.noteFolderPath,
+			set: v => { this.plugin.settings.noteFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Note filename template",
+			desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
+			placeholder: "{{date}} {{time}} - {{subject}}",
+			get: () => this.plugin.settings.noteFilenameTemplate,
+			set: v => { this.plugin.settings.noteFilenameTemplate = v; },
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Note template",
+			desc: "Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.",
+			placeholder: "Templates/WhisperCal Meeting.md",
+			get: () => this.plugin.settings.noteTemplatePath,
+			set: v => { this.plugin.settings.noteTemplatePath = v; },
+			suggest: "file",
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Unscheduled note subject",
+			desc: "Subject used for ad-hoc meeting notes not tied to a calendar event",
+			placeholder: "Unscheduled Meeting",
+			get: () => this.plugin.settings.unscheduledSubject,
+			set: v => { this.plugin.settings.unscheduledSubject = v; },
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Transcripts folder",
+			desc: "Vault folder where transcript files are created when linking recordings",
+			placeholder: "Transcripts",
+			get: () => this.plugin.settings.transcriptFolderPath,
+			set: v => { this.plugin.settings.transcriptFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
 
 		new Setting(containerEl)
-			.setName("Recording")
-			.setHeading();
+			.setName("Word replacement file")
+			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
+			.addText(text => {
+				text.setPlaceholder("Prompts/Word Replacements.md")
+					.setValue(this.plugin.settings.replacementFilePath)
+					.onChange((value) => {
+						this.plugin.settings.replacementFilePath = value;
+						this.debouncedSave();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			})
+			.addButton(button => button
+				.setButtonText("Open")
+				.onClick(async () => {
+					const filePath = this.plugin.settings.replacementFilePath;
+					if (!filePath) {
+						return;
+					}
+					if (!this.app.vault.getAbstractFileByPath(filePath)) {
+						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
+					}
+					void this.app.workspace.openLinkText(filePath, "", false);
+				}));
 
+		this.addSubHeading(containerEl, "People");
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "People folder",
+			desc: "Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.",
+			placeholder: "People",
+			get: () => this.plugin.settings.peopleFolderPath,
+			set: v => { this.plugin.settings.peopleFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Auto-create people notes",
+			desc: "Automatically create people notes for meeting organizers and newly-tagged speakers without one. Organizers need a people template; tagged speakers fall back to a minimal note.",
+			get: () => this.plugin.settings.autoCreatePeopleNotes,
+			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
+		});
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "People template",
+			desc: "Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}",
+			placeholder: "Templates/Person.md",
+			get: () => this.plugin.settings.peopleTemplatePath,
+			set: v => { this.plugin.settings.peopleTemplatePath = v; },
+			suggest: "file",
+		});
+	}
+
+	/** Recording tab — capture source and its source-specific knobs. */
+	private renderRecordingTab(containerEl: HTMLElement): void {
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		const macwhisperSettings = containerEl.createDiv();
 		const apiSettings = containerEl.createDiv();
@@ -644,12 +693,180 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}));
 
 		updateRecordingVisibility();
+	}
 
-		/* eslint-disable obsidianmd/ui/sentence-case */
+	/** Speakers tab — voiceprint matching, the LLM fallback prompt, and modal knobs. */
+	private renderSpeakersTab(containerEl: HTMLElement): void {
+		 
+		this.addTextSetting({
+			container: containerEl,
+			name: "Speaker voiceprints folder",
+			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
+			placeholder: "Caches/Voiceprints",
+			get: () => this.plugin.settings.voiceprintFolderPath,
+			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
 		new Setting(containerEl)
-			.setName("LLM")
-			.setHeading();
+			.setName("Voiceprint match floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
+				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
+				"Default 0.50. Solo-library matches always use at least 0.55.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.50")
+				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintMatchFloor = num;
+						this.debouncedSave();
+					}
+				}));
 
+		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
+		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
+		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
+		// when you confirm in the modal.
+		const autoTagSkipSub = containerEl.createDiv();
+		const autoTagSkipSetting = new Setting(containerEl)
+			.setName("Auto-tag when all speakers match")
+			.setDesc(
+				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
+				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
+				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
+			)
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
+				.onChange(async (value) => {
+					this.plugin.settings.voiceprintAutoTagSkipModal = value;
+					await this.plugin.saveSettings();
+					autoTagSkipSub.toggle(value);
+				}));
+		// Move the toggle above its sub-setting container.
+		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(autoTagSkipSub)
+			.setName("Auto-tag confidence floor")
+			.setDesc(
+				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
+				"Keep it high so unattended tagging stays strict. Default 0.80.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.80")
+				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintAutoTagFloor = num;
+						this.debouncedSave();
+					}
+				}));
+
+		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
+		new Setting(autoTagSkipSub)
+			.setName("Ignore minor speakers")
+			.setDesc(
+				"Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
+				"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
+				"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
+				"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
+			)
+			.addText(text => text
+				.setPlaceholder("0.05")
+				.setValue(String(this.plugin.settings.voiceprintAutoTagMinorMaxShare))
+				.onChange((value) => {
+					const num = parseFloat(value);
+					if (!isNaN(num) && num >= 0 && num <= 1) {
+						this.plugin.settings.voiceprintAutoTagMinorMaxShare = num;
+						this.debouncedSave();
+					}
+				}));
+		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
+
+		this.addPromptGroup(
+			containerEl,
+			"Transcript post-processing",
+			"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
+			"Prompts/Transcript Post-Processing Prompt.md",
+			"speakerTaggingPromptPath",
+			"speakerTagModel",
+			"speakerTagFlags",
+		);
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Microphone user",
+			desc: "Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts",
+			placeholder: "Full name",
+			get: () => this.plugin.settings.microphoneUser,
+			set: v => { this.plugin.settings.microphoneUser = v; },
+		});
+
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Roster enrichment cap",
+			desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
+			get: () => this.plugin.settings.rosterMaxEnriched,
+			set: v => { this.plugin.settings.rosterMaxEnriched = v; },
+		});
+
+		this.addNumberSetting({
+			container: containerEl,
+			name: "Speaker clip length (seconds)",
+			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
+			placeholder: "5",
+			min: 0,
+			get: () => this.plugin.settings.speakerTagClipSeconds,
+			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
+		});
+		 
+	}
+
+	/** Summary & research tab — the two note-producing prompts and their inputs. */
+	private renderSummaryTab(containerEl: HTMLElement): void {
+		 
+		this.addPromptGroup(
+			containerEl,
+			"Summarizer",
+			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
+			"Prompts/Meeting Summarizer.md",
+			"summarizerPromptPath",
+			"summarizerModel",
+			"summarizerFlags",
+		);
+
+		this.addPromptGroup(
+			containerEl,
+			"Research",
+			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
+			"Prompts/Meeting Research.md",
+			"researchPromptPath",
+			"researchModel",
+			"researchFlags",
+		);
+
+		this.addTextSetting({
+			container: containerEl,
+			name: "Meeting series notes folder",
+			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
+			placeholder: "Meeting Series",
+			get: () => this.plugin.settings.seriesNotesFolderPath,
+			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
+			suggest: "folder",
+			browse: true,
+		});
+		 
+	}
+
+	/** LLM engine tab — the shared plumbing every prompt runs on. */
+	private renderLlmTab(containerEl: HTMLElement): void {
+		/* eslint-disable obsidianmd/ui/sentence-case */
 		new Setting(containerEl)
 			.setName("Enable LLM features")
 			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
@@ -749,7 +966,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.anthropicApiKey = value.trim();
 						this.debouncedSave();
-						void refreshModels();
+						void this.refreshModels();
 					});
 			});
 
@@ -770,6 +987,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
 		});
 
+		this.addSubHeading(containerEl, "Troubleshooting");
+
 		if (Platform.isMacOS) {
 			this.addToggleSetting({
 				container: containerEl,
@@ -787,244 +1006,81 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.llmDebugLogging,
 			set: v => { this.plugin.settings.llmDebugLogging = v; },
 		});
-
-		// Per-prompt settings: each prompt has its own sub-section with a file
-		// path, model, and additional flags appended after the global flags.
-		// Each select is paired with its model key so refreshModels() doesn't
-		// depend on the order the prompt sub-sections are rendered.
-		const modelSelects: {sel: HTMLSelectElement; key: "speakerTagModel" | "summarizerModel" | "researchModel"}[] = [];
-
-		const addPromptSetting = (
-			name: string,
-			promptDesc: string,
-			placeholder: string,
-			pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
-			modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
-			flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
-		) => {
-			this.addSubHeading(containerEl, name);
-
-			new Setting(containerEl)
-				.setName("Prompt")
-				.setDesc(promptDesc)
-				.addText(text => {
-					text.setPlaceholder(placeholder)
-						.setValue(this.plugin.settings[pathKey])
-						.onChange((value) => {
-							this.plugin.settings[pathKey] = value;
-							this.debouncedSave();
-						});
-					new FileSuggest(this.app, text.inputEl);
-				});
-
-			new Setting(containerEl)
-				.setName("Model")
-				.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key above to load available models.`)
-				.addDropdown(dropdown => {
-					modelSelects.push({sel: dropdown.selectEl, key: modelKey});
-					dropdown.addOption("", "Default");
-					const current = this.plugin.settings[modelKey];
-					if (current) {
-						dropdown.addOption(current, current);
-					}
-					dropdown.setValue(current);
-					dropdown.onChange(async (value) => {
-						this.plugin.settings[modelKey] = value;
-						await this.plugin.saveSettings();
-					});
-				});
-
-			this.addTextSetting({
-				container: containerEl,
-				name: "Additional flags",
-				desc: `Extra CLI flags for ${name.toLowerCase()} only, appended after the global flags above (e.g. --effort medium). Leave empty to use only the global flags.`,
-				placeholder: "--effort medium",
-				get: () => this.plugin.settings[flagsKey],
-				set: v => { this.plugin.settings[flagsKey] = v; },
-			});
-		};
-
-		addPromptSetting(
-			"Summarizer",
-			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
-			"Prompts/Meeting Summarizer.md",
-			"summarizerPromptPath",
-			"summarizerModel",
-			"summarizerFlags",
-		);
-
-		addPromptSetting(
-			"Research",
-			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
-			"Prompts/Meeting Research.md",
-			"researchPromptPath",
-			"researchModel",
-			"researchFlags",
-		);
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Meeting series notes folder",
-			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
-			placeholder: "Meeting Series",
-			get: () => this.plugin.settings.seriesNotesFolderPath,
-			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		// ── Speaker tagging ──────────────────────────────────────────────
-		// Acoustic voiceprint matching (LLM-free) plus the LLM fallback prompt
-		// and the modal/roster knobs that shape the Speakers pipeline stage.
-		new Setting(containerEl)
-			.setName("Speaker tagging")
-			.setHeading();
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Speaker voiceprints folder",
-			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
-			placeholder: "Caches/Voiceprints",
-			get: () => this.plugin.settings.voiceprintFolderPath,
-			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(containerEl)
-			.setName("Voiceprint match floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
-				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
-				"Default 0.50. Solo-library matches always use at least 0.55.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.50")
-				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintMatchFloor = num;
-						this.debouncedSave();
-					}
-				}));
-
-		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
-		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
-		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
-		// when you confirm in the modal.
-		const autoTagSkipSub = containerEl.createDiv();
-		const autoTagSkipSetting = new Setting(containerEl)
-			.setName("Auto-tag when all speakers match")
-			.setDesc(
-				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
-				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
-				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
-			)
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
-				.onChange(async (value) => {
-					this.plugin.settings.voiceprintAutoTagSkipModal = value;
-					await this.plugin.saveSettings();
-					autoTagSkipSub.toggle(value);
-				}));
-		// Move the toggle above its sub-setting container.
-		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
-
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(autoTagSkipSub)
-			.setName("Auto-tag confidence floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
-				"Keep it high so unattended tagging stays strict. Default 0.80.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.80")
-				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintAutoTagFloor = num;
-						this.debouncedSave();
-					}
-				}));
-
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(autoTagSkipSub)
-			.setName("Ignore minor speakers")
-			.setDesc(
-				"Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
-				"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
-				"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
-				"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.05")
-				.setValue(String(this.plugin.settings.voiceprintAutoTagMinorMaxShare))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintAutoTagMinorMaxShare = num;
-						this.debouncedSave();
-					}
-				}));
-		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
-
-		addPromptSetting(
-			"Transcript post-processing",
-			"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
-			"Prompts/Transcript Post-Processing Prompt.md",
-			"speakerTaggingPromptPath",
-			"speakerTagModel",
-			"speakerTagFlags",
-		);
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Microphone user",
-			desc: "Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts",
-			placeholder: "Full name",
-			get: () => this.plugin.settings.microphoneUser,
-			set: v => { this.plugin.settings.microphoneUser = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Roster enrichment cap",
-			desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
-			get: () => this.plugin.settings.rosterMaxEnriched,
-			set: v => { this.plugin.settings.rosterMaxEnriched = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Speaker clip length (seconds)",
-			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
-			placeholder: "5",
-			min: 0,
-			get: () => this.plugin.settings.speakerTagClipSeconds,
-			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
-		});
-
-		// Populate all model dropdowns from the API
-		const refreshModels = async () => {
-			const models = await this.fetchAnthropicModels();
-			for (const {sel, key} of modelSelects) {
-				const current = this.plugin.settings[key];
-				sel.replaceChildren();
-				sel.add(new Option("Default", ""));
-				for (const m of models) {
-					sel.add(new Option(m.display_name, m.id));
-				}
-				sel.value = current;
-			}
-		};
-		void refreshModels();
-
 		/* eslint-enable obsidianmd/ui/sentence-case */
-
 	}
+
+	/**
+	 * Render one prompt group (Prompt path / Model / Additional flags) into a
+	 * tab. Each model select registers in modelSelects so refreshModels() can
+	 * populate it regardless of which tab is active.
+	 */
+	private addPromptGroup(
+		container: HTMLElement,
+		name: string,
+		promptDesc: string,
+		placeholder: string,
+		pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
+		modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
+		flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
+	): void {
+		 
+		this.addSubHeading(container, name);
+
+		new Setting(container)
+			.setName("Prompt")
+			.setDesc(promptDesc)
+			.addText(text => {
+				text.setPlaceholder(placeholder)
+					.setValue(this.plugin.settings[pathKey])
+					.onChange((value) => {
+						this.plugin.settings[pathKey] = value;
+						this.debouncedSave();
+					});
+				new FileSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(container)
+			.setName("Model")
+			.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key on the LLM engine tab to load available models.`)
+			.addDropdown(dropdown => {
+				this.modelSelects.push({sel: dropdown.selectEl, key: modelKey});
+				dropdown.addOption("", "Default");
+				const current = this.plugin.settings[modelKey];
+				if (current) {
+					dropdown.addOption(current, current);
+				}
+				dropdown.setValue(current);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings[modelKey] = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		this.addTextSetting({
+			container,
+			name: "Additional flags",
+			desc: `Extra CLI flags for ${name.toLowerCase()} only, appended after the global flags on the LLM engine tab (e.g. --effort medium). Leave empty to use only the global flags.`,
+			placeholder: "--effort medium",
+			get: () => this.plugin.settings[flagsKey],
+			set: v => { this.plugin.settings[flagsKey] = v; },
+		});
+		 
+	}
+
+	/** Populate all registered model dropdowns from the API. */
+	private async refreshModels(): Promise<void> {
+		const models = await this.fetchAnthropicModels();
+		for (const {sel, key} of this.modelSelects) {
+			const current = this.plugin.settings[key];
+			sel.replaceChildren();
+			sel.add(new Option("Default", ""));
+			for (const m of models) {
+				sel.add(new Option(m.display_name, m.id));
+			}
+			sel.value = current;
+		}
+	}
+
 
 	hide(): void {
 		this.authUnsubscribe?.();
