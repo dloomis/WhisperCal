@@ -3,6 +3,7 @@
  * exists, so clicking joins directly instead of bouncing through a browser
  * interstitial. Unknown providers pass through unchanged.
  */
+import {shell} from "electron";
 import {debug} from "./debug";
 
 /**
@@ -55,17 +56,16 @@ export function toMeetingDeepLink(url: string): string {
  * rejection), fall back to opening the original URL in the browser.
  */
 export async function openMeetingUrl(url: string): Promise<void> {
-	const electron = require("electron") as {shell: {openExternal(url: string): Promise<void>}};
 	const deepLink = toMeetingDeepLink(url);
 	if (deepLink !== url) {
 		try {
 			debug("meetingLink", `opening deep link: ${deepLink}`);
-			await electron.shell.openExternal(deepLink);
+			await shell.openExternal(deepLink);
 			return;
 		} catch (err) {
 			// App not installed — fall back to the browser.
 			debug("meetingLink", `deep link failed, falling back to browser: ${String(err)}`);
 		}
 	}
-	await electron.shell.openExternal(url);
+	await shell.openExternal(url);
 }

@@ -29,7 +29,17 @@ export async function applySpeakerTags(
 	const decisionByName = new Map<string, SpeakerTagDecision>();
 	for (const d of decisions) {
 		if (d.speakerId) decisionById.set(d.speakerId, d);
-		if (d.originalName) decisionByName.set(d.originalName.toLowerCase(), d);
+		if (d.originalName) {
+			// Keep the FIRST decision per name — a later duplicate label must not
+			// silently steal the mapping (the id-based lookup above stays precise
+			// either way; this map is only the no-id fallback).
+			const key = d.originalName.toLowerCase();
+			if (decisionByName.has(key)) {
+				console.warn(`[WhisperCal] Duplicate speaker label "${d.originalName}" in decisions — name-based matching keeps the first`);
+			} else {
+				decisionByName.set(key, d);
+			}
+		}
 	}
 
 	// 1. Update frontmatter

@@ -452,11 +452,25 @@
 	transition-delay: 200ms;
 }
 
+/* With a badge showing the rail carries 18px bottom margin; -8px here keeps
+   the rail→actions gap at the same 10px as the badge-less case. */
+.whisper-cal-card-has-badge .whisper-cal-card-expand:hover .whisper-cal-card-actions-wrap,
+.whisper-cal-card-has-badge .whisper-cal-card-expand:has(:focus-visible) .whisper-cal-card-actions-wrap,
+.whisper-cal-card-has-badge.whisper-cal-card-active .whisper-cal-card-actions-wrap {
+	margin-top: -8px;
+}
+
 .whisper-cal-card-actions-wrap > .whisper-cal-card-actions {
 	overflow: hidden;
 	min-height: 0;
 	margin-top: 0;
-	padding: 0 1px;
+	/* Inner padding keeps button borders clear of overflow:hidden clipping; the
+	   negative margins over-cancel it by 1px so the first button sits 1px left
+	   of the rail's first segment — its border makes a flush box read as
+	   indented, so the optical alignment needs the extra pixel. */
+	padding: 0 2px;
+	margin-left: -3px;
+	margin-right: -3px;
 }
 
 .whisper-cal-card-meta-item {
@@ -646,6 +660,49 @@
 .whisper-cal-settings input[type="password"],
 .whisper-cal-settings select {
 	min-width: 300px;
+}
+
+/* Settings — tab bar grouping the settings by pipeline stage. Plain buttons
+   (Obsidian has no native settings-tab API); the active tab is accent-filled.
+   Scoped selectors out-rank Obsidian's `button:not(.clickable-icon)` styles. */
+.whisper-cal-settings .whisper-cal-settings-tabbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-bottom: 16px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab {
+	height: 28px;
+	padding: 0 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: transparent;
+	color: var(--text-muted);
+	box-shadow: none;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+	font-weight: 500;
+}
+
+.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab.whisper-cal-settings-tab-active {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+/* The first heading inside a tab pane doesn't need Obsidian's big top gap —
+   the tab bar already separates it from the chrome above. */
+.whisper-cal-settings .whisper-cal-settings-pane > .setting-item:first-child {
+	border-top: none;
+	padding-top: 0;
 }
 
 /* Settings — lighter sub-section label nested under a top-level heading.
@@ -961,6 +1018,55 @@
 	display: flex;
 	gap: 4px;
 	margin-top: 9px;
+	/* Positioning context for the activity badge, which projects into the gutter. */
+	position: relative;
+}
+
+/* While an activity badge is showing, grow the collapsed card by the ~18px
+   the badge hangs below the rail so the bottom whitespace (the content's
+   12px padding) stays the same as the badge-less default. The expanded
+   actions row compensates (see .whisper-cal-card-actions-wrap margin-top)
+   so hover-expanded spacing is identical in both cases. */
+.whisper-cal-card-has-badge .whisper-cal-rail {
+	margin-bottom: 18px;
+}
+
+/* Activity badge — one-word activity label ("Processing", "Summarizing"),
+   with the LLM model name on a second line. Shown while a job runs; replaces
+   the old verbose status line. A child of the rail, absolutely positioned
+   leftward into the time gutter so it sits exactly level with the rail's row.
+   Horizontal math: the rail's left edge sits at gutter width (92px) + gutter
+   border (3px) + content padding (12px) = 107px from the card's left edge;
+   anchoring the badge's right edge 25px left of the rail and giving it the
+   gutter's inner width (72px) lines it up with the gutter's 10px padding box. */
+.whisper-cal-rail .whisper-cal-rail-badge {
+	position: absolute;
+	right: calc(100% + 25px);
+	width: 72px;
+	/* First line level with the rail's row, model line hanging below. The
+	   negative top centers the label's ~13px text line on the collapsed 5px
+	   rail bars ((13 - 5) / 2 = 4) rather than hanging the text under them. */
+	top: -4px;
+	line-height: 1.3;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	font-size: 10px;
+	color: var(--text-normal);
+}
+
+.whisper-cal-rail-badge-label {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Model name — second line, left-justified with the label, static. */
+.whisper-cal-rail-badge-model {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .whisper-cal-rail .whisper-cal-rail-seg {
@@ -1148,7 +1254,9 @@
 	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
 	border-color: var(--interactive-accent);
 	color: var(--interactive-accent);
-	cursor: wait;
+	/* Plain arrow, not `wait` — on macOS the wait cursor is the beach ball,
+	   which reads as a hung app. The button is disabled while busy anyway. */
+	cursor: default;
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
@@ -1157,8 +1265,9 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 28px;
+	/* Square, and exactly the smart button's 30px height so the action row tops align. */
+	width: 30px;
+	height: 30px;
 	padding: 0;
 	border-radius: var(--radius-s);
 	border: 1px solid var(--background-modifier-border);
@@ -1178,28 +1287,6 @@
 	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
 	border-color: var(--interactive-accent);
 	color: var(--interactive-accent);
-}
-
-/* Ghost/quiet minis — pipeline complete, so the card goes calm. */
-.whisper-cal-mini.whisper-cal-mini-quiet {
-	border-color: transparent;
-	background: transparent;
-	color: var(--text-muted);
-}
-
-.whisper-cal-mini-quiet:hover:not(:disabled) {
-	background: var(--background-modifier-hover);
-	border-color: transparent;
-	color: var(--text-normal);
-}
-
-/* Busy mini — Research job running. */
-.whisper-cal-mini.whisper-cal-mini-busy {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
-	border-color: var(--interactive-accent);
-	color: var(--interactive-accent);
-	cursor: wait;
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes whisper-cal-pulse {

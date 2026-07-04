@@ -10,7 +10,9 @@ import {parseDisplayName} from "../utils/nameParser";
 import type {CardStatusVariant} from "./CardUiState";
 import {FM} from "../constants";
 
-export type OnStatus = (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void;
+/** `badge` is the compressed one/two-word form of `msg` shown in the card's
+ *  gutter activity badge; `msg` itself becomes the badge tooltip. */
+export type OnStatus = (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant, badge?: string) => void;
 
 /**
  * Internal helper — performs the actual recording→note link: sets MacWhisper
@@ -41,25 +43,25 @@ async function performLink(opts: {
 	// Phase 2: Create transcript file in background (fire-and-forget)
 	// Polls for transcript lines in case MacWhisper is still transcribing.
 	void (async () => {
-		onStatus?.("Linking recording\u2026");
+		onStatus?.("Linking recording\u2026", undefined, undefined, undefined, "Linking");
 		try {
 			// Wait for MacWhisper transcription to finish
 			const TRANSCRIPTION_POLL_INTERVAL_MS = 3000;
 			const TRANSCRIPTION_MAX_ATTEMPTS = 60; // ~3 minutes
 			let ready = await hasTranscriptLines(sessionId);
 			if (!ready) {
-				onStatus?.("Waiting for transcription\u2026");
+				onStatus?.("Waiting for transcription\u2026", undefined, undefined, undefined, "Waiting");
 				for (let i = 0; i < TRANSCRIPTION_MAX_ATTEMPTS && !ready; i++) {
 					await sleep(TRANSCRIPTION_POLL_INTERVAL_MS);
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {
-					onStatus?.("Transcription in progress \u2014 try again later", "alert-circle", 6000, "warning");
+					onStatus?.("Transcription in progress \u2014 try again later", "alert-circle", 6000, "warning", "Not ready");
 					return;
 				}
 			}
 
-			onStatus?.("Creating transcript\u2026");
+			onStatus?.("Creating transcript\u2026", undefined, undefined, undefined, "Transcribing");
 			const transcriptPath = await createTranscriptFile({
 				app,
 				notePath,
@@ -72,13 +74,13 @@ async function performLink(opts: {
 				isRecurring,
 			});
 			if (transcriptPath) {
-				onStatus?.("Recording linked", "check", 4000, "done");
+				onStatus?.("Recording linked", "check", 4000, "done", "Linked");
 			} else {
-				onStatus?.("Linked (no transcript)", "check", 4000, "done");
+				onStatus?.("Linked (no transcript)", "check", 4000, "done", "Linked");
 			}
 		} catch (err) {
 			console.error("[WhisperCal] Transcript creation failed:", err);
-			onStatus?.("Transcript creation failed", "alert-circle", 6000, "warning");
+			onStatus?.("Transcript creation failed", "alert-circle", 6000, "warning", "Failed");
 		}
 	})();
 

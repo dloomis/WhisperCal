@@ -24,8 +24,9 @@ export interface AutoSpeakerTaggerDeps {
 	jobs: JobTracker;
 	/** True when another LLM process can start (activeLlmCount < llmMaxConcurrent). */
 	canStartLlm: () => boolean;
-	/** Kick off a background speaker-tagging run (doTagSpeakers with auto=true). */
-	runAutoTag: (file: TFile, fm: Record<string, unknown>, notePath: string) => void;
+	/** Kick off a background speaker-tagging run (doTagSpeakers with auto=true).
+	 *  A returned promise lets the tagger un-mark the file on an unexpected crash. */
+	runAutoTag: (file: TFile, fm: Record<string, unknown>, notePath: string) => void | Promise<void>;
 	/** plugin.registerEvent — ties listener lifetime to the plugin. */
 	registerEvent: (ref: EventRef) => void;
 }
@@ -173,7 +174,16 @@ export class AutoSpeakerTagger {
 				// anti-loop marker; on success the cached proposals take over.
 				this.attempted.add(head.file.path);
 				debug("autoTag", `auto-tagging ${head.file.path}`);
-				this.deps.runAutoTag(head.file, check.fm, check.notePath);
+				// An unexpected crash (rejection) un-marks the file so a later
+				// frontmatter change or startup scan can retry it. A run that
+				// completes without writing proposals stays marked — that is the
+				// anti-loop behavior this set exists for.
+				const path = head.file.path;
+				void Promise.resolve(this.deps.runAutoTag(head.file, check.fm, check.notePath))
+					.catch((e: unknown) => {
+						debug("autoTag", `run crashed for ${path} — un-marking for retry: ${e instanceof Error ? e.message : String(e)}`);
+						this.attempted.delete(path);
+					});
 			}
 		} finally {
 			this.pumping = false;

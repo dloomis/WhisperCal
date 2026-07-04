@@ -266,9 +266,16 @@ export class NoteCreator {
 		}
 		const reservedStr = reserved.join("\n");
 
-		// Insert before the closing --- of frontmatter
-		const closingIdx = content.indexOf("\n---", 1);
-		if (closingIdx === -1) return content;
+		// Insert before the closing --- of the template's frontmatter. A template
+		// without a properly opened-and-closed frontmatter block gets a
+		// synthesized one instead — silently dropping the reserved keys would
+		// orphan the note from its calendar card and break the pipeline. (The
+		// opening check also keeps a body horizontal rule in a frontmatter-less
+		// template from being mistaken for the closing fence.)
+		const closingIdx = content.startsWith("---") ? content.indexOf("\n---", 1) : -1;
+		if (closingIdx === -1) {
+			return `---\n${reservedStr}\n---\n\n${content}`;
+		}
 		return content.slice(0, closingIdx) + "\n" + reservedStr + content.slice(closingIdx);
 	}
 }

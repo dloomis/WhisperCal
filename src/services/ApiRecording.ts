@@ -13,6 +13,17 @@ import {FM} from "../constants";
 const linkingInProgress = new Set<string>();
 
 /**
+ * Plugin-lifecycle stop signal for the fire-and-forget watch/link loops. The
+ * recording watch loop stops via cardUi.clear() on unload, but waitAndLink's
+ * transcribe-wait poll (up to ~5 min) would otherwise keep running — and
+ * writing vault files — after the plugin is disabled.
+ */
+let watchersStopped = false;
+export function stopApiRecordingWatchers(): void { watchersStopped = true; }
+/** Re-arm after a plugin reload in case the module instance was reused. */
+export function resetApiRecordingWatchers(): void { watchersStopped = false; }
+
+/**
  * Heuristic: did /start fail because the service is already capturing? The error
  * is the API's "Recording API error: <status> <body>" message; the service returns
  * a conflict (409) whose body explains it's already recording. Match either signal.
@@ -139,6 +150,7 @@ export function watchApiRecording(opts: {
 	void (async () => {
 		for (;;) {
 			await sleep(WATCH_INTERVAL_MS);
+			if (watchersStopped) return; // plugin unloaded
 			if (!cardUi.hasRecording(notePath)) return; // stopped via WhisperCal
 			try {
 				const {state, startedAt} = await recordingStatus(baseUrl);
@@ -258,23 +270,24 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 	linkingInProgress.add(notePath);
 
 	const beforeStop = Date.now();
-	onStatus?.("Waiting for transcript\u2026");
+	onStatus?.("Waiting for transcript\u2026", undefined, undefined, undefined, "Waiting");
 	try {
 		// Poll recording API status until transcription completes
 		for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
 			await sleep(POLL_INTERVAL_MS);
+			if (watchersStopped) return;
 			try {
 				const {state} = await recordingStatus(baseUrl);
 				if (state === "complete") break;
 				if (state === "transcribing") {
-					onStatus?.("Transcribing\u2026");
+					onStatus?.("Transcribing\u2026", undefined, undefined, undefined, "Transcribing");
 				}
 			} catch {
 				// Service may have shut down — fall through to file check
 				break;
 			}
 			if (i === MAX_POLL_ATTEMPTS - 1) {
-				onStatus?.("Transcript not ready \u2014 check recording service", "alert-circle", 6000, "warning");
+				onStatus?.("Transcript not ready \u2014 check recording service", "alert-circle", 6000, "warning", "Not ready");
 				return;
 			}
 		}
@@ -288,6 +301,7 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		// Wait for the file to appear — check expected path first, then scan folder
 		for (let i = 0; i < 15 && !transcriptFile; i++) {
 			await sleep(1000);
+			if (watchersStopped) return;
 			const byPath = app.vault.getAbstractFileByPath(expectedPath);
 			if (byPath instanceof TFile) {
 				transcriptFile = byPath;
@@ -298,7 +312,7 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		}
 
 		if (!transcriptFile) {
-			onStatus?.("Transcript file not found \u2014 check output folder", "alert-circle", 6000, "warning");
+			onStatus?.("Transcript file not found \u2014 check output folder", "alert-circle", 6000, "warning", "Not found");
 			return;
 		}
 
@@ -317,14 +331,14 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 
 		if (!noteFile) {
 			console.error(`[WhisperCal] Cannot link transcript: meeting note missing (original path "${notePath}", live path "${liveNoteFile?.path ?? "n/a"}")`);
-			onStatus?.("Meeting note missing \u2014 transcript not linked", "alert-circle", 6000, "warning");
+			onStatus?.("Meeting note missing \u2014 transcript not linked", "alert-circle", 6000, "warning", "Not linked");
 			return;
 		}
 		const currentNotePath = noteFile.path;
 
 		// Enrich transcript with WhisperCal pipeline frontmatter.
 		// Non-fatal: if enrichment fails, still link the transcript to the meeting note.
-		onStatus?.("Enriching transcript\u2026");
+		onStatus?.("Enriching transcript\u2026", undefined, undefined, undefined, "Enriching");
 		let enrichmentFailed = false;
 		try {
 			await enrichTranscriptFrontmatter(app, transcriptFile, currentNotePath, info);
@@ -354,13 +368,13 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		}
 
 		if (enrichmentFailed) {
-			onStatus?.("Transcript linked \u2014 enrichment incomplete", "alert-circle", 6000, "warning");
+			onStatus?.("Transcript linked \u2014 enrichment incomplete", "alert-circle", 6000, "warning", "Linked");
 		} else {
-			onStatus?.("Transcript linked", "check", 4000, "done");
+			onStatus?.("Transcript linked", "check", 4000, "done", "Linked");
 		}
 	} catch (err) {
 		console.error("[WhisperCal] Transcript linking failed:", err);
-		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning");
+		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning", "Failed");
 	} finally {
 		linkingInProgress.delete(notePath);
 	}

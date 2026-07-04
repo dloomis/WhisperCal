@@ -4,7 +4,7 @@ import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./sett
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
-import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, stripAnsi} from "./services/LlmInvoker";
+import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, stripAnsi} from "./services/LlmInvoker";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
@@ -32,22 +32,46 @@ import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvid
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {appendLlmErrorSection} from "./utils/llmErrorLog";
-import {getLinkedTranscriptFile} from "./services/ApiRecording";
+import {getLinkedTranscriptFile, stopApiRecordingWatchers, resetApiRecordingWatchers} from "./services/ApiRecording";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
 import {createPeopleNotesForNames} from "./services/PeopleAutoCreate";
 import {AutoSpeakerTagger} from "./services/AutoSpeakerTagger";
 
-/** Derive a short display name from a Claude model ID, e.g. "claude-opus-4-6" → "Opus 4.6" */
+/** Derive a short display name from an LLM model ID.
+ *  Claude IDs in every shape: "claude-opus-4-6" → "Opus 4.6", "claude-sonnet-5" →
+ *  "Sonnet 5", "claude-3-5-sonnet-20241022" → "Sonnet 3.5". Other vendors get a
+ *  generic cleanup: "gpt-4.1-mini" → "GPT-4.1 Mini", "gemini-2.5-pro" →
+ *  "Gemini 2.5 Pro", "llama-3.1-70b" → "Llama 3.1 70b". */
 function formatModelName(modelId: string): string {
 	if (!modelId) return "";
-	const match = modelId.match(/^claude-(\w+)-(\d+)-(\d+)/);
-	if (match) {
-		const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1);
-		return `${family} ${match[2]}.${match[3]}`;
+	// Strip router/provider prefixes and revision suffixes:
+	// "openai/gpt-4o", "us.anthropic.claude-...-v2:0" → bare model ID.
+	const id = (modelId.split("/").pop() ?? modelId)
+		.replace(/^([a-z]{2,10}\.)+/i, "")
+		.replace(/:.*$/, "")
+		.replace(/-v\d+$/, "");
+	if (id.startsWith("claude-")) {
+		const parts = id.slice("claude-".length).split("-");
+		const family = parts.find(p => /^[a-z]/i.test(p));
+		if (!family) return id;
+		// Version = short numeric tokens in order; 4+ digits is a date stamp, not a version.
+		const nums = parts.filter(p => /^\d{1,3}$/.test(p));
+		const name = family.charAt(0).toUpperCase() + family.slice(1);
+		return nums.length > 0 ? `${name} ${nums.join(".")}` : name;
 	}
-	return modelId;
+	// Non-Anthropic: drop date stamps and noise tokens, title-case the words,
+	// keep version tokens (4o, 2.5, 70b) as-is.
+	const tokens = id.split(/[-_]/).filter(t =>
+		t.length > 0 && !/^\d{6,}$/.test(t) && !/^(latest|preview|exp)$/i.test(t));
+	const pretty = tokens.map((t, i) => {
+		if (/^gpt$/i.test(t)) return "GPT";
+		if (i === 0 && /^o\d/i.test(t)) return t.toLowerCase(); // OpenAI o-series: "o3", "o4"
+		if (/^\d/.test(t)) return t;
+		return t.charAt(0).toUpperCase() + t.slice(1);
+	}).join(" ").replace(/^GPT /, "GPT-");
+	return pretty || modelId;
 }
 
 /** Extract invitee names from transcript frontmatter (meeting_invitees, calendar_attendees, or invitees). */
@@ -111,6 +135,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		resetApiRecordingWatchers();
 
 		// Background auto-tagging of newly linked transcripts (automatic mode).
 		// Constructed before onLayoutReady so the callback can't race a layout
@@ -120,9 +145,8 @@ export default class WhisperCalPlugin extends Plugin {
 			getSettings: () => this.settings,
 			jobs: this.jobs,
 			canStartLlm: () => this.activeLlmCount < this.settings.llmMaxConcurrent,
-			runAutoTag: (file, fm, notePath) => {
-				void this.doTagSpeakers(file, fm, notePath, undefined, {auto: true});
-			},
+			runAutoTag: (file, fm, notePath) =>
+				this.doTagSpeakers(file, fm, notePath, undefined, {auto: true}),
 			registerEvent: (ref) => this.registerEvent(ref),
 		});
 
@@ -373,6 +397,9 @@ export default class WhisperCalPlugin extends Plugin {
 		// Stop the auto-tag queue first so parked sleeps resolve and no new
 		// LLM jobs start during teardown.
 		this.autoTagger.stop();
+		// Stop the fire-and-forget recording watch/link poll loops — they would
+		// otherwise keep polling the service and writing vault files after unload.
+		stopApiRecordingWatchers();
 		this.auth.cancelSignIn();
 		// Stop UI timers and clear job/card state up front so handlers that fire
 		// during teardown don't see stale entries.
@@ -383,11 +410,11 @@ export default class WhisperCalPlugin extends Plugin {
 		void this.cachedProvider?.flush();
 		// Kill any running LLM processes; force-kill stragglers after a grace period.
 		for (const proc of activeProcesses) {
-			proc.kill("SIGTERM");
+			killProcessTree(proc, "SIGTERM");
 		}
 		setTimeout(() => {
 			for (const proc of activeProcesses) {
-				if (!proc.killed) proc.kill("SIGKILL");
+				if (!proc.killed) killProcessTree(proc, "SIGKILL");
 			}
 			activeProcesses.clear();
 		}, 2000);
@@ -706,7 +733,7 @@ export default class WhisperCalPlugin extends Plugin {
 						await this.autoApplyVoiceprintTags(baseMappings, transcriptFile, transcriptPath, notePath);
 						return;
 					}
-					if (vp.size > 0) this.setCardStatus(notePath, `${vp.size} speaker(s) matched by voiceprint — review`, "users-round", 6000, "done");
+					if (vp.size > 0) this.setCardStatus(notePath, `${vp.size} speaker(s) matched by voiceprint — review`, "users-round", 6000, "done", "Review");
 					return;
 				}
 				if (baseMappings.length === 0) {
@@ -737,26 +764,36 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		// Build People Roster and Calendar Attendees for the LLM.
-		// Invitees are always in the parent meeting note frontmatter.
-		const noteFile = this.app.vault.getAbstractFileByPath(notePath.endsWith(".md") ? notePath : notePath + ".md");
-		const noteFm = noteFile instanceof TFile
-			? (this.app.metadataCache.getFileCache(noteFile)?.frontmatter as Record<string, unknown> | undefined) ?? {}
-			: {};
-		const inviteeNames = parseInviteeNames(noteFm);
+		// Build People Roster and Calendar Attendees for the LLM. Invitees are
+		// always in the parent meeting note frontmatter. Guarded: a throw here
+		// would otherwise strand the pre-claimed concurrency slot (runLlmJob's
+		// finally only decrements once the job actually starts), eventually
+		// wedging every LLM action on the concurrency limit.
 		let calendarAttendees: string | undefined;
 		let peopleRoster: string | undefined;
-		if (inviteeNames.length > 0) {
-			calendarAttendees = inviteeNames.join(", ");
-		}
-		if (this.settings.peopleFolderPath) {
-			const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
-			const roster = peopleSvc.buildRoster(
-				this.settings.microphoneUser,
-				inviteeNames,
-				this.settings.rosterMaxEnriched,
-			);
-			if (roster) peopleRoster = roster;
+		try {
+			const noteFile = this.app.vault.getAbstractFileByPath(notePath.endsWith(".md") ? notePath : notePath + ".md");
+			const noteFm = noteFile instanceof TFile
+				? (this.app.metadataCache.getFileCache(noteFile)?.frontmatter as Record<string, unknown> | undefined) ?? {}
+				: {};
+			const inviteeNames = parseInviteeNames(noteFm);
+			if (inviteeNames.length > 0) {
+				calendarAttendees = inviteeNames.join(", ");
+			}
+			if (this.settings.peopleFolderPath) {
+				const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+				const roster = peopleSvc.buildRoster(
+					this.settings.microphoneUser,
+					inviteeNames,
+					this.settings.rosterMaxEnriched,
+				);
+				if (roster) peopleRoster = roster;
+			}
+		} catch (e) {
+			if (slotClaimed) this.activeLlmCount--;
+			console.error("[WhisperCal] Failed to build people roster for speaker tagging:", e);
+			if (!auto) new Notice("Speaker tagging failed while building the people roster — see console");
+			return;
 		}
 
 		this.runLlmJob({
@@ -766,6 +803,7 @@ export default class WhisperCalPlugin extends Plugin {
 			promptPath: this.settings.speakerTaggingPromptPath,
 			preClaimed: slotClaimed,
 			cardIcon: "users-round",
+			cardBadge: "Processing",
 			cardModel: this.settings.speakerTagModel || undefined,
 			cardNotePath: notePath,
 			onRegister: () => this.updateBanners(transcriptPath),
@@ -812,7 +850,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Verify the transcript file still exists after the LLM run
 		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
 			if (auto) {
-				this.setCardStatus(notePath, "Transcript was deleted while post-processing was running", "alert-circle", 8000, "warning");
+				this.setCardStatus(notePath, "Transcript was deleted while post-processing was running", "alert-circle", 8000, "warning", "Deleted");
 				return;
 			}
 			new Notice("Transcript was deleted while post-processing was running");
@@ -867,7 +905,7 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 		if (mappings.length === 0) {
 			if (auto) {
-				this.setCardStatus(notePath, warning || "LLM returned no speaker mappings — check the prompt and transcript", "alert-circle", 8000, "warning");
+				this.setCardStatus(notePath, warning || "LLM returned no speaker mappings — check the prompt and transcript", "alert-circle", 8000, "warning", "No match");
 				return;
 			}
 			new Notice(warning || "LLM returned no speaker mappings — check the prompt and transcript");
@@ -911,7 +949,7 @@ export default class WhisperCalPlugin extends Plugin {
 			// Candidates are cached, never applied. The user reviews via the card's
 			// "Review speakers" pill, which is also what gates auto-summarize
 			// (inside presentSpeakerTagModal, after apply).
-			this.setCardStatus(notePath, "Speaker candidates ready — click Review speakers", "users-round", 8000, "done");
+			this.setCardStatus(notePath, "Speaker candidates ready — click Review speakers", "users-round", 8000, "done", "Review");
 			return;
 		}
 
@@ -939,7 +977,7 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 		if (auto) {
-			this.setCardStatus(notePath, message, "alert-circle", 8000, "warning");
+			this.setCardStatus(notePath, message, "alert-circle", 8000, "warning", "Failed");
 		} else {
 			new Notice(message);
 		}
@@ -1118,7 +1156,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// Directly update meeting note pipeline_state rather than
 				// waiting for the async metadataCache mirror event.
 				await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
-				this.setCardStatus(notePath, "Speakers tagged", "check", 4000, "done");
+				this.setCardStatus(notePath, "Speakers tagged", "check", 4000, "done", "Tagged");
 
 				// Auto-summarize if enabled
 				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
@@ -1242,7 +1280,13 @@ export default class WhisperCalPlugin extends Plugin {
 		// here, so without this the card would go blank mid-process; a pulsing progress status keeps
 		// it honest. The done status below replaces it (or auto-summarize's own progress does), and
 		// the catch clears it on failure.
-		this.setCardStatus(notePath, "Auto-tagging speakers by voiceprint…", "users-round", 0, "progress");
+		this.cardUi.setStatus(notePath, {
+			message: "Auto-tagging speakers by voiceprint…",
+			icon: "users-round",
+			variant: "progress",
+			badge: {label: "Matching"},
+		});
+		this.refreshCalendarCards(notePath);
 		try {
 			await applySpeakerTags(this.app, transcriptPath, decisions);
 
@@ -1263,7 +1307,7 @@ export default class WhisperCalPlugin extends Plugin {
 			const status = skipped > 0
 				? `${tagged} speaker(s) auto-tagged by voiceprint (${skipped} minor left untagged)`
 				: `${tagged} speaker(s) auto-tagged by voiceprint`;
-			this.setCardStatus(notePath, status, "users-round", 5000, "done");
+			this.setCardStatus(notePath, status, "users-round", 5000, "done", "Tagged");
 			debug("voiceprint", `autoApplyVoiceprintTags: applied ${tagged} tag(s) for ${transcriptPath} without enrollment (drift guard)${skipped > 0 ? `, ${skipped} minor speaker(s) left untagged` : ""}`);
 
 			// Auto-summarize if enabled, same as the modal apply path.
@@ -1369,6 +1413,7 @@ export default class WhisperCalPlugin extends Plugin {
 			label: "Summarizing",
 			promptPath: this.settings.summarizerPromptPath,
 			cardIcon: "sparkles",
+			cardBadge: "Summarizing",
 			cardModel: this.settings.summarizerModel || undefined,
 			onRegister: () => this.updateBanners(notePath),
 			onCleanup: () => this.updateBanners(notePath),
@@ -1398,7 +1443,7 @@ export default class WhisperCalPlugin extends Plugin {
 						if (transcriptFile) {
 							await updateFrontmatter(this.app, transcriptFile.path, FM.PIPELINE_STATE, "summarized");
 						}
-						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done");
+						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done", "Summarized");
 					}
 				} else {
 					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -1547,6 +1592,7 @@ export default class WhisperCalPlugin extends Plugin {
 				label: "Researching",
 				promptPath: result.bypassPrompt ? undefined : this.settings.researchPromptPath,
 				cardIcon: "book-open",
+				cardBadge: "Researching",
 				cardModel: this.settings.researchModel || undefined,
 				onRegister: () => this.updateBanners(notePath),
 				onCleanup: () => this.updateBanners(notePath),
@@ -1577,7 +1623,7 @@ export default class WhisperCalPlugin extends Plugin {
 							// linear pipeline_state — so it survives later transcript/summary
 							// state writes and is set regardless of what the research prompt does.
 							await updateFrontmatter(this.app, notePath, FM.RESEARCH_STATE, "research-done");
-							this.setCardStatus(notePath, "Research complete", "check", 4000, "done");
+							this.setCardStatus(notePath, "Research complete", "check", 4000, "done", "Researched");
 						}
 					} else {
 						const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
@@ -1603,6 +1649,9 @@ export default class WhisperCalPlugin extends Plugin {
 		onCleanup?: () => void;
 		/** Icon for card status (e.g. "sparkles", "users-round", "book-open") */
 		cardIcon?: string;
+		/** One-word activity verb for the gutter badge (e.g. "Tagging",
+		 *  "Summarizing", "Researching"). Falls back to `label` when unset. */
+		cardBadge?: string;
 		/** Model ID for card status suffix (e.g. "claude-opus-4-6") */
 		cardModel?: string;
 		/** Note path for card status (defaults to filePath) */
@@ -1645,8 +1694,19 @@ export default class WhisperCalPlugin extends Plugin {
 		const statusNotePath = opts.cardNotePath ?? filePath;
 		const errorNotePath = statusNotePath;
 		if (opts.cardIcon) {
-			const modelSuffix = opts.cardModel ? ` (${formatModelName(opts.cardModel)})` : "";
-			this.setCardStatus(statusNotePath, `${label}${modelSuffix}\u2026`, opts.cardIcon, 0, "progress");
+			// The badge shows which model is running; when no model override is
+			// configured, fall back to the CLI name (capitalized) so it never reads blank.
+			const cli = this.settings.llmCli.split("/").pop() || this.settings.llmCli;
+			const modelName = opts.cardModel
+				? formatModelName(opts.cardModel)
+				: cli.charAt(0).toUpperCase() + cli.slice(1);
+			this.cardUi.setStatus(statusNotePath, {
+				message: `${label}\u2026`,
+				icon: opts.cardIcon,
+				variant: "progress",
+				badge: {label: opts.cardBadge ?? label, model: modelName},
+			});
+			this.refreshCalendarCards(statusNotePath);
 		} else {
 			this.refreshCalendarCards(filePath);
 		}
@@ -1720,8 +1780,8 @@ export default class WhisperCalPlugin extends Plugin {
 		})();
 	}
 
-	private setCardStatus(notePath: string, message: string, icon?: string, durationMs = 4000, variant?: CardStatusVariant): void {
-		this.cardUi.setStatus(notePath, {message, icon, variant});
+	private setCardStatus(notePath: string, message: string, icon?: string, durationMs = 4000, variant?: CardStatusVariant, badge?: string): void {
+		this.cardUi.setStatus(notePath, {message, icon, variant, ...(badge ? {badge: {label: badge}} : {})});
 		this.refreshCalendarCards(notePath);
 		if (durationMs > 0) {
 			setTimeout(() => {
@@ -1866,9 +1926,9 @@ export default class WhisperCalPlugin extends Plugin {
 			attendees,
 			isRecurring,
 			windowMinutes: isUnscheduled ? 720 : undefined,
-			onStatus: (msg, icon, autoClearMs, variant) => {
+			onStatus: (msg, icon, autoClearMs, variant, badge) => {
 				if (msg) {
-					this.setCardStatus(file.path, msg, icon, autoClearMs ?? 0, variant);
+					this.setCardStatus(file.path, msg, icon, autoClearMs ?? 0, variant, badge);
 				} else {
 					this.cardUi.deleteStatus(file.path);
 					this.refreshCalendarCards(file.path);

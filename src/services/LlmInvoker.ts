@@ -2,6 +2,7 @@ import {spawn, execFile, type ChildProcess} from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import process from "process";
 import {Platform} from "obsidian";
 
 interface LlmInvokerOpts {
@@ -57,6 +58,24 @@ function getPluginTmpDir(vaultPath: string, configDir: string): string {
 
 /** Active child processes tracked for cleanup on plugin unload. */
 export const activeProcesses = new Set<ChildProcess>();
+
+/**
+ * Kill a spawned LLM process and everything it started. The POSIX spawn path
+ * uses detached:true so the shell leads its own process group; signalling the
+ * negative pid reaches the CLI (and its children), not just the shell —
+ * child.kill() alone would orphan a hung CLI to launchd on timeout.
+ */
+export function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
+	if (!Platform.isWin && child.pid) {
+		try {
+			process.kill(-child.pid, signal);
+			return;
+		} catch {
+			// Group already gone or not a group leader — fall through.
+		}
+	}
+	child.kill(signal);
+}
 
 // Escape a string for use in a single-quoted shell argument: replace ' with '\''
 function escapeSq(s: string): string {
@@ -285,6 +304,9 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 			child = spawn(userShell, ["-li", "-c", cmd], {
 				cwd: vaultPath,
 				stdio: ["ignore", "pipe", "pipe"],
+				// Own process group so timeout/unload kills reach the CLI the
+				// shell spawns, not just the shell — see killProcessTree.
+				detached: true,
 			});
 		}
 
@@ -311,10 +333,10 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 		if (timeoutMs > 0) {
 			timer = setTimeout(() => {
 				timedOut = true;
-				child.kill("SIGTERM");
+				killProcessTree(child, "SIGTERM");
 				// Force-kill after 5 seconds if SIGTERM doesn't work
 				killTimer = setTimeout(() => {
-					if (!child.killed) child.kill("SIGKILL");
+					if (!child.killed) killProcessTree(child, "SIGKILL");
 				}, 5000);
 			}, timeoutMs);
 		}

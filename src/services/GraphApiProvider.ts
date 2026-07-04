@@ -195,15 +195,23 @@ function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<str
 		? rawBody.trim()
 		: htmlToMarkdown(rawBody).trim();
 
+	// Graph returns times in UTC (no Prefer: outlook.timezone header is sent),
+	// so timed events parse with a Z suffix. All-day events, though, are dates,
+	// not instants — UTC midnight renders as the previous evening anywhere west
+	// of UTC, so parse just the date portion as local midnight instead.
+	const isAllDay = event.isAllDay ?? false;
+	const parseGraphDate = (s: string): Date =>
+		isAllDay ? new Date(s.slice(0, 10) + "T00:00:00") : new Date(s + "Z");
+
 	return {
 		id: event.id,
 		subject: event.subject ?? "(No subject)",
 		body,
-		isAllDay: event.isAllDay ?? false,
+		isAllDay,
 		isOnlineMeeting: event.isOnlineMeeting ?? false,
 		onlineMeetingUrl: event.onlineMeeting?.joinUrl ?? event.onlineMeetingUrl ?? "",
-		startTime: new Date(event.start.dateTime + "Z"),
-		endTime: new Date(event.end.dateTime + "Z"),
+		startTime: parseGraphDate(event.start.dateTime),
+		endTime: parseGraphDate(event.end.dateTime),
 		location: event.location?.displayName ?? "",
 		attendeeCount: attendees.length,
 		attendees,

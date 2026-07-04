@@ -114,8 +114,11 @@ function extractJsonSpeakers(
 	if (jsonStart === -1) return null;
 	const bodyStart = stdout.indexOf("\n", jsonStart);
 	if (bodyStart === -1) return null;
-	const jsonEnd = stdout.indexOf("```", bodyStart);
-	if (jsonEnd === -1) return null;
+	// The prompt requires the JSON block to end the message, so take the LAST
+	// closing fence — a ``` inside a JSON string value (e.g. quoted code in an
+	// evidence field) must not truncate the block.
+	const jsonEnd = stdout.lastIndexOf("```");
+	if (jsonEnd <= bodyStart) return null;
 	const jsonStr = stdout.slice(bodyStart, jsonEnd).trim();
 
 	let parsed: {speakers?: LlmSpeakerEntry[]};
@@ -211,17 +214,21 @@ function mergeWithFrontmatter(
 	// Build a name-based lookup from LLM entries so we match by speaker name
 	// instead of array index — the LLM's numbering may differ from the
 	// frontmatter order (e.g. alphabetical sort vs. speaker-label numbers).
-	const llmByName = new Map<string, ProposedSpeakerMapping>();
+	// A list per name: duplicate labels from the LLM must not overwrite each
+	// other; each frontmatter speaker consumes one entry, leftovers append below.
+	const llmByName = new Map<string, ProposedSpeakerMapping[]>();
 	for (const mapping of llmMap.values()) {
-		llmByName.set(mapping.originalName.toLowerCase(), mapping);
+		const key = mapping.originalName.toLowerCase();
+		const list = llmByName.get(key);
+		if (list) list.push(mapping);
+		else llmByName.set(key, [mapping]);
 	}
 
 	const merged: ProposedSpeakerMapping[] = [];
-	const matched = new Set<string>();
 	for (let i = 0; i < speakers.length; i++) {
 		const s = speakers[i]!;
 		const name = s.name ?? `Speaker ${i}`;
-		const llm = llmByName.get(name.toLowerCase());
+		const llm = llmByName.get(name.toLowerCase())?.shift();
 		if (llm) {
 			// Re-index to frontmatter position and carry over speaker ID / line count
 			merged.push({
@@ -230,7 +237,6 @@ function mergeWithFrontmatter(
 				speakerId: s.id ?? llm.speakerId,
 				lineCount: s.line_count ?? llm.lineCount,
 			});
-			matched.add(name.toLowerCase());
 		} else {
 			merged.push({
 				index: i,
@@ -244,8 +250,8 @@ function mergeWithFrontmatter(
 		}
 	}
 	// Include any LLM entries that didn't match a frontmatter speaker by name
-	for (const mapping of llmMap.values()) {
-		if (!matched.has(mapping.originalName.toLowerCase())) {
+	for (const leftovers of llmByName.values()) {
+		for (const mapping of leftovers) {
 			merged.push({...mapping, index: merged.length});
 		}
 	}

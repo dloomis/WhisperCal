@@ -260,7 +260,15 @@ export async function createTranscriptFile(opts: {
 	const body = buildTranscriptBody(data);
 	const content = `${frontmatter}\n\n${body}`;
 
-	await app.vault.create(transcriptPath, content);
+	try {
+		await app.vault.create(transcriptPath, content);
+	} catch (err) {
+		// Check-then-create race: a concurrent caller (auto-link vs. manual link)
+		// won the create between our existence check and here. Their file carries
+		// the same session's content, so adopt it and continue to the note link.
+		if (!(app.vault.getAbstractFileByPath(transcriptPath) instanceof TFile)) throw err;
+		console.debug(`[WhisperCal] Transcript already created concurrently — reusing: ${transcriptPath}`);
+	}
 
 	// Update meeting note frontmatter with link to transcript and pipeline state.
 	// Batch into a single processFrontMatter call to avoid a race with the

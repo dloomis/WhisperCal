@@ -27,6 +27,13 @@ export interface CardStatus {
 	message: string;
 	icon?: string;
 	variant?: CardStatusVariant;
+	/** Compact gutter badge: activity light + one-word label, with the LLM
+	 *  model name on a second line when the job runs on a model. Progress
+	 *  labels are verbs ("Tagging", "Summarizing", "Matching"); result labels
+	 *  are outcomes ("Linked", "Tagged", "Failed"). When set, the card renders
+	 *  this in the gutter instead of the status message line; `message`
+	 *  becomes the badge's tooltip. */
+	badge?: {label: string; model?: string};
 }
 
 /**

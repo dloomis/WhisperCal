@@ -547,11 +547,11 @@ export function renderMeetingCard(
 function onStatusForCard(
 	notePath: string,
 	opts: MeetingCardOpts,
-): (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant) => void {
+): (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant, badge?: string) => void {
 	const {cardUi} = opts;
-	return (msg, icon, autoClearMs, variant) => {
+	return (msg, icon, autoClearMs, variant, badge) => {
 		if (msg) {
-			cardUi.setStatus(notePath, {message: msg, icon, variant});
+			cardUi.setStatus(notePath, {message: msg, icon, variant, ...(badge ? {badge: {label: badge}} : {})});
 		} else {
 			cardUi.deleteStatus(notePath);
 		}
@@ -620,6 +620,7 @@ function renderCardDynamic(
 		} else if (states.note === "complete") {
 			gutter.addClass("whisper-cal-card-gutter-warning");
 		}
+
 	}
 
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
@@ -848,6 +849,32 @@ function renderCardDynamic(
 	// shown even when collapsed). Each segment opens its stage's artifact on
 	// click; hovering the rail expands the segments into labeled bars.
 	const rail = expandGroup.createDiv({cls: "whisper-cal-rail"});
+
+	// Activity badge — while a job runs (LLM or voiceprint), a blinking light +
+	// one-word action label (with the LLM model name on a second line) rides in
+	// the gutter, level with the rail. A child of the rail so it's absolutely
+	// positioned against the rail's own row (projected leftward into the gutter
+	// — see styles.css); together with the pulsing rail segment it replaces the
+	// verbose status line.
+	const badgeStatus = opts.cardUi.getStatus(notePath);
+	// The badge hangs below the rail; this class buys the collapsed card the
+	// extra height for it (see .whisper-cal-card-has-badge in styles.css) so
+	// the bottom whitespace stays constant whether or not a badge is showing.
+	cardEl.toggleClass("whisper-cal-card-has-badge", !!badgeStatus?.badge);
+	if (badgeStatus?.badge) {
+		// The variant class colors the light: progress = blinking red,
+		// done = green, warning = orange (see styles.css).
+		const badgeVariant = badgeStatus.variant ?? "progress";
+		const badge = rail.createDiv({
+			cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${badgeVariant}`,
+			attr: {"aria-label": badgeStatus.message},
+		});
+		badge.createDiv({cls: "whisper-cal-rail-badge-label", text: badgeStatus.badge.label});
+		if (badgeStatus.badge.model) {
+			badge.createDiv({cls: "whisper-cal-rail-badge-model", text: badgeStatus.badge.model});
+		}
+	}
+
 	const openNote = states.note === "complete" ? () => { void openOrCreateNote(opts); } : undefined;
 	const openTranscript = states.transcriptFile
 		? () => { const tf = states.transcriptFile; if (tf) void app.workspace.openLinkText(tf.path, "", false); }
@@ -865,12 +892,21 @@ function renderCardDynamic(
 	if (states.speakersCandidatesReady) speakersSeg = "attention";
 	else if (states.speakers === "running") speakersSeg = "running";
 	else if (states.speakers === "complete") speakersSeg = "done";
+	// Transcript is in and no job is queued — the pipeline is waiting on the
+	// user to tag speakers (manually or by reviewing), so flag it, don't gray
+	// it. Only when LLM features are on: with them off the pipeline ends at
+	// the transcript and the card already reads as done.
+	else if (states.speakers === "incomplete" && llmOn) speakersSeg = "attention";
 	else speakersSeg = "pending";
 	renderRailSeg(rail, "Speakers", speakersSeg, openTranscript);
 
 	let summarySeg: RailSegState;
 	if (states.summary === "running") summarySeg = "running";
 	else if (states.summary === "complete") summarySeg = "done";
+	// Speakers are tagged and no job is queued — summarizing is the pipeline's
+	// next step waiting on the user. Only when LLM features are on: without
+	// them there is no summarize action, so gray is honest there.
+	else if (states.summary === "incomplete" && llmOn) summarySeg = "attention";
 	else summarySeg = "pending";
 	renderRailSeg(rail, "Summary", summarySeg, openNote);
 
@@ -1014,11 +1050,9 @@ function renderCardDynamic(
 
 	// ⋯ mini — opens the secondary-actions menu; also bound to right-click on
 	// the card body. Always available (its items adapt to state, and Open note/
-	// Research create the note themselves). Goes quiet (borderless) once the
-	// pipeline is complete so the card reads as done.
-	const quiet = states.summary === "complete" || (!llmOn && states.transcript === "complete");
+	// Research create the note themselves).
 	const moreMini = actions.createEl("button", {
-		cls: "whisper-cal-mini" + (quiet ? " whisper-cal-mini-quiet" : ""),
+		cls: "whisper-cal-mini",
 		attr: {"aria-label": "More actions"},
 	});
 	const moreIco = moreMini.createSpan({cls: "whisper-cal-mini-icon"});
@@ -1049,7 +1083,10 @@ function renderCardDynamic(
 	// the group's fill-to-bottom growth adds trailing space below it, never a gap
 	// between it and the action row above.
 	const cs = opts.cardUi.getStatus(notePath);
-	if (cs && cs.variant !== "recording") {
+	// Badge-carrying statuses (LLM jobs, voiceprint auto-tag) render as the
+	// gutter badge above instead of a status line — the pulsing rail segment
+	// already says what's running.
+	if (cs && cs.variant !== "recording" && !cs.badge) {
 		const variant = cs.variant ?? "progress";
 		const statusEl = expandGroup.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
 		if (cs.icon) {
@@ -1059,15 +1096,11 @@ function renderCardDynamic(
 		statusEl.createSpan({text: cs.message});
 	}
 
-	// Cards rest collapsed and expand on hover — but pin one open while
-	// anything is happening on it (recording, LLM jobs, a status line,
-	// candidates awaiting review) so live activity is never hidden.
-	const pinned = states.record === "running"
-		|| states.speakers === "running"
-		|| states.summary === "running"
-		|| states.research === "running"
-		|| states.speakersCandidatesReady
-		|| cs !== undefined;
+	// Cards rest collapsed and expand on hover — but pin one open while a
+	// recording is live so the Stop button is never hidden. Other activity
+	// (LLM jobs, voiceprint) announces itself via the gutter badge and the
+	// pulsing rail segment instead of holding the card open.
+	const pinned = states.record === "running";
 	cardEl.toggleClass("whisper-cal-card-active", pinned);
 }
 
