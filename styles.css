@@ -1101,6 +1101,18 @@
 	transition: background 150ms ease, height 150ms ease-out 200ms, max-width 150ms ease-out 200ms;
 }
 
+/* Solo rail (the ad-hoc placeholder's lone Note segment) — without siblings
+   sharing the row, flex:1 would balloon the one segment to the 200px cap on
+   hover; keep it the size of a single segment among four instead. */
+.whisper-cal-rail-solo .whisper-cal-rail-seg {
+	max-width: 56px;
+}
+
+.whisper-cal-card-expand:hover .whisper-cal-rail-solo .whisper-cal-rail-seg,
+.whisper-cal-card-expand:has(:focus-visible) .whisper-cal-rail-solo .whisper-cal-rail-seg {
+	max-width: 96px;
+}
+
 .whisper-cal-rail-seg-label {
 	font-size: 10px;
 	font-weight: 500;

@@ -458,7 +458,7 @@ export function renderMeetingCard(
 	container: HTMLElement,
 	opts: MeetingCardOpts,
 ): HTMLElement {
-	const {event, timezone, noteCreator, app, onNoteCreated} = opts;
+	const {event, timezone, noteCreator, app} = opts;
 	const card = container.createDiv({cls: "whisper-cal-card"});
 	card.dataset.eventId = event.id;
 	card.dataset.notePath = noteCreator.getNotePath(event);
@@ -511,28 +511,17 @@ export function renderMeetingCard(
 		}
 	}
 
-	// Top-level unscheduled placeholder — just a Create note button, no state lookup.
-	// Rendered directly (not in a collapse wrapper): this card has no status rail to
-	// hover, so a collapsed action row could never be revealed — keep it always visible.
+	// Top-level unscheduled placeholder — mirrors the rail concept instead of a
+	// bespoke button: a single pending Note segment whose click runs the same
+	// create-note flow as a regular card's Note segment (openOrCreateNote
+	// prompts for a name on unscheduled events). The other rail stages don't
+	// apply to a stateless placeholder, so only Note is rendered. The expand
+	// wrapper gives it the same hover-grow-into-labeled-bar behavior as the
+	// full rail.
 	if (event.id === "unscheduled") {
-		const actions = content.createDiv({cls: "whisper-cal-card-actions"});
-		const createBtn = renderSmartBtn(actions, "file-plus-2", "Create note…", {ariaLabel: "Create meeting note"});
-		createBtn.addEventListener("click", () => {
-			createBtn.disabled = true;
-			const handleClick = async () => {
-				try {
-					const name = await new NameInputModal(app, {
-						defaultValue: event.subject,
-					}).prompt();
-					if (!name) return;
-					await noteCreator.createNote({...event, subject: name});
-					if (onNoteCreated) onNoteCreated(event.id);
-				} finally {
-					createBtn.disabled = false;
-				}
-			};
-			void handleClick();
-		});
+		const expandGroup = content.createDiv({cls: "whisper-cal-card-expand"});
+		const rail = expandGroup.createDiv({cls: "whisper-cal-rail whisper-cal-rail-solo"});
+		renderRailSeg(rail, "Note", "pending", () => { void openOrCreateNote(opts); });
 		return card;
 	}
 
