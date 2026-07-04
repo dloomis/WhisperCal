@@ -880,7 +880,12 @@ function renderCardDynamic(
 		? () => { const tf = states.transcriptFile; if (tf) void app.workspace.openLinkText(tf.path, "", false); }
 		: undefined;
 
-	renderRailSeg(rail, "Note", states.note === "complete" ? "done" : "pending", openNote);
+	// The Note segment is clickable even on an unstarted card: clicking it
+	// creates the note, same as the ⋯ menu's Create note (openOrCreateNote
+	// handles both cases; unscheduled events prompt for a name). openNote
+	// stays note-complete-gated for the Summary segment below, which must not
+	// create a note from its pending state.
+	renderRailSeg(rail, "Note", states.note === "complete" ? "done" : "pending", () => { void openOrCreateNote(opts); });
 
 	let transcriptSeg: RailSegState;
 	if (states.record === "running") transcriptSeg = "rec";
