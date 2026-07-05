@@ -1,9 +1,10 @@
-import {App, Modal, Platform, PluginSettingTab, Setting, TextComponent, requestUrl} from "obsidian";
+import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
 import type {CalendarProviderType} from "./types";
 import {MACWHISPER_DB_PATH} from "./constants";
+import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
 import {FolderSelectModal} from "./ui/FolderSelectModal";
@@ -74,6 +75,7 @@ export interface WhisperCalSettings {
 	peopleTemplatePath: string;
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
+	autoRecordOnLaunch: boolean;
 	skipWordReplacementConfirm: boolean;
 	voiceprintFolderPath: string;
 	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
@@ -152,6 +154,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleTemplatePath: "",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
+	autoRecordOnLaunch: false,
 	skipWordReplacementConfirm: false,
 	voiceprintFolderPath: "Caches/Voiceprints",
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
@@ -689,6 +692,42 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.recordingApiBaseUrl)
 				.onChange((value) => {
 					this.plugin.settings.recordingApiBaseUrl = value.replace(/\/+$/, "");
+					this.debouncedSave();
+				}));
+
+		new Setting(apiSettings)
+			.setName("Test API")
+			.setDesc("Check that the recording app is reachable by querying its status endpoint")
+			.addButton(button => button
+				.setButtonText("Test API")
+				.onClick(async () => {
+					const baseUrl = resolveRecordingApiBaseUrl(this.plugin.settings.recordingApiBaseUrl);
+					if (!baseUrl) {
+						new Notice("Recording API is not configured. Set a base URL or start the recording app.");
+						return;
+					}
+					button.setDisabled(true);
+					const original = button.buttonEl.textContent;
+					button.setButtonText("Testing…");
+					try {
+						const status = await recordingStatus(baseUrl);
+						new Notice(`Recording app is available (state: ${status.state}).`);
+					} catch (e) {
+						const msg = e instanceof Error ? e.message : String(e);
+						new Notice(`Recording API test failed: ${msg}`);
+					} finally {
+						button.setDisabled(false);
+						button.setButtonText(original ?? "Test API");
+					}
+				}));
+
+		new Setting(apiSettings)
+			.setName("Auto-record after meeting launch")
+			.setDesc("When you click a meeting link and it launches successfully, automatically start recording")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoRecordOnLaunch)
+				.onChange(value => {
+					this.plugin.settings.autoRecordOnLaunch = value;
 					this.debouncedSave();
 				}));
 

@@ -20,7 +20,9 @@ import {LlmInstructionsModal} from "./LlmInstructionsModal";
 import {hasCachedProposals, countCachedProposals} from "../services/SpeakerTagParser";
 import {exportMeetingBundle} from "../services/MeetingExporter";
 import {collectMeetingRelatedFiles, trashMeetingFiles} from "../services/MeetingDeleter";
+import {renameMeetingFiles} from "../services/MeetingRenamer";
 import {DeleteNoteModal} from "./DeleteNoteModal";
+import {RenameNoteModal} from "./RenameNoteModal";
 
 /**
  * Before starting a capture, consult the recording service's live /status. If it
@@ -78,8 +80,10 @@ export interface MeetingCardOpts {
 	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
 	onNoteDeleted?: () => void;
+	onNoteRenamed?: () => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
+	autoRecordOnLaunch?: boolean;
 	onStatusUpdate?: () => void;
 	isMergeSelected?: () => boolean;
 	onToggleMergeSelect?: (selected: boolean) => void;
@@ -240,7 +244,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	return {gutter, timeDiv: timeDivRef, iconRow};
 }
 
-function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
+function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: MeetingCardOpts): void {
 	const meta = content.createDiv({cls: "whisper-cal-card-meta"});
 
 	if (event.onlineMeetingUrl) {
@@ -253,7 +257,19 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent): void {
 		});
 		locLink.addEventListener("click", evt => {
 			evt.preventDefault();
-			void openMeetingUrl(joinUrl);
+			void (async () => {
+				const launched = await openMeetingUrl(joinUrl);
+				// Auto-record: once the meeting app is up, kick off capture so the
+				// user doesn't have to reach back to the card. Only when the launch
+				// succeeded and a recording API is configured; startCardApiRecording
+				// still confirms if the service is already mid-recording.
+				const baseUrl = opts.recordingApiBaseUrl;
+				if (launched && opts.autoRecordOnLaunch && baseUrl) {
+					const noteFile = opts.noteCreator.findNote(event);
+					const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
+					await startCardApiRecording(opts, notePath, baseUrl, false);
+				}
+			})();
 		});
 		const locIcon = locLink.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(locIcon, "map-pin");
@@ -482,7 +498,7 @@ export function renderMeetingCard(
 		void openOrCreateNote(opts);
 	});
 
-	renderMetadata(content, event);
+	renderMetadata(content, event, opts);
 
 	// Organizer row
 	if (event.organizerName) {
@@ -556,6 +572,48 @@ function onStatusForCard(
 	};
 }
 
+/** Tear down a card's recording timer + status so a re-render can't resurrect them. */
+function clearCardRecordingUi(opts: MeetingCardOpts, notePath: string): void {
+	opts.cardUi.stopDurationTimer(notePath);
+	opts.cardUi.deleteStartTime(notePath);
+	opts.cardUi.deleteStatus(notePath);
+	opts.onStatusUpdate?.();
+}
+
+/**
+ * Start (or restart) an API recording for a card. Shared by the smart Record
+ * button, the ⋯ menu's Re-record… item, and auto-record-on-launch. Confirms with
+ * the user if the service is mid-recording, ensures the note exists, starts
+ * capture, optionally resets stale transcript frontmatter, then watches for the
+ * service to finish. Returns true if capture started.
+ */
+async function startCardApiRecording(
+	opts: MeetingCardOpts,
+	notePath: string,
+	baseUrl: string,
+	resetFrontmatter: boolean,
+): Promise<boolean> {
+	const {app, event, timezone, noteCreator, cardUi, transcriptFolderPath = "Transcripts"} = opts;
+	// Defer to the recording service on whether the mic is free; confirm with
+	// the user if it's mid-recording. Abort cleanly on cancel.
+	if (!(await confirmIfServiceRecording(app, baseUrl))) return false;
+	await noteCreator.ensureNote(event);
+	await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl, cardUi});
+	// Reset only once capture is underway — a failed start leaves the note's
+	// existing transcript link intact.
+	if (resetFrontmatter) {
+		await removeFrontmatterKeys(app, notePath, [
+			FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
+		]);
+	}
+	watchApiRecording({
+		app, notePath, transcriptFolderPath, baseUrl, cardUi,
+		onStopped: () => clearCardRecordingUi(opts, notePath),
+		onStatus: onStatusForCard(notePath, opts),
+	});
+	return true;
+}
+
 /**
  * Populate the dynamic zone of a meeting card (pills, status lines, gutter highlight).
  * Called both on initial render and on in-place updates.
@@ -617,38 +675,18 @@ function renderCardDynamic(
 	const {cardUi} = opts;
 
 	// Tear down the recording timer + status so a re-render can't resurrect them.
-	const clearRecordingUi = () => {
-		cardUi.stopDurationTimer(notePath);
-		cardUi.deleteStartTime(notePath);
-		cardUi.deleteStatus(notePath);
-		opts.onStatusUpdate?.();
-	};
+	const clearRecordingUi = () => clearCardRecordingUi(opts, notePath);
 
-	/**
-	 * Start (or restart) an API recording. Shared by the smart Record button and
-	 * the ⋯ menu's Re-record… item — they differ only in the pre-step the caller
-	 * runs first (orphan check vs. nothing) and whether the existing transcript
-	 * frontmatter is reset. startApiRecording's setRecording() fires a re-render
-	 * that rebuilds this card into its Stop state, so there's no manual button
-	 * bookkeeping here. Returns true if capture started.
-	 */
-	const beginCapture = async (resetFrontmatter: boolean): Promise<boolean> => {
-		if (!recordingApiBaseUrl) return false;
-		// Defer to the recording service on whether the mic is free; confirm with
-		// the user if it's mid-recording. Abort cleanly on cancel.
-		if (!(await confirmIfServiceRecording(app, recordingApiBaseUrl))) return false;
-		await noteCreator.ensureNote(event);
-		await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl: recordingApiBaseUrl, cardUi});
-		// Reset only once capture is underway — a failed start leaves the note's
-		// existing transcript link intact.
-		if (resetFrontmatter) {
-			await removeFrontmatterKeys(app, notePath, [
-				FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
-			]);
-		}
-		watchApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi, onStopped: clearRecordingUi, onStatus: onStatusForCard(notePath, opts)});
-		return true;
-	};
+	// Start (or restart) an API recording. Shared by the smart Record button and
+	// the ⋯ menu's Re-record… item — they differ only in the pre-step the caller
+	// runs first (orphan check vs. nothing) and whether the existing transcript
+	// frontmatter is reset. startApiRecording's setRecording() fires a re-render
+	// that rebuilds this card into its Stop state, so there's no manual button
+	// bookkeeping here. Returns true if capture started.
+	const beginCapture = (resetFrontmatter: boolean): Promise<boolean> =>
+		recordingApiBaseUrl
+			? startCardApiRecording(opts, notePath, recordingApiBaseUrl, resetFrontmatter)
+			: Promise.resolve(false);
 
 	// Reusable LLM-step launchers — the smart button and ⋯ menu share these.
 	const runTagSpeakers = (tf: TFile) => {
@@ -791,6 +829,34 @@ function renderCardDynamic(
 				.setTitle("Export meeting bundle…")
 				.setIcon("folder-output")
 				.onClick(() => { void exportMeetingBundle(app, notePath); }));
+
+			// Rename — offered alongside export/delete. Related files (transcript,
+			// audio, voiceprint sidecar) are resolved up front and offered as an
+			// opt-in bulk rename in the modal; the actual rename goes through
+			// Obsidian's fileManager so every cross-vault link is rewritten.
+			menu.addItem((item) => item
+				.setTitle("Rename note…")
+				.setIcon("pencil")
+				.onClick(() => {
+					if (!noteFile) return;
+					void (async () => {
+						const noteFm = (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {}) as Record<string, unknown>;
+						const related = collectMeetingRelatedFiles(app, notePath, noteFm);
+						const choice = await new RenameNoteModal(app, {
+							currentName: noteFile.basename,
+							relatedFiles: related,
+						}).prompt();
+						if (!choice) return; // cancelled or unchanged
+						const {renamed} = await renameMeetingFiles(
+							app,
+							noteFile,
+							choice.newName,
+							choice.renameRelated ? related : [],
+						);
+						if (renamed > 0) new Notice(`Renamed ${renamed} file${renamed === 1 ? "" : "s"}`);
+						opts.onNoteRenamed?.();
+					})();
+				}));
 
 			// Delete — destructive, so it's rendered red (setWarning) and confirmed
 			// through a dedicated modal. Hidden while a recording is live: capture is

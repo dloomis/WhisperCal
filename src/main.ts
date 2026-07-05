@@ -1568,7 +1568,7 @@ export default class WhisperCalPlugin extends Plugin {
 				: (ensuredSeriesPath ?? seriesPrep?.seriesNotePath ?? undefined);
 			const result = await new ResearchModal(
 				this.app, title, subtitle, seriesPrep?.paths, seriesPrep?.instruction,
-				undefined, seriesNoteTag, emptySeriesNotePath,
+				undefined, seriesNoteTag, emptySeriesNotePath, this.settings.researchPromptPath,
 			).prompt();
 			if (!result) return;
 

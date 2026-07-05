@@ -1,5 +1,10 @@
-import {Modal, App, TFile, setIcon} from "obsidian";
+import {Modal, App, Menu, TFile, setIcon} from "obsidian";
 import {renderModalHeader} from "./ModalHeader";
+
+type SortMode =
+	| "name-asc" | "name-desc"
+	| "mtime-desc" | "mtime-asc"
+	| "ctime-desc" | "ctime-asc";
 
 export interface ResearchResult {
 	paths: string[];
@@ -29,6 +34,10 @@ export class ResearchModal extends Modal {
 	private submitBtn!: HTMLButtonElement;
 	private initialInstructions: string;
 	private initialBypass: boolean;
+	private researchPromptPath: string | null;
+	private folderFilter = "";
+	// Default matches the "newest first" ordering; the sort menu can override it.
+	private sortMode: SortMode = "mtime-desc";
 	private seriesNotePath: string | null;
 	// A series note that exists but has no prep yet: the modal opens blank, so we
 	// show a tip pointing the user to it. Mutually exclusive with seriesNotePath.
@@ -42,13 +51,14 @@ export class ResearchModal extends Modal {
 
 	constructor(app: App, meetingTitle: string, subtitle: string,
 		initialPaths?: string[], initialInstructions?: string, initialBypass?: boolean,
-		seriesNotePath?: string, emptySeriesNotePath?: string) {
+		seriesNotePath?: string, emptySeriesNotePath?: string, researchPromptPath?: string) {
 		super(app);
 		this.meetingTitle = meetingTitle;
 		this.meetingSubtitle = subtitle;
 		this.selected = new Set(initialPaths ?? []);
 		this.initialInstructions = initialInstructions ?? "";
 		this.initialBypass = initialBypass ?? false;
+		this.researchPromptPath = researchPromptPath ?? null;
 		this.seriesNotePath = seriesNotePath ?? null;
 		this.emptySeriesNotePath = emptySeriesNotePath ?? null;
 	}
@@ -139,7 +149,17 @@ export class ResearchModal extends Modal {
 		// Advanced controls: note picker (search + results) and prompt editor.
 		this.advancedEl = contentEl.createDiv({cls: "whisper-cal-research-advanced"});
 
-		this.searchInput = this.advancedEl.createEl("input", {
+		// Purpose line: the picker is easy to mistake for a plain file list, so spell
+		// out that the checked notes become context fed to the research prompt.
+		this.advancedEl.createDiv({
+			cls: "whisper-cal-research-picker-help",
+			text: "Pick vault notes to feed as context to the research prompt below. Leave empty to research from the meeting note alone.",
+		});
+
+		// Search + folder scope on one row. The folder dropdown fixes the picker
+		// otherwise showing only the vault's first folder (newest-first, capped list).
+		const controls = this.advancedEl.createDiv({cls: "whisper-cal-research-controls"});
+		this.searchInput = controls.createEl("input", {
 			type: "text",
 			placeholder: "Search vault notes\u2026",
 			cls: "whisper-cal-research-search",
@@ -148,6 +168,23 @@ export class ResearchModal extends Modal {
 			if (this.debounceTimer) clearTimeout(this.debounceTimer);
 			this.debounceTimer = setTimeout(() => this.renderResults(), 150);
 		});
+
+		const folderSelect = controls.createEl("select", {cls: "whisper-cal-research-folder"});
+		folderSelect.createEl("option", {text: "All folders", value: ""});
+		for (const folder of this.collectFolders()) {
+			folderSelect.createEl("option", {text: folder, value: folder});
+		}
+		folderSelect.addEventListener("change", () => {
+			this.folderFilter = folderSelect.value;
+			this.renderResults();
+		});
+
+		// Sort control — the standard Obsidian file-explorer pattern: a sort icon that
+		// opens a menu of checkmarked ordering options.
+		const sortBtn = controls.createSpan({cls: "clickable-icon whisper-cal-research-sort"});
+		setIcon(sortBtn, "arrow-up-narrow-wide");
+		sortBtn.setAttr("aria-label", "Change sort order");
+		sortBtn.addEventListener("click", (e) => this.openSortMenu(e));
 
 		this.resultsEl = this.advancedEl.createDiv({cls: "whisper-cal-research-results"});
 		this.renderResults();
@@ -161,6 +198,22 @@ export class ResearchModal extends Modal {
 			text: "Use as direct prompt (bypass prompt file)",
 			attr: {"for": "whisper-cal-bypass-prompt"},
 		});
+		// Link the default prompt file so the user can see exactly which prompt runs
+		// when bypass is off. Opened in the vault, dismissing the modal.
+		if (this.researchPromptPath) {
+			const promptPath = this.researchPromptPath;
+			const link = bypassRow.createEl("a", {
+				cls: "whisper-cal-research-prompt-link",
+				text: "View default prompt",
+				href: "#",
+			});
+			link.setAttr("aria-label", `Open ${promptPath}`);
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				void this.app.workspace.openLinkText(promptPath, "", true);
+				this.close();
+			});
+		}
 		this.bypassCheckbox.addEventListener("change", () => this.updateBypassState());
 
 		this.instructionsLabel = this.advancedEl.createEl("label", {
@@ -232,23 +285,81 @@ export class ResearchModal extends Modal {
 			: "Additional instructions (appended to the research prompt)");
 	}
 
+	/**
+	 * Distinct folder paths that contain at least one note, at any depth, sorted
+	 * alphabetically. Every ancestor folder is included so a top-level folder whose
+	 * notes live only in subfolders still shows up (and prefix-filters correctly).
+	 */
+	private collectFolders(): string[] {
+		const folders = new Set<string>();
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			let parent = file.parent;
+			while (parent && parent.path && parent.path !== "/") {
+				folders.add(parent.path);
+				parent = parent.parent;
+			}
+		}
+		return [...folders].sort((a, b) => a.localeCompare(b));
+	}
+
+	/**
+	 * Open the sort menu, mirroring Obsidian's file-explorer options (name / modified
+	 * time / created time, each direction), with the active mode checkmarked.
+	 */
+	private openSortMenu(evt: MouseEvent): void {
+		const menu = new Menu();
+		const option = (title: string, mode: SortMode): void => {
+			menu.addItem((item) => item
+				.setTitle(title)
+				.setChecked(this.sortMode === mode)
+				.onClick(() => {
+					this.sortMode = mode;
+					this.renderResults();
+				}));
+		};
+		option("File name (A to Z)", "name-asc");
+		option("File name (Z to A)", "name-desc");
+		menu.addSeparator();
+		option("Modified time (new to old)", "mtime-desc");
+		option("Modified time (old to new)", "mtime-asc");
+		menu.addSeparator();
+		option("Created time (new to old)", "ctime-desc");
+		option("Created time (old to new)", "ctime-asc");
+		menu.showAtMouseEvent(evt);
+	}
+
+	/** Compare two files by the active sort mode (selected-first grouping is applied separately). */
+	private compareBySort(a: TFile, b: TFile): number {
+		switch (this.sortMode) {
+			case "name-asc": return a.basename.localeCompare(b.basename);
+			case "name-desc": return b.basename.localeCompare(a.basename);
+			case "mtime-asc": return a.stat.mtime - b.stat.mtime;
+			case "mtime-desc": return b.stat.mtime - a.stat.mtime;
+			case "ctime-asc": return a.stat.ctime - b.stat.ctime;
+			case "ctime-desc": return b.stat.ctime - a.stat.ctime;
+		}
+	}
+
 	private renderResults(): void {
 		this.resultsEl.empty();
 		const query = this.searchInput.value.toLowerCase();
+		const folder = this.folderFilter;
 		const allFiles = this.app.vault.getMarkdownFiles();
 
-		// Filter and sort: selected items first, then by path match
+		// Filter by folder scope + search query.
 		const matches: TFile[] = [];
 		for (const file of allFiles) {
+			if (folder && !file.path.startsWith(`${folder}/`)) continue;
 			if (!query || file.path.toLowerCase().includes(query) || file.basename.toLowerCase().includes(query)) {
 				matches.push(file);
 			}
 		}
+		// Selected items first, then by the chosen sort mode (default: newest modified).
 		matches.sort((a, b) => {
 			const aSelected = this.selected.has(a.path) ? 0 : 1;
 			const bSelected = this.selected.has(b.path) ? 0 : 1;
 			if (aSelected !== bSelected) return aSelected - bSelected;
-			return a.path.localeCompare(b.path);
+			return this.compareBySort(a, b);
 		});
 
 		const limited = matches.slice(0, 20);
@@ -281,6 +392,11 @@ export class ResearchModal extends Modal {
 			this.resultsEl.createDiv({
 				text: query ? "No matching notes" : "No notes in vault",
 				cls: "whisper-cal-research-empty",
+			});
+		} else if (matches.length > limited.length) {
+			this.resultsEl.createDiv({
+				text: `Showing ${limited.length} of ${matches.length} — search or pick a folder to narrow`,
+				cls: "whisper-cal-research-more",
 			});
 		}
 	}

@@ -5,7 +5,7 @@ import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
 import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/UnlinkedRecordingProvider";
-import {EventSuggestModal} from "./EventSuggestModal";
+import {EventSuggestModal, type LinkableNote} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {MergeConfirmModal} from "./MergeConfirmModal";
@@ -650,6 +650,7 @@ export class CalendarView extends ItemView {
 			recordingApiBaseUrl: this.settings.recordingSource === "api"
 				? resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl) || undefined
 				: undefined,
+			autoRecordOnLaunch: this.settings.recordingSource === "api" && this.settings.autoRecordOnLaunch,
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,
@@ -661,6 +662,12 @@ export class CalendarView extends ItemView {
 				// local-only note's card disappears, while a Graph-backed note's card
 				// falls back to its "create note" state. Also refresh the unlinked
 				// section in case a now-orphaned recording should surface there.
+				if (this.cachedEvents) this.renderEvents(this.cachedEvents);
+				void this.loadAndRenderUnlinkedSection();
+			},
+			onNoteRenamed: () => {
+				// Re-render from cache so every card picks up the note's new path
+				// (and, when related files moved, the refreshed transcript links).
 				if (this.cachedEvents) this.renderEvents(this.cachedEvents);
 				void this.loadAndRenderUnlinkedSection();
 			},
@@ -1156,6 +1163,65 @@ export class CalendarView extends ItemView {
 		});
 	}
 
+	/**
+	 * Scan the note folder for existing ad hoc meeting notes that can receive a
+	 * recording: locally-created (no real calendar event), not merged away, and not
+	 * already linked to a transcript. Sorted by proximity to the recording's start so
+	 * the most likely match surfaces first; notes with no parseable time sort last.
+	 * These are offered alongside calendar events in the link modal.
+	 */
+	private findUnlinkedAdhocNotes(
+		recording: UnlinkedRecording,
+		unlinkedProvider: UnlinkedRecordingProvider,
+	): LinkableNote[] {
+		const folder = this.app.vault.getAbstractFileByPath(this.settings.noteFolderPath);
+		if (!(folder instanceof TFolder)) return [];
+
+		const out: Array<LinkableNote & {sortKey: number}> = [];
+		for (const child of getMarkdownFilesRecursive(folder)) {
+			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
+			if (!fm) continue;
+
+			// Skip transcript files and notes merged away into another card.
+			const tags = Array.isArray(fm["tags"]) ? fm["tags"] as string[] : [];
+			if (tags.includes("transcript")) continue;
+			if (fm[FM.MERGED_INTO]) continue;
+
+			// Ad hoc only: no real Graph event backing it. Calendar-backed notes are
+			// already reachable through the event path above.
+			const eventId = fm[FM.CALENDAR_EVENT_ID] as string | undefined;
+			if (eventId && eventId !== "unscheduled") continue;
+
+			// Must look like a meeting note (avoid listing arbitrary vault notes).
+			const meetingSubject = fm["meeting_subject"] as string | undefined;
+			if (!meetingSubject && !tags.includes("meeting")) continue;
+
+			// Skip notes from a different calendar provider (mirrors findLocalNotes).
+			const noteProvider = fm["calendar_provider"] as string | undefined;
+			if (noteProvider && noteProvider !== this.settings.calendarProvider) continue;
+
+			// Already has a recording linked — nothing to attach.
+			if (unlinkedProvider.isNoteLinked(fm as Record<string, unknown>)) continue;
+
+			const subject = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "")
+				|| meetingSubject || child.basename;
+
+			const meetingDate = coerceFmDate(fm["meeting_date"]);
+			const meetingStart = coerceFmTime(fm["meeting_start"]);
+			const date = (meetingDate && meetingStart)
+				? parseDateTime(meetingDate, meetingStart)
+				: null;
+			const sortKey = date
+				? Math.abs(date.getTime() - recording.recordingStart.getTime())
+				: Number.MAX_SAFE_INTEGER;
+
+			out.push({path: child.path, subject, date, sortKey});
+		}
+
+		out.sort((a, b) => a.sortKey - b.sortKey);
+		return out.slice(0, 50).map(({path, subject, date}) => ({path, subject, date}));
+	}
+
 	private async handleLinkUnlinked(recording: UnlinkedRecording, card: HTMLElement): Promise<void> {
 		try {
 			// Try to find matching calendar events from cache
@@ -1180,13 +1246,40 @@ export class CalendarView extends ItemView {
 				return !unlinkedProvider.isNoteLinked(fm as Record<string, unknown> ?? {});
 			});
 
+			// Existing ad hoc notes (unscheduled, no transcript yet) are offered as
+			// direct link targets so a recording can attach to a note the user already
+			// created — not just a calendar event or a brand-new note.
+			const adhocNotes = this.findUnlinkedAdhocNotes(recording, unlinkedProvider);
+
 			const modal = new EventSuggestModal(
-				this.app, unlinkedCandidates, this.settings.timezone,
+				this.app, unlinkedCandidates, this.settings.timezone, adhocNotes,
 			);
 			const choice = await modal.prompt();
 			if (!choice) return; // user cancelled
 
-			if (choice.type === "event") {
+			if (choice.type === "existing-note") {
+				// Link to an existing ad hoc note — no note creation. linkToNote reads
+				// this note's frontmatter for meeting context/invitees and writes the
+				// transcript pointer back onto it, so pass the real on-disk path.
+				const noteFile = this.app.vault.getAbstractFileByPath(choice.note.path);
+				const noteFm = (noteFile instanceof TFile
+					? this.app.metadataCache.getFileCache(noteFile)?.frontmatter
+					: undefined) as Record<string, unknown> | undefined;
+				await unlinkedProvider.linkToNote({
+					app: this.app,
+					recording,
+					notePath: choice.note.path,
+					subject: choice.note.subject,
+					timezone: this.settings.timezone,
+					transcriptFolderPath: this.settings.transcriptFolderPath,
+					isRecurring: noteFm?.["is_recurring"] === true,
+					meetingDate: typeof noteFm?.["meeting_date"] === "string" ? noteFm["meeting_date"] : undefined,
+					meetingStart: typeof noteFm?.["meeting_start"] === "string" ? noteFm["meeting_start"] : undefined,
+					meetingEnd: typeof noteFm?.["meeting_end"] === "string" ? noteFm["meeting_end"] : undefined,
+					organizer: typeof noteFm?.["meeting_organizer"] === "string" ? noteFm["meeting_organizer"] : undefined,
+					location: typeof noteFm?.["meeting_location"] === "string" ? noteFm["meeting_location"] : undefined,
+				});
+			} else if (choice.type === "event") {
 				// Link to existing calendar event
 				await this.noteCreator.createNote(choice.event);
 				const notePath = this.noteCreator.getNotePath(choice.event);

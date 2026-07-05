@@ -1550,6 +1550,37 @@
 	font-size: var(--font-ui-smaller);
 }
 
+/* RenameNoteModal — mirrors DeleteNoteModal's related-files opt-in */
+.whisper-cal-rename-input {
+	width: 100%;
+	margin-bottom: 16px;
+}
+
+.whisper-cal-rename-related {
+	margin-bottom: 16px;
+}
+
+.whisper-cal-rename-related-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	color: var(--text-normal);
+}
+
+.whisper-cal-rename-related-list {
+	margin: 8px 0 0;
+	padding-left: 28px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.whisper-cal-rename-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
 .whisper-cal-word-replacement-checkbox {
 	margin: 12px 0;
 	color: var(--text-muted);
@@ -1870,9 +1901,38 @@
 	min-height: 0;
 }
 
+.whisper-cal-research-picker-help {
+	margin-bottom: 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+
+.whisper-cal-research-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
 .whisper-cal-research-search {
 	width: 100%;
 	margin-bottom: 8px;
+}
+
+.whisper-cal-research-controls .whisper-cal-research-search {
+	flex: 1;
+	margin-bottom: 0;
+	min-width: 0;
+}
+
+.whisper-cal-research-folder {
+	flex-shrink: 0;
+	max-width: 45%;
+}
+
+.whisper-cal-research-sort {
+	flex-shrink: 0;
 }
 
 .whisper-cal-research-results {
@@ -1923,6 +1983,14 @@
 	font-size: var(--font-ui-small);
 }
 
+.whisper-cal-research-more {
+	padding: 6px 10px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-style: italic;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
 .whisper-cal-research-bypass {
 	display: flex;
 	align-items: center;
@@ -1930,6 +1998,12 @@
 	margin: 8px 0;
 	font-size: var(--font-ui-small);
 	color: var(--text-muted);
+}
+
+.whisper-cal-research-prompt-link {
+	margin-left: auto;
+	font-size: var(--font-ui-small);
+	cursor: pointer;
 }
 
 .whisper-cal-research-bypass input[type="checkbox"] {

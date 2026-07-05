@@ -54,18 +54,26 @@ export function toMeetingDeepLink(url: string): string {
  * Open a join URL, preferring the native app deep link. If no app is
  * registered for the protocol (macOS reports this as an openExternal
  * rejection), fall back to opening the original URL in the browser.
+ * Returns true when a launch succeeded (deep link or browser fallback),
+ * false when even the browser fallback failed.
  */
-export async function openMeetingUrl(url: string): Promise<void> {
+export async function openMeetingUrl(url: string): Promise<boolean> {
 	const deepLink = toMeetingDeepLink(url);
 	if (deepLink !== url) {
 		try {
 			debug("meetingLink", `opening deep link: ${deepLink}`);
 			await shell.openExternal(deepLink);
-			return;
+			return true;
 		} catch (err) {
 			// App not installed — fall back to the browser.
 			debug("meetingLink", `deep link failed, falling back to browser: ${String(err)}`);
 		}
 	}
-	await shell.openExternal(url);
+	try {
+		await shell.openExternal(url);
+		return true;
+	} catch (err) {
+		debug("meetingLink", `browser launch failed: ${String(err)}`);
+		return false;
+	}
 }
