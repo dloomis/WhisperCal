@@ -78,8 +78,6 @@ export class SpeakerTagModal extends Modal {
 	private seekingForSnippet = false;
 	/** Curated attendee names (from meeting_invitees) shown first in the dropdown. */
 	private meetingInvitees: string[];
-	/** Suppresses the focus-triggered dropdown for the initial programmatic autofocus. */
-	private suppressFocusDropdown = false;
 
 	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0, meetingInvitees: string[] = []) {
 		super(app);
@@ -201,6 +199,16 @@ export class SpeakerTagModal extends Modal {
 	onOpen(): void {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-speaker-tag-modal");
+
+		// Focus sink — Obsidian's modal (or the browser) auto-focuses the first
+		// focusable element on open, which for this modal is a name input whose
+		// focus handler pops its dropdown open unprompted. A no-op focusable
+		// element placed first in the DOM, and explicitly focused below, absorbs
+		// that initial focus so nothing triggers until the user picks a field.
+		const focusSink = contentEl.createDiv({
+			cls: "whisper-cal-focus-sink",
+			attr: {tabindex: "-1", "aria-hidden": "true"},
+		});
 
 		// Prevent backdrop click and window blur from closing the modal
 		this.containerEl.querySelector(".modal-bg")
@@ -353,16 +361,12 @@ export class SpeakerTagModal extends Modal {
 			this.close();
 		});
 
-		// Focus first input — but keep its dropdown closed on open. The flag is
-		// consumed by that first focus event (see the focus handler), so it works
-		// whether focus() dispatches synchronously or on a later tick.
-		setTimeout(() => {
-			if (this.inputs.length > 0) {
-				this.suppressFocusDropdown = true;
-				this.inputs[0]!.focus();
-				this.inputs[0]!.select();
-			}
-		}, 10);
+		// Park focus off the name fields (deferred so it wins over any auto-focus
+		// the modal framework applies synchronously during open). Prefer the
+		// audio player — a real, visible control that triggers nothing — and fall
+		// back to the off-screen sink when there's no recording. Either way no
+		// name field is focused, so no dropdown opens until the user picks one.
+		setTimeout(() => (this.audioEl ?? focusSink).focus({preventScroll: true}), 0);
 	}
 
 	private attachAutocomplete(wrapper: HTMLElement, input: HTMLInputElement): void {
@@ -473,16 +477,13 @@ export class SpeakerTagModal extends Modal {
 			setTimeout(() => showDropdown(false), 150);
 		});
 
-		// Open the dropdown on focus so the invitee list is one click away —
-		// except for the initial autofocus, which would pop it open unprompted.
-		// Consume the suppression flag on the first focus event (whenever it
-		// fires) so this is immune to sync-vs-async focus dispatch ordering.
-		input.addEventListener("focus", () => {
-			if (this.suppressFocusDropdown) {
-				this.suppressFocusDropdown = false;
-				return;
-			}
-			updateDropdown();
+		// Open the dropdown on click, not focus. Focus events fired for
+		// programmatic .focus() calls are still trusted, so a focus listener
+		// can't distinguish the modal's initial auto-focus (or Enter-to-next
+		// navigation) from the user clicking into the field — which made the
+		// dropdown flash open on load. A click can only come from the user.
+		input.addEventListener("click", () => {
+			if (!isDropdownVisible()) updateDropdown();
 		});
 
 		// Caret affordance signals this is a dropdown and toggles it.

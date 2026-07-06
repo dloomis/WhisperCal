@@ -1599,6 +1599,23 @@
 	max-width: 520px;
 }
 
+/* Focusable-but-invisible sink that absorbs the modal's initial auto-focus so
+   no name field's dropdown pops open on open. Screen-reader-only clip pattern:
+   collapsed to a 1px clipped box so it never renders visibly or affects layout,
+   yet stays programmatically focusable (unlike display:none). */
+.whisper-cal-focus-sink {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	border: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	outline: none;
+}
+
 .whisper-cal-speaker-tag-rows {
 	display: flex;
 	flex-direction: column;

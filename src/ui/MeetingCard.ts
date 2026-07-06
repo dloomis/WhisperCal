@@ -958,7 +958,16 @@ function renderCardDynamic(
 	// the transcript and the card already reads as done.
 	else if (states.speakers === "incomplete" && llmOn) speakersSeg = "attention";
 	else speakersSeg = "pending";
-	renderRailSeg(rail, "Speakers", speakersSeg, openTranscript);
+	// Clicking Speakers acts on the segment's stage, not just the transcript:
+	// cached candidates open the review modal; already-tagged speakers open the
+	// same modal pre-filled with the applied decisions (the ⋯ menu's "Edit
+	// speaker tags"), so a name can be corrected. Any other state falls back to
+	// opening the transcript.
+	const openSpeakers = llmOn && opts.onReviewSpeakerCandidates && states.transcriptFile
+		&& (states.speakersCandidatesReady || states.speakers === "complete")
+		? () => { opts.onReviewSpeakerCandidates?.(notePath); }
+		: openTranscript;
+	renderRailSeg(rail, "Speakers", speakersSeg, openSpeakers);
 
 	let summarySeg: RailSegState;
 	if (states.summary === "running") summarySeg = "running";
