@@ -1,4 +1,5 @@
 import type {TFile} from "obsidian";
+import type {MeetingApp} from "../utils/meetingLink";
 
 export interface RecordingInfo {
 	/**
@@ -19,6 +20,13 @@ export interface RecordingInfo {
 	meetingEnd?: string;
 	organizer?: string;
 	location?: string;
+	/**
+	 * The desktop app WhisperCal launched for this meeting via auto-record-on-
+	 * launch. Set only when we opened the app ourselves; when the recording is
+	 * later stopped from WhisperCal, that app is quit to disconnect the user
+	 * from the call. Absent for manually started recordings (nothing to close).
+	 */
+	launchedApp?: MeetingApp;
 }
 
 export type CardStatusVariant = "progress" | "recording" | "done" | "warning";
@@ -59,7 +67,26 @@ export class CardUiState {
 	deleteRecording(notePath: string): void {
 		if (this.recordings.delete(notePath)) this.notifyRecordingsChange();
 	}
-	hasRecording(notePath: string): boolean { return this.recordings.has(notePath); }
+	/**
+	 * Record which desktop app WhisperCal launched for an in-progress recording,
+	 * so stopping the recording from WhisperCal can close it. No-op (and no
+	 * re-render) if the recording is gone — the app-close is a side effect, not
+	 * render state.
+	 */
+	setRecordingLaunchedApp(notePath: string, app: MeetingApp): void {
+		const info = this.recordings.get(notePath);
+		if (info) info.launchedApp = app;
+	}
+	hasRecording(notePath: string): boolean {
+		if (this.recordings.has(notePath)) return true;
+		// The map key is the note path at recording start; if the note was renamed
+		// mid-recording, match via the live TFile reference instead (path updates
+		// on rename). The map is tiny, so the scan is cheap.
+		for (const info of this.recordings.values()) {
+			if (info.noteFile?.path === notePath) return true;
+		}
+		return false;
+	}
 	get recordingCount(): number { return this.recordings.size; }
 	forEachRecording(fn: (info: RecordingInfo, notePath: string) => void): void {
 		this.recordings.forEach(fn);

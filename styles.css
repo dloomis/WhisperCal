@@ -1069,6 +1069,16 @@
 	text-overflow: ellipsis;
 }
 
+/* While a job runs (progress variant), the label pulses as the visual cue that
+   something is active. It uses the identical whisper-cal-pulse timing as the
+   running/rec rail segment, and both are (re)created in the same render pass, so
+   their animations start together and stay phase-aligned — the badge blinks in
+   lockstep with its rail stage. Result variants (done/warning) aren't running,
+   so they stay steady; the model line is a stable identifier and never pulses. */
+.whisper-cal-rail-badge-progress .whisper-cal-rail-badge-label {
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
 .whisper-cal-rail .whisper-cal-rail-seg {
 	height: 5px;
 	flex: 1;
@@ -1083,7 +1093,10 @@
 	transition: background 150ms ease, height 150ms ease-out, max-width 150ms ease-out;
 }
 
-.whisper-cal-rail .whisper-cal-rail-seg:disabled {
+/* Pending stages carry aria-disabled rather than the native `disabled`
+   property so they still receive hover events and can show a "why" tooltip
+   (see renderRailSeg). */
+.whisper-cal-rail .whisper-cal-rail-seg[aria-disabled="true"] {
 	cursor: default;
 }
 
@@ -1160,15 +1173,21 @@
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
-.whisper-cal-rail-seg:not(:disabled):hover {
+/* Pulse a segment while keeping its state color (e.g. research running on the
+   already-green Note stage). Uses the same timing as the running/rec fills. */
+.whisper-cal-rail-seg.whisper-cal-rail-seg-pulsing {
+	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
+}
+
+.whisper-cal-rail-seg:not([aria-disabled="true"]):hover {
 	background: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
 }
 
-.whisper-cal-rail-seg-done:not(:disabled):hover {
+.whisper-cal-rail-seg-done:not([aria-disabled="true"]):hover {
 	background: color-mix(in srgb, var(--text-success) 80%, var(--text-normal));
 }
 
-.whisper-cal-rail-seg-running:not(:disabled):hover {
+.whisper-cal-rail-seg-running:not([aria-disabled="true"]):hover {
 	background: var(--interactive-accent-hover);
 }
 

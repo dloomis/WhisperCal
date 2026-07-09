@@ -1,9 +1,13 @@
 import {App, FileSystemAdapter, Notice, TFile} from "obsidian";
+import {execFile} from "child_process";
 import {promises as fs} from "fs";
 import {join} from "path";
-import {homedir} from "os";
+import {homedir, tmpdir} from "os";
+import {promisify} from "util";
 import {FM} from "../constants";
 import {resolveWikiLink, resolveTranscriptAudio} from "../utils/vault";
+
+const execFileAsync = promisify(execFile);
 
 interface RemoteDialogModule {
 	dialog?: {
@@ -58,11 +62,13 @@ async function pickDestination(): Promise<string | null> {
 }
 
 /**
- * Export a meeting's artifacts as a flat folder bundle outside the vault:
- * the meeting note (which carries the summary and any research section),
- * the linked transcript, and the transcript's source audio when present.
- * Files are copied verbatim — the bundle is flat, so wiki links between
- * them still resolve by basename if the folder is ever opened as a vault.
+ * Export a meeting's artifacts as a single `.zip` bundle outside the vault —
+ * easy to attach to an email. The archive holds one flat folder (named for the
+ * meeting) containing the meeting note (which carries the summary and any
+ * research section), the linked transcript, and the transcript's source audio
+ * when present. Files are copied verbatim; because the bundle is flat, wiki
+ * links between them still resolve by basename if the folder is opened as a
+ * vault after extraction.
  */
 export async function exportMeetingBundle(app: App, notePath: string): Promise<void> {
 	const adapter = app.vault.adapter;
@@ -94,25 +100,40 @@ export async function exportMeetingBundle(app: App, notePath: string): Promise<v
 	const destRoot = await pickDestination();
 	if (destRoot === null) return;
 
-	const bundleDir = join(destRoot, noteFile.basename);
+	const zipPath = join(destRoot, `${noteFile.basename}.zip`);
 	const basePath = adapter.getBasePath();
+	// Stage the files under a folder named for the meeting inside a scratch dir,
+	// then zip that folder so the archive extracts to one tidy, named directory.
+	let stageRoot: string | null = null;
 	try {
+		stageRoot = await fs.mkdtemp(join(tmpdir(), "whispercal-export-"));
+		const bundleDir = join(stageRoot, noteFile.basename);
 		await fs.mkdir(bundleDir, {recursive: true});
 		for (const f of files) {
 			await fs.copyFile(join(basePath, f.path), join(bundleDir, f.name));
 		}
+		// zip appends to an existing archive, so clear a stale one first to avoid
+		// leaving behind entries from a previous export of the same meeting.
+		await fs.rm(zipPath, {force: true});
+		// -r recurse, -q quiet, -X drop extra macOS attributes; run from the stage
+		// root so archive paths are relative to the bundle folder, not absolute.
+		await execFileAsync("/usr/bin/zip", ["-r", "-q", "-X", zipPath, noteFile.basename], {
+			cwd: stageRoot,
+		});
 	} catch (err) {
 		console.error("[WhisperCal] Export failed:", err);
 		new Notice(err instanceof Error ? `Export failed: ${err.message}` : "Export failed");
 		return;
+	} finally {
+		if (stageRoot) await fs.rm(stageRoot, {recursive: true, force: true}).catch(() => {});
 	}
 
-	new Notice(`Exported ${files.length} file${files.length === 1 ? "" : "s"} to ${bundleDir}`);
+	new Notice(`Exported ${files.length} file${files.length === 1 ? "" : "s"} to ${zipPath}`);
 	// Best-effort file-manager reveal — the export already succeeded
 	try {
 		// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
 		const electron = require("electron") as {shell: {showItemInFolder(path: string): void}};
-		electron.shell.showItemInFolder(bundleDir);
+		electron.shell.showItemInFolder(zipPath);
 	} catch (err) {
 		console.warn("[WhisperCal] Could not reveal export folder:", err);
 	}

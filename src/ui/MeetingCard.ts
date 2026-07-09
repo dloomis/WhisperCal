@@ -1,9 +1,10 @@
-import {App, Menu, Notice, TFile, normalizePath, setIcon} from "obsidian";
+import {App, Menu, Notice, TFile, normalizePath, setIcon, setTooltip} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
 import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time";
-import {openMeetingUrl} from "../utils/meetingLink";
+import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
+import {closeMeetingApp} from "../services/MeetingAppCloser";
 import {resolveWikiLink} from "../utils/vault";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
@@ -125,16 +126,37 @@ type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
 
 /**
  * Render one segment of the 4-bar status rail. Hovering the rail expands
- * every segment into a labeled bar (the stage name), so no tooltip is needed.
- * Clickable when an onClick is supplied — opening the stage's artifact — and
- * disabled/quiet when the stage is pending and its artifact doesn't exist yet.
+ * every segment into a labeled bar (the stage name), so the enabled segments
+ * need no tooltip. Clickable when an onClick is supplied — opening the stage's
+ * artifact — otherwise quiet: the stage is pending and its artifact doesn't
+ * exist yet, and a disabledTooltip (e.g. "No transcript detected") explains why
+ * on hover.
+ *
+ * Disabled segments use `aria-disabled` rather than the native `disabled`
+ * property: a real disabled button swallows pointer events, so the tooltip
+ * would never fire on hover. With no click listener attached, aria-disabled is
+ * inert to activation while still receiving hover and announcing its state.
  */
-function renderRailSeg(rail: HTMLElement, label: string, state: RailSegState, onClick?: () => void): void {
+function renderRailSeg(
+	rail: HTMLElement,
+	label: string,
+	state: RailSegState,
+	onClick?: () => void,
+	disabledTooltip?: string,
+	pulse?: boolean,
+): void {
 	const seg = rail.createEl("button", {cls: "whisper-cal-rail-seg"});
 	seg.createSpan({cls: "whisper-cal-rail-seg-label", text: label});
 	if (state !== "pending") seg.addClass(`whisper-cal-rail-seg-${state}`);
-	if (onClick) seg.addEventListener("click", onClick);
-	else seg.disabled = true;
+	// Pulse without recoloring: an active job on a segment that keeps its own
+	// state color (e.g. research running on an already-created green Note stage).
+	if (pulse) seg.addClass("whisper-cal-rail-seg-pulsing");
+	if (onClick) {
+		seg.addEventListener("click", onClick);
+	} else {
+		seg.setAttr("aria-disabled", "true");
+		if (disabledTooltip) setTooltip(seg, disabledTooltip);
+	}
 }
 
 /**
@@ -267,7 +289,13 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 				if (launched && opts.autoRecordOnLaunch && baseUrl) {
 					const noteFile = opts.noteCreator.findNote(event);
 					const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
-					await startCardApiRecording(opts, notePath, baseUrl, false);
+					const started = await startCardApiRecording(opts, notePath, baseUrl, false);
+					// Tag the session with the app we just opened so stopping the
+					// recording from WhisperCal can close it, disconnecting the user
+					// from the call (see the Stop handler). null when the provider has
+					// no identifiable desktop app — then there's nothing to close.
+					const app = started ? meetingAppForUrl(joinUrl) : null;
+					if (app) opts.cardUi.setRecordingLaunchedApp(notePath, app);
 				}
 			})();
 		});
@@ -646,6 +674,12 @@ function renderCardDynamic(
 		delete cardEl.dataset.transcriptPath;
 	}
 
+	// Mark cards with capture activity (recording underway or a transcript
+	// already linked). When meetings overlap, the now-line uses this to run
+	// through the meeting actually attended instead of an untouched sibling.
+	cardEl.dataset.pipelineTouched =
+		states.record === "running" || states.transcript === "complete" ? "1" : "0";
+
 	// Merge checkbox eligibility — only cards with an existing note can merge
 	const mergeCb = cardEl.querySelector<HTMLInputElement>(".whisper-cal-merge-checkbox");
 	if (mergeCb) {
@@ -940,13 +974,19 @@ function renderCardDynamic(
 	// handles both cases; unscheduled events prompt for a name). openNote
 	// stays note-complete-gated for the Summary segment below, which must not
 	// create a note from its pending state.
-	renderRailSeg(rail, "Note", states.note === "complete" ? "done" : "pending", () => { void openOrCreateNote(opts); });
+	// Research runs against the note (it's the Note stage's LLM action), so a
+	// running research job pulses this segment. Keep the segment's own color —
+	// green once the note exists — and pulse on top, rather than recoloring it to
+	// the running accent; the note-created state shouldn't visually regress mid-run.
+	const noteSeg: RailSegState = states.note === "complete" ? "done" : "pending";
+	renderRailSeg(rail, "Note", noteSeg, () => { void openOrCreateNote(opts); },
+		undefined, states.research === "running");
 
 	let transcriptSeg: RailSegState;
 	if (states.record === "running") transcriptSeg = "rec";
 	else if (states.transcript === "complete") transcriptSeg = "done";
 	else transcriptSeg = "pending";
-	renderRailSeg(rail, "Transcript", transcriptSeg, openTranscript);
+	renderRailSeg(rail, "Transcript", transcriptSeg, openTranscript, "No transcript detected");
 
 	let speakersSeg: RailSegState;
 	if (states.speakersCandidatesReady) speakersSeg = "attention";
@@ -967,7 +1007,7 @@ function renderCardDynamic(
 		&& (states.speakersCandidatesReady || states.speakers === "complete")
 		? () => { opts.onReviewSpeakerCandidates?.(notePath); }
 		: openTranscript;
-	renderRailSeg(rail, "Speakers", speakersSeg, openSpeakers);
+	renderRailSeg(rail, "Speakers", speakersSeg, openSpeakers, "No transcript detected");
 
 	let summarySeg: RailSegState;
 	if (states.summary === "running") summarySeg = "running";
@@ -977,7 +1017,7 @@ function renderCardDynamic(
 	// them there is no summarize action, so gray is honest there.
 	else if (states.summary === "incomplete" && llmOn) summarySeg = "attention";
 	else summarySeg = "pending";
-	renderRailSeg(rail, "Summary", summarySeg, openNote);
+	renderRailSeg(rail, "Summary", summarySeg, openNote, "No note yet");
 
 	// Actions row (wrapped for collapse animation)
 	const actionsWrap = expandGroup.createDiv({cls: "whisper-cal-card-actions-wrap"});
@@ -1003,10 +1043,22 @@ function renderCardDynamic(
 			// first await) → re-render to the Record button; clearRecordingUi then
 			// tears down the timer/status so the final render can't resurrect them.
 			stopBtn.disabled = true;
+			// Read the launched app BEFORE stopApiRecording deletes the recording
+			// state. Present only when auto-record-on-launch opened the app for this
+			// session; closing it here disconnects the user from the call. When the
+			// call instead ended app-side, the watch loop clears the state without
+			// closing — so this fires only for stops initiated from WhisperCal.
+			const launchedApp = cardUi.getRecording(notePath)?.launchedApp;
 			if (recordingApiBaseUrl) {
 				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi, onStatus: onStatusForCard(notePath, opts)});
 			}
 			clearRecordingUi();
+			if (launchedApp) {
+				void closeMeetingApp(launchedApp);
+				// The app disappearing on its own reads as a crash — say why.
+				const appLabel = launchedApp === "teams" ? "Teams" : "Zoom";
+				new Notice(`Closing ${appLabel} to leave the meeting`);
+			}
 		});
 	} else if (states.transcript !== "complete") {
 		// 2 — no transcript yet: Record (API) or Link recording (MacWhisper).

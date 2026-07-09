@@ -329,7 +329,6 @@ export class CalendarView extends ItemView {
 				}
 			}
 			this.renderEvents(events);
-			this.updateNowMarker();
 
 			// Auto-create People notes for unmatched organizers (fire-and-forget)
 			if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath && this.settings.peopleTemplatePath) {
@@ -420,10 +419,15 @@ export class CalendarView extends ItemView {
 		for (const eventId of this.cards.keys()) {
 			this.rerenderCardById(eventId);
 		}
+		this.updateNowMarker();
 	}
 
 	rerenderCard(notePath: string): void {
 		this.rerenderCardByPath(notePath);
+		// An in-place re-render can change the card's height (the activity badge
+		// adds a row) and its live rank — reposition the now-line immediately
+		// rather than letting it sit at a stale pixel offset until the next tick.
+		this.updateNowMarker();
 	}
 
 	private renderLoading(): void {
@@ -625,6 +629,11 @@ export class CalendarView extends ItemView {
 
 		// Snapshot frontmatter so the changed handler can detect real changes
 		this.snapshotFrontmatter();
+
+		// The container was emptied above, taking the now-line with it — every
+		// renderEvents caller needs the marker re-placed, so do it here rather
+		// than relying on each call site (or the next minute tick).
+		this.updateNowMarker();
 	}
 
 	private getOrCreatePeopleMatchService(): PeopleMatchService | undefined {
@@ -697,12 +706,18 @@ export class CalendarView extends ItemView {
 
 	/** Re-render only the cards affected by a set of changed file paths. */
 	private updateCardsForPaths(paths: Set<string>): void {
+		let updated = false;
 		for (const [eventId, {el}] of this.cards) {
 			if ((el.dataset.notePath && paths.has(el.dataset.notePath))
 				|| (el.dataset.transcriptPath && paths.has(el.dataset.transcriptPath))) {
 				this.rerenderCardById(eventId);
+				updated = true;
 			}
 		}
+		// A re-render can change a card's height (status lines come and go) and its
+		// live rank (recording started/stopped) — reposition the now-line to match
+		// instead of waiting for the next minute tick.
+		if (updated) this.updateNowMarker();
 	}
 
 	/** Find the card whose note or transcript matches a file path, and re-render it. */
@@ -1535,15 +1550,18 @@ export class CalendarView extends ItemView {
 
 		// A meeting is live: slide the line down through its card as it elapses. When several
 		// overlap, the one actually being captured wins — an active recording first, then a
-		// card mid-pipeline (transcribing/tagging/summarizing), then the most recently
-		// started one as the freshest "current" meeting.
+		// card mid-pipeline (transcribing/tagging/summarizing), then a card whose capture
+		// already happened (transcript linked — the meeting actually attended, even after
+		// its pipeline finishes), then the most recently started one as the freshest
+		// "current" meeting.
 		const cardUi = this.callbacks.cardUi;
 		const liveRank = (card: HTMLElement): number => {
 			const notePath = card.dataset.notePath;
 			if (!notePath) return 0;
-			if (cardUi.hasRecording(notePath)) return 2;
+			if (cardUi.hasRecording(notePath)) return 3;
 			const variant = cardUi.getStatus(notePath)?.variant;
-			return variant === "recording" || variant === "progress" ? 1 : 0;
+			if (variant === "recording" || variant === "progress") return 2;
+			return card.dataset.pipelineTouched === "1" ? 1 : 0;
 		};
 		let live: HTMLElement | null = null;
 		let liveStart = -Infinity;

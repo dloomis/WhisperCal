@@ -26,6 +26,26 @@ function hostMatches(hostname: string, bases: string[]): boolean {
 	return bases.some(base => hostname === base || hostname.endsWith(`.${base}`));
 }
 
+/**
+ * The desktop app a join URL launches. Used to close that app when a
+ * WhisperCal-launched recording is stopped (see MeetingAppCloser). Only
+ * providers with a native desktop client we can identify are listed;
+ * browser-only meetings return null (nothing to close).
+ */
+export type MeetingApp = "teams" | "zoom";
+
+/** Which desktop app a join URL opens, or null when the provider is unknown. */
+export function meetingAppForUrl(url: string): MeetingApp | null {
+	try {
+		const {hostname} = new URL(url);
+		if (hostMatches(hostname, TEAMS_HOSTS)) return "teams";
+		if (hostMatches(hostname, ZOOM_HOSTS)) return "zoom";
+	} catch {
+		// Not a parseable URL.
+	}
+	return null;
+}
+
 export function toMeetingDeepLink(url: string): string {
 	try {
 		const parsed = new URL(url);
