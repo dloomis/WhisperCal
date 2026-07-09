@@ -75,6 +75,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - [Recording Sources](#recording-sources)
   - [MacWhisper](#macwhisper)
   - [Recording API](#recording-api)
+    - [Automate Meeting Recording](#automate-meeting-recording)
   - [Re-Recording](#re-recording)
 - [People Matching](#people-matching)
   - [Auto-Created People Notes](#auto-created-people-notes)
@@ -107,11 +108,12 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Calendar sidebar** — Browse your Microsoft 365 or Google Calendar day by day inside Obsidian, with automatic refresh, offline caching, and conflict detection.
 - **One-click meeting notes** — Create a pre-filled note from any calendar event using a customizable template with wiki-linked attendees.
 - **Dual recording sources** — Link [MacWhisper](https://goodsnooze.gumroad.com/l/macwhisper) recordings by timestamp match, or record directly via a REST-based Recording API with a live timer on the card.
+- **Automated recording** — Optionally tie recording to the meeting's lifecycle: clicking a meeting's join link on its card auto-starts recording, and pressing Stop closes the meeting app (Teams, Zoom) to leave the call. See [Automate Meeting Recording](#automate-meeting-recording).
 - **Transcript post-processing — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An optional LLM pass (enabled by setting a post-processing prompt) fixes transcription and diarization errors in the transcript itself and proposes names for speakers voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
 - **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals. Optionally **auto-tag** recordings where every speaker is a high-confidence match — these silent auto-tags skip the modal but never write back to a library, guarding against voiceprint drift.
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The card's smart action button (and the matching ⋯ menu items) for speaker tagging and summarization open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
-- **Meeting export** — Bundle a meeting's note, transcript, and source audio into a folder outside the vault (⋯ menu > Export meeting bundle), ready to hand to someone who doesn't use Obsidian.
+- **Meeting export** — Bundle a meeting's note, transcript, and source audio into a single `.zip` outside the vault (⋯ menu > Export meeting bundle), ready to email or hand to someone who doesn't use Obsidian.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -308,19 +310,19 @@ The **⋯** mini button — or right-clicking anywhere on the card (except links
 | **Summarize meeting…** / **Regenerate summary…** | Speakers tagged / summary complete | Opens the instructions dialog, then runs summarization |
 | **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
 | **Re-record…** | Transcript linked, Recording API mode | Confirms, then clears the transcript and starts a fresh recording |
-| **Export meeting bundle…** | A meeting note exists | Copies the meeting's artifacts to a folder outside the vault (see below) |
+| **Export meeting bundle…** | A meeting note exists | Bundles the meeting's artifacts into a `.zip` outside the vault (see below) |
 
 The everyday next step stays one click on the smart button; the menu keeps everything else reachable without growing the action row.
 
 ### Exporting a Meeting Bundle
 
-**Export meeting bundle…** (in the ⋯ menu) copies a meeting's artifacts to a folder outside your vault:
+**Export meeting bundle…** (in the ⋯ menu) packages a meeting's artifacts into a single `.zip` outside your vault, ready to attach to an email:
 
 - The **meeting note** — which carries the summary and any research section
 - The linked **transcript**
 - The transcript's **source audio** (`.m4a`), when present
 
-A system folder picker asks where to put the bundle (falling back to `~/Downloads` if the picker is unavailable). The files land in a folder named after the meeting note, which is then revealed in Finder/Explorer. Files are copied verbatim into a flat folder, so the wiki links between them still resolve by basename if the folder is ever opened as an Obsidian vault.
+A system folder picker asks where to put the `.zip` (falling back to `~/Downloads` if the picker is unavailable). The archive is named after the meeting note and, once written, revealed in Finder/Explorer. Inside, the files sit in a single flat folder named for the meeting, so the wiki links between them still resolve by basename if the folder is extracted and opened as an Obsidian vault.
 
 ### Hover-Expanding Cards
 
@@ -652,6 +654,15 @@ An alternative source that records meetings directly via a REST API. The Record 
 2. The button turns into a red **Stop · MM:SS** button with a **live elapsed timer**, and the Transcript rail segment pulses red.
 3. Click Stop — WhisperCal polls `/status` every 3 seconds until transcription is complete (up to 5 minutes).
 4. The transcript file is located in the vault's transcripts folder, enriched with pipeline frontmatter (meeting subject, invitees, date, organizer, location), and linked to the meeting note.
+
+#### Automate Meeting Recording
+
+Enable **Automate meeting recording** (Recording API source only) to tie the recording to the meeting's lifecycle so you don't have to touch the card:
+
+- **Join → record.** Clicking a meeting's join link on its calendar card launches the meeting app (Teams, Zoom, etc.) *and* automatically starts recording once the launch succeeds. If the recording service is already mid-recording, WhisperCal still confirms before starting a new one.
+- **Stop → leave.** When you then press **Stop** on that card, WhisperCal closes the meeting app it launched, disconnecting you from the call. It quits the whole app (there is no portable way to "leave the meeting" without it), so this only fires for calls WhisperCal launched for you — and only when *you* stop the recording from WhisperCal. If the call instead ends in the meeting app itself, nothing is force-closed.
+
+The app is terminated with the platform's own process tools (`killall` on macOS, `taskkill` on Windows) rather than app scripting, so the behavior is portable across platforms. Recordings you start manually with the Record button never auto-close anything.
 
 ### Re-Recording
 
@@ -1097,6 +1108,7 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker (MacWhisper source only). |
 | **Unlinked lookback** | `30` days | How far back to check for unlinked recordings (MacWhisper source only). |
 | **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from the port file at `~/Library/Application Support/Tome/api-port` (Recording API source only). |
+| **Automate meeting recording** | Off | Clicking a meeting's join link on its card auto-starts recording; stopping that recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the call (Recording API source only). See [Automate Meeting Recording](#automate-meeting-recording). |
 
 ### Speakers
 

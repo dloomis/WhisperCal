@@ -659,7 +659,7 @@ export class CalendarView extends ItemView {
 			recordingApiBaseUrl: this.settings.recordingSource === "api"
 				? resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl) || undefined
 				: undefined,
-			autoRecordOnLaunch: this.settings.recordingSource === "api" && this.settings.autoRecordOnLaunch,
+			automateMeeting: this.settings.recordingSource === "api" && this.settings.automateMeetingRecording,
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
 			onNoteCreated: (eventId: string) => this.rerenderCardById(eventId),
 			onTagSpeakers: this.callbacks.onTagSpeakers,

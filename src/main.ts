@@ -479,6 +479,12 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!this.settings.llmExtraFlags) {
 			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
 		}
+		// Migrate legacy autoRecordOnLaunch → automateMeetingRecording (the toggle
+		// now also closes the meeting app when recording is stopped from WhisperCal).
+		if (typeof legacy?.autoRecordOnLaunch === "boolean" && data?.automateMeetingRecording === undefined) {
+			this.settings.automateMeetingRecording = legacy.autoRecordOnLaunch;
+		}
+		delete (this.settings as unknown as Record<string, unknown>)["autoRecordOnLaunch"];
 		// Drop the removed llmSpeakerTagFallback toggle from older data files — the
 		// post-processing prompt path is now the LLM on/off switch.
 		delete (this.settings as unknown as Record<string, unknown>)["llmSpeakerTagFallback"];

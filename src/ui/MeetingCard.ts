@@ -84,7 +84,12 @@ export interface MeetingCardOpts {
 	onNoteRenamed?: () => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
-	autoRecordOnLaunch?: boolean;
+	/**
+	 * Automate the meeting's recording lifecycle: auto-start capture when the
+	 * join link is clicked, and close the meeting app when the recording is
+	 * stopped from WhisperCal (driven by the automateMeetingRecording setting).
+	 */
+	automateMeeting?: boolean;
 	onStatusUpdate?: () => void;
 	isMergeSelected?: () => boolean;
 	onToggleMergeSelect?: (selected: boolean) => void;
@@ -286,7 +291,7 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 				// succeeded and a recording API is configured; startCardApiRecording
 				// still confirms if the service is already mid-recording.
 				const baseUrl = opts.recordingApiBaseUrl;
-				if (launched && opts.autoRecordOnLaunch && baseUrl) {
+				if (launched && opts.automateMeeting && baseUrl) {
 					const noteFile = opts.noteCreator.findNote(event);
 					const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
 					const started = await startCardApiRecording(opts, notePath, baseUrl, false);

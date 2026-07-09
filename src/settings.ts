@@ -75,7 +75,13 @@ export interface WhisperCalSettings {
 	peopleTemplatePath: string;
 	recordingSource: "macwhisper" | "api";
 	recordingApiBaseUrl: string;
-	autoRecordOnLaunch: boolean;
+	/**
+	 * Tie recording to the meeting's lifecycle: clicking a meeting's join link on
+	 * its calendar card starts recording automatically, and stopping that
+	 * recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the
+	 * call. Recording API source only. Migrated from the old `autoRecordOnLaunch`.
+	 */
+	automateMeetingRecording: boolean;
 	skipWordReplacementConfirm: boolean;
 	voiceprintFolderPath: string;
 	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
@@ -154,7 +160,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	peopleTemplatePath: "",
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
-	autoRecordOnLaunch: false,
+	automateMeetingRecording: false,
 	skipWordReplacementConfirm: false,
 	voiceprintFolderPath: "Caches/Voiceprints",
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
@@ -722,12 +728,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(apiSettings)
-			.setName("Auto-record after meeting launch")
-			.setDesc("When you click a meeting link and it launches successfully, automatically start recording")
+			.setName("Automate meeting recording")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			.setDesc("Clicking a meeting's join link on its calendar card starts recording automatically, and stopping that recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the call.")
 			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoRecordOnLaunch)
+				.setValue(this.plugin.settings.automateMeetingRecording)
 				.onChange(value => {
-					this.plugin.settings.autoRecordOnLaunch = value;
+					this.plugin.settings.automateMeetingRecording = value;
 					this.debouncedSave();
 				}));
 
