@@ -12,6 +12,26 @@ interface ApiTranscriptData {
 	file: TFile;
 }
 
+/**
+ * Retry an async rename up to 3 times, 500 ms apart. On Windows, Tome may still
+ * hold a handle to a just-finished recording, making rename throw EBUSY/EPERM
+ * transiently; the short retry lets the handle release so the audio/sidecar
+ * basename heals instead of staying mismatched. Rethrows the last error so the
+ * caller's existing best-effort catch/log path still runs.
+ */
+async function retryRename<T>(op: () => Promise<T>): Promise<T> {
+	let lastErr: unknown;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			return await op();
+		} catch (err) {
+			lastErr = err;
+			if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500));
+		}
+	}
+	throw lastErr;
+}
+
 export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 	readonly displayName = "Recording API";
 
@@ -187,7 +207,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		const target = normalizePath(dir ? `${dir}/${newBasename}.${audioFile.extension}` : `${newBasename}.${audioFile.extension}`);
 		if (audioFile.path === target) return;
 		try {
-			await this.app.fileManager.renameFile(audioFile, target);
+			await retryRename(() => this.app.fileManager.renameFile(audioFile, target));
 		} catch (err) {
 			console.error(`[WhisperCal] Failed to rename recording ${audioFile.path} -> ${target} (transcript linked, audio left behind):`, err);
 		}
@@ -208,9 +228,9 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		try {
 			const existing = this.app.vault.getAbstractFileByPath(sidecarPath);
 			if (existing instanceof TFile) {
-				await this.app.fileManager.renameFile(existing, target);
+				await retryRename(() => this.app.fileManager.renameFile(existing, target));
 			} else {
-				await this.app.vault.adapter.rename(sidecarPath, target);
+				await retryRename(() => this.app.vault.adapter.rename(sidecarPath, target));
 			}
 		} catch (err) {
 			console.error(`[WhisperCal] Failed to rename voiceprint sidecar ${sidecarPath} -> ${target}:`, err);

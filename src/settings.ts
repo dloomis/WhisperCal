@@ -618,7 +618,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addToggleSetting({
 			container: containerEl,
 			name: "Auto-create people notes",
-			desc: "Automatically create people notes for meeting organizers and newly-tagged speakers without one. Organizers need a people template; tagged speakers fall back to a minimal note.",
+			desc: "Automatically create people notes for meeting organizers without one (requires a people template). Newly-tagged speakers always get a note so voiceprints stay aligned.",
 			get: () => this.plugin.settings.autoCreatePeopleNotes,
 			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
 		});
@@ -996,7 +996,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			desc: "Extra CLI flags appended to every LLM command. " +
 				"⚠️ The default --dangerously-skip-permissions is required for " +
 				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization. Use the per-prompt flags below for task-specific options.",
+				"and summarization. Trust boundary: with this flag the CLI can read " +
+				"and write files with no confirmation, and prompts include third-party " +
+				"content (transcribed audio, attendee names, invite subjects) that could " +
+				"contain injection attempts. Only run against meetings and an LLM you trust. " +
+				"Use the per-prompt flags below for task-specific options.",
 			placeholder: "--dangerously-skip-permissions",
 			get: () => this.plugin.settings.llmExtraFlags,
 			set: v => { this.plugin.settings.llmExtraFlags = v; },
@@ -1035,11 +1039,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 		this.addSubHeading(containerEl, "Troubleshooting");
 
-		if (Platform.isMacOS) {
+		if (Platform.isMacOS || Platform.isWin) {
 			this.addToggleSetting({
 				container: containerEl,
 				name: "Debug mode",
-				desc: "Open LLM commands in a Terminal window instead of running in the background",
+				desc: "Open LLM commands in a terminal window instead of running in the background",
 				get: () => this.plugin.settings.llmDebugMode,
 				set: v => { this.plugin.settings.llmDebugMode = v; },
 			});
@@ -1048,7 +1052,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addToggleSetting({
 			container: containerEl,
 			name: "Debug logging",
-			desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I). Off by default to avoid leaking meeting content.",
+			desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I / Ctrl+Shift+I). Off by default to avoid leaking meeting content.",
 			get: () => this.plugin.settings.llmDebugLogging,
 			set: v => { this.plugin.settings.llmDebugLogging = v; },
 		});

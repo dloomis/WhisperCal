@@ -4,6 +4,8 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 > **Desktop only** — works on macOS and Windows. Some features are macOS-only (see [Platform Support](#platform-support) below). Will not load on Obsidian mobile.
 
+> **Noncommercial license** — WhisperCal is released under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and share it for personal, hobby, research, nonprofit, educational, and government purposes. **Commercial use requires a separate license from the author.** See [License](#license).
+
 **Speaker tagging modal with per-speaker transcript excerpts:**
 
 ![Speaker tagging modal with per-speaker transcript excerpts and calendar sidebar](docs/screenshot-transcript.png)
@@ -1162,6 +1164,7 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
 - **Recording API:** When using the Recording API source, WhisperCal communicates with a localhost REST API to start/stop recordings and poll transcription status. All communication is local.
 - **LLM invocation:** When you use the speaker tagging, summarization, or research features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
+- **LLM trust boundary:** The default **Additional flags** value is `--dangerously-skip-permissions`, which lets the CLI read and write files without interactive approval — necessary because the LLM runs headlessly with no terminal to answer prompts. The catch: the content sent to the LLM includes **third-party-controlled text** — transcribed audio, calendar attendee names, and invite subjects from people outside your control. A crafted meeting name or spoken sentence is a potential prompt-injection vector that, combined with skip-permissions, could drive the CLI to take file or shell actions rooted at your vault. Only run these features against meetings and an LLM CLI you trust. To reduce the blast radius, replace the default flag with a scoped `--allowedTools` set (or remove it and approve actions another way) at the cost of headless convenience.
 - **LLM model discovery:** If the `ANTHROPIC_API_KEY` environment variable is set, WhisperCal fetches available Claude models from the Anthropic API to populate per-prompt model selectors. No other data is sent.
 - **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
 

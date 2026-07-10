@@ -1,5 +1,6 @@
 import {homedir} from "os";
 import {join} from "path";
+import process from "process";
 
 export const VIEW_TYPE_CALENDAR = "whisper-cal-calendar-view";
 export const COMMAND_OPEN_CALENDAR = "open-calendar-view";
@@ -10,7 +11,19 @@ export const COMMAND_RESEARCH = "research-meeting";
 export const COMMAND_WORD_REPLACE = "run-word-replacements";
 export const COMMAND_OPEN_SERIES_NOTE = "open-meeting-series-note";
 
-export const RECORDING_API_PORT_FILE = join(homedir(), "Library", "Application Support", "Tome", "api-port");
+/**
+ * Tome writes its dynamic API port to a file in its per-user data dir. The
+ * location is platform-specific: `~/Library/Application Support/Tome` on macOS,
+ * `%APPDATA%\Tome` (Roaming) on Windows. This is a contract with the Tome
+ * Windows port — the manual Base URL setting is the escape hatch if it differs.
+ */
+function tomeDataDir(): string {
+	if (process.platform === "win32") {
+		return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Tome");
+	}
+	return join(homedir(), "Library", "Application Support", "Tome");
+}
+export const RECORDING_API_PORT_FILE = join(tomeDataDir(), "api-port");
 
 const MW_BASE = join(homedir(), "Library", "Application Support", "MacWhisper");
 export const MACWHISPER_DB_PATH = join(MW_BASE, "Database", "main.sqlite");

@@ -72,8 +72,8 @@ export interface EnrollResult {
 	skipped: number;
 	/** Libraries cleaned of a stale sample from this transcript after a corrected tag. */
 	corrected: number;
-	/** Enrolled names that did NOT resolve to a People note (kept as typed). Surfaced as a Notice
-	 *  nudging the user to create a note so the voiceprint library aligns with the People folder. */
+	/** Enrolled names that did NOT resolve to a People note (kept as typed). The caller auto-creates
+	 *  notes for these; any it deliberately skips (surname variants) are logged, not surfaced. */
 	unmatchedPeople: string[];
 	/** The transcript declared a `voiceprints:` sidecar, but it could not be resolved/loaded —
 	 *  speakers were tagged but NOT acoustically enrolled. Surfaced to the user as a Notice so

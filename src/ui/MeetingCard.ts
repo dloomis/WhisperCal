@@ -130,6 +130,34 @@ function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLE
 type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
 
 /**
+ * Completion-celebration bookkeeping, keyed by note path: each card's per-stage
+ * done flags from its previous render (so a false→true flip — the stage just
+ * finished — can be detected) plus the windows during which a rebuilt rail
+ * should (re)play the one-shot animations (see .whisper-cal-rail-complete and
+ * .whisper-cal-rail-seg-complete in styles.css). Windows rather than one-shot
+ * flags because the success paths re-render the card several times
+ * back-to-back (frontmatter change, then a status badge) and every render
+ * rebuilds the rail from scratch — re-applying the class inside the window
+ * beats letting a rebuild cut the animation short. Module-level so the state
+ * survives those rebuilds; reset on plugin reload, which is fine — the first
+ * render of a card only seeds the map, so already-finished stages never
+ * celebrate on view open or day change.
+ */
+interface CelebrationState {
+	/** Per-stage done flags from the previous render (Note, Transcript, Speakers, Summary). */
+	prevDone: [boolean, boolean, boolean, boolean];
+	/** Full-rail wave window — set when Summary flips (the end-to-end finish). */
+	railUntil: number;
+	/** Per-segment fill windows — set when an individual stage flips. */
+	segUntil: [number, number, number, number];
+	/** Stagger delays for stages that flipped in the same render. */
+	segDelay: [number, number, number, number];
+}
+const celebrations = new Map<string, CelebrationState>();
+const CELEBRATION_WINDOW_MS = 2500;
+const CELEBRATION_STAGGER_MS = 90;
+
+/**
  * Render one segment of the 4-bar status rail. Hovering the rail expands
  * every segment into a labeled bar (the stage name), so the enabled segments
  * need no tooltip. Clickable when an onClick is supplied — opening the stage's
@@ -589,8 +617,21 @@ function onStatusForCard(
 	const {cardUi} = opts;
 	return (msg, icon, autoClearMs, variant, badge) => {
 		if (msg) {
+			// Dedupe: polling flows re-issue the same status every tick (e.g.
+			// "Transcribing…" every 3s from waitAndLink). An unchanged status must
+			// not re-render — each rebuild resets the collapsed actions row, and
+			// with the pointer resting on the card the :hover rule re-expands it,
+			// so the card visibly snaps shut and reopens on every tick. Skipped
+			// only for non-auto-clearing statuses; an auto-clear re-issue must
+			// still write so its clear timer re-arms.
+			const prev = cardUi.getStatus(notePath);
+			if (!autoClearMs && prev && prev.message === msg && prev.icon === icon
+				&& prev.variant === variant && prev.badge?.label === badge) {
+				return;
+			}
 			cardUi.setStatus(notePath, {message: msg, icon, variant, ...(badge ? {badge: {label: badge}} : {})});
 		} else {
+			if (!cardUi.getStatus(notePath)) return;
 			cardUi.deleteStatus(notePath);
 		}
 		opts.onStatusUpdate?.();
@@ -1023,6 +1064,60 @@ function renderCardDynamic(
 	else if (states.summary === "incomplete" && llmOn) summarySeg = "attention";
 	else summarySeg = "pending";
 	renderRailSeg(rail, "Summary", summarySeg, openNote, "No note yet");
+
+	// Celebrate completions with the relay vocabulary: a stage that just
+	// flipped to done plays the one-shot fill on its own segment, and the
+	// pipeline finishing end to end (Summary flipping) plays the full-rail
+	// wave + shimmer — the finale the per-stage beats foreshadow. Flips are
+	// detected against the previous render's flags; the first sighting of a
+	// card only seeds the map. A summary regenerated after re-tagging resets
+	// pipeline_state first, so it flips again and earns another wave.
+	const done: [boolean, boolean, boolean, boolean] = [
+		states.note === "complete",
+		states.transcript === "complete",
+		states.speakers === "complete",
+		states.summary === "complete",
+	];
+	const now = Date.now();
+	const cel = celebrations.get(notePath);
+	if (cel) {
+		const flipped = [0, 1, 2, 3].filter(i => done[i] && !cel.prevDone[i]);
+		if (done[3] && flipped.includes(3)) {
+			// End-to-end finish — the wave animates every segment, so it
+			// supersedes any pending per-segment windows.
+			cel.railUntil = now + CELEBRATION_WINDOW_MS;
+			cel.segUntil = [0, 0, 0, 0];
+		} else {
+			// Left→right stagger when several stages land in one render,
+			// matching the wave's beat.
+			flipped.forEach((seg, order) => {
+				cel.segUntil[seg] = now + CELEBRATION_WINDOW_MS;
+				cel.segDelay[seg] = order * CELEBRATION_STAGGER_MS;
+			});
+		}
+		// A stage that regressed (transcript unlinked, summary reset) stops
+		// celebrating immediately.
+		for (let i = 0; i < 4; i++) if (!done[i]) cel.segUntil[i] = 0;
+		if (!done[3]) cel.railUntil = 0;
+		cel.prevDone = done;
+		if (cel.railUntil > now) {
+			rail.addClass("whisper-cal-rail-complete");
+		} else {
+			const segEls = rail.querySelectorAll(".whisper-cal-rail-seg");
+			for (let i = 0; i < 4; i++) {
+				const el = segEls[i];
+				if ((cel.segUntil[i] ?? 0) > now && el instanceof HTMLElement) {
+					el.addClass("whisper-cal-rail-seg-complete");
+					el.style.animationDelay = `${cel.segDelay[i] ?? 0}ms`;
+				}
+			}
+		}
+	} else {
+		celebrations.set(notePath, {
+			prevDone: done, railUntil: 0,
+			segUntil: [0, 0, 0, 0], segDelay: [0, 0, 0, 0],
+		});
+	}
 
 	// Actions row (wrapped for collapse animation)
 	const actionsWrap = expandGroup.createDiv({cls: "whisper-cal-card-actions-wrap"});

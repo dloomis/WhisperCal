@@ -66,7 +66,21 @@ export const activeProcesses = new Set<ChildProcess>();
  * child.kill() alone would orphan a hung CLI to launchd on timeout.
  */
 export function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
-	if (!Platform.isWin && child.pid) {
+	if (Platform.isWin && child.pid) {
+		// taskkill /T kills the whole tree (PowerShell + the CLI it spawned).
+		// child.kill() alone would signal only powershell.exe, orphaning a hung
+		// CLI on timeout/unload. /F force-kills; the graceful form sends WM_CLOSE,
+		// which console CLIs often ignore — the spawnLlmPrompt force-kill timer
+		// covers that. Note: taskkill doesn't set child.killed, so that force-kill
+		// timer always fires on Windows; killing an already-dead PID just errors,
+		// which is swallowed. Don't "fix" it.
+		const args = signal === "SIGKILL"
+			? ["/PID", String(child.pid), "/T", "/F"]
+			: ["/PID", String(child.pid), "/T"];
+		execFile("taskkill", args, {timeout: 5000}, () => { /* best-effort */ });
+		return;
+	}
+	if (child.pid) {
 		try {
 			process.kill(-child.pid, signal);
 			return;
@@ -87,6 +101,11 @@ function shellQuote(s: string): string {
 	return `'${escapeSq(s)}'`;
 }
 
+/** Quote a string as a PowerShell single-quoted literal ('' escapes '). */
+function psQuote(s: string): string {
+	return `'${s.replace(/'/g, "''")}'`;
+}
+
 /**
  * Split a flag string on whitespace and append each token (quoted individually
  * to prevent injection) to flagParts. No-op for empty/whitespace-only input.
@@ -101,8 +120,8 @@ function appendFlags(flagParts: string[], flags: string | undefined): void {
 /** Quote a shell argument for the current platform. */
 function platformQuote(s: string): string {
 	if (Platform.isWin) {
-		// cmd.exe: wrap in double quotes, escape internal double quotes
-		return `"${s.replace(/"/g, '""')}"`;
+		// Windows spawns via PowerShell, so quote as a PS single-quoted literal.
+		return psQuote(s);
 	}
 	return shellQuote(s);
 }
@@ -143,7 +162,8 @@ export async function validateLlmCli(cliPath: string): Promise<boolean> {
  */
 export function resolvePromptPath(promptPath: string, vaultPath: string): string {
 	if (path.isAbsolute(promptPath)) return promptPath;
-	if (promptPath.startsWith("~/")) return path.join(os.homedir(), promptPath.slice(2));
+	// Accept both separators after ~ so Windows-style `~\path` also expands.
+	if (promptPath.startsWith("~/") || promptPath.startsWith("~\\")) return path.join(os.homedir(), promptPath.slice(2));
 	return path.join(vaultPath, promptPath);
 }
 
@@ -195,8 +215,14 @@ function buildCliCommand(opts: LlmInvokerOpts, systemPromptFile?: string): strin
 	// reads the prompt via a tool call, placing instructions after the variable
 	// user message — which changes the prefix hash and prevents cache hits.
 	// $(cat file) inside double quotes is safe: the shell does not re-expand the result.
+	// PowerShell's $(Get-Content -Raw …) subexpression is the direct analog, giving
+	// Windows the same system-prompt authority and prompt-cache behavior.
 	if (systemPromptFile) {
-		flagParts.push(`--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`);
+		flagParts.push(
+			Platform.isWin
+				? `--append-system-prompt "$(Get-Content -Raw -LiteralPath ${psQuote(systemPromptFile)})"`
+				: `--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`,
+		);
 	}
 	if (opts.llmModel) flagParts.push(`--model ${platformQuote(opts.llmModel)}`);
 	// Global flags first, then per-prompt flags so a prompt-specific value can
@@ -204,14 +230,17 @@ function buildCliCommand(opts: LlmInvokerOpts, systemPromptFile?: string): strin
 	appendFlags(flagParts, opts.llmExtraFlags);
 	appendFlags(flagParts, opts.llmPromptFlags);
 	const flags = flagParts.join(" ");
-	return `${platformQuote(opts.llmCli)}${flags ? " " + flags : ""}`;
+	// On Windows the CLI runs under PowerShell, where a quoted command name must be
+	// invoked with the `&` call operator; it resolves .exe/.cmd/.ps1 shims off PATH.
+	const cliToken = Platform.isWin ? `& ${psQuote(opts.llmCli)}` : platformQuote(opts.llmCli);
+	return `${cliToken}${flags ? " " + flags : ""}`;
 }
 
 /**
  * Build the full shell command string from LlmInvokerOpts.
  * Pipes the trigger via stdin to avoid OS argument length limits.
  *
- * Prompt cache optimization (macOS/Linux only): when a prompt file is set,
+ * Prompt cache optimization (all platforms): when a prompt file is set,
  * reads it into a temp file and passes the content via --append-system-prompt.
  * This places static instructions in the system prefix where they're cached
  * by the API, keeping only variable parameters in the user message.
@@ -229,8 +258,10 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 	//   2. Authority: the model treats system-prompt rules ("use the Edit tool",
 	//      etc.) as contracts. The same rules in the user message read like a
 	//      request, and Claude in print mode tends to answer in text instead.
-	// inlinePrompt wins when both are set (bypass mode).
-	if (!Platform.isWin) {
+	// inlinePrompt wins when both are set (bypass mode). The mechanism (read the
+	// prompt file, write it to a vault-local tmp file) is cross-platform; PowerShell
+	// reads it back via $(Get-Content -Raw …) exactly as POSIX does via $(cat …).
+	{
 		let content: string | undefined;
 		if (opts.inlinePrompt) {
 			content = opts.inlinePrompt;
@@ -256,8 +287,21 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 
 	const trigger = buildTrigger(opts, !!systemPromptFile);
 	const cli = buildCliCommand(opts, systemPromptFile);
-	// Pipe trigger via stdin using a heredoc to avoid ENAMETOOLONG on long prompts.
-	const cmd = `${cli} <<'__WCAL_EOF__'\n${trigger}\n__WCAL_EOF__`;
+
+	let cmd: string;
+	if (Platform.isWin) {
+		// cmd.exe has no heredocs, so write the trigger to a temp file and pipe it
+		// into the CLI via PowerShell. Get-Content -Raw feeds stdin the same way the
+		// POSIX heredoc does, avoiding ENAMETOOLONG on long prompts; `cli` already
+		// carries the `&` call operator that invokes the quoted CLI name off PATH.
+		const tmpTrigger = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-trigger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+		fs.writeFileSync(tmpTrigger, trigger, "utf-8");
+		tmpFiles.push(tmpTrigger);
+		cmd = `Get-Content -Raw -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
+	} else {
+		// Pipe trigger via stdin using a heredoc to avoid ENAMETOOLONG on long prompts.
+		cmd = `${cli} <<'__WCAL_EOF__'\n${trigger}\n__WCAL_EOF__`;
+	}
 	return {cmd, trigger, vaultPath: opts.vaultPath, tmpFiles};
 }
 
@@ -290,14 +334,16 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 	};
 
 	return new Promise((resolve) => {
-		// Windows: shell: true delegates to cmd.exe which inherits system PATH.
+		// Windows: run the pipeline under PowerShell, which inherits system PATH and
+		// (unlike cmd.exe) supports the Get-Content pipe and $( ) subexpression the
+		// command relies on. windowsHide keeps the console window from flashing.
 		// macOS/Linux: interactive login shell so PATH set in .zshrc/.bashrc is available.
 		let child: ChildProcess;
 		if (Platform.isWin) {
-			child = spawn(cmd, [], {
+			child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", cmd], {
 				cwd: vaultPath,
-				shell: true,
 				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
 			});
 		} else {
 			const userShell = os.userInfo().shell || "/bin/zsh";
@@ -371,8 +417,8 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
  * Returns immediately with exitCode 0 — this is fire-and-forget.
  */
 function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number; stdout: string; stderr: string}> {
-	if (!Platform.isMacOS) {
-		return Promise.resolve({exitCode: 1, stdout: "", stderr: "Debug terminal mode is only available on macOS"});
+	if (!Platform.isMacOS && !Platform.isWin) {
+		return Promise.resolve({exitCode: 1, stdout: "", stderr: "Debug terminal mode is only available on macOS and Windows"});
 	}
 	const {vaultPath} = opts;
 	const tmpFiles: string[] = [];
@@ -404,6 +450,10 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
 	fs.writeFileSync(tmpTrigger, trigger, "utf-8");
 	tmpFiles.push(tmpTrigger);
+
+	if (Platform.isWin) {
+		return spawnWindowsDebugTerminal(cli, tmpTrigger, tmpDir, vaultPath, tmpFiles);
+	}
 
 	// Script: run CLI in print mode, feed trigger via stdin, then clean up.
 	// buildCliCommand already includes -p for print mode.
@@ -438,6 +488,65 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 				// Shell script handles its own temp file cleanup after the CLI exits.
 				resolve({exitCode: 0, stdout: "", stderr: ""});
 			}
+		});
+	});
+}
+
+/**
+ * Windows analog of the macOS Terminal.app debug launch: write a `.ps1` runner
+ * (PATH-inheriting PowerShell) that pipes the trigger into the CLI and self-cleans,
+ * then open it in a visible window — Windows Terminal (`wt.exe`) when available,
+ * else `cmd /c start … powershell`. `-NoExit` keeps the window open to read output.
+ */
+function spawnWindowsDebugTerminal(
+	cli: string,
+	tmpTrigger: string,
+	tmpDir: string,
+	vaultPath: string,
+	tmpFiles: string[],
+): Promise<{exitCode: number; stdout: string; stderr: string}> {
+	const tmpScript = path.join(tmpDir, `wcal-debug-${Date.now()}.ps1`);
+	tmpFiles.push(tmpScript);
+	// `cli` is already a PowerShell fragment (`& '<cli>' <flags>`), so the runner
+	// mirrors the background command form. Remove-Item cleans up after the CLI exits.
+	const rmList = tmpFiles.map(f => psQuote(f)).join(",");
+	const scriptBody = [
+		`Set-Location -LiteralPath ${psQuote(vaultPath)}`,
+		`Get-Content -Raw -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`,
+		`Remove-Item -LiteralPath ${rmList} -ErrorAction SilentlyContinue`,
+	].join("\r\n") + "\r\n";
+	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
+
+	const psArgs = ["-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", tmpScript];
+
+	const cleanup = () => {
+		for (const f of tmpFiles) {
+			try { fs.unlinkSync(f); } catch { /* ignore */ }
+		}
+	};
+
+	return new Promise((resolve) => {
+		// Prefer Windows Terminal (nicer window); fall back to a classic console.
+		const wt = spawn("wt.exe", ["powershell.exe", ...psArgs], {detached: true, stdio: "ignore"});
+		wt.on("error", () => {
+			// wt.exe not installed — launch a detached PowerShell console via start.
+			const fallback = spawn(
+				"cmd.exe",
+				["/c", "start", "", "powershell.exe", ...psArgs],
+				{detached: true, stdio: "ignore", windowsHide: false},
+			);
+			fallback.on("error", (err) => {
+				cleanup();
+				resolve({exitCode: 1, stdout: "", stderr: `Failed to open terminal: ${err.message}`});
+			});
+			fallback.on("spawn", () => {
+				fallback.unref();
+				resolve({exitCode: 0, stdout: "", stderr: ""});
+			});
+		});
+		wt.on("spawn", () => {
+			wt.unref();
+			resolve({exitCode: 0, stdout: "", stderr: ""});
 		});
 	});
 }

@@ -1,13 +1,10 @@
 import {App, FileSystemAdapter, Notice, TFile} from "obsidian";
-import {execFile} from "child_process";
 import {promises as fs} from "fs";
 import {join} from "path";
-import {homedir, tmpdir} from "os";
-import {promisify} from "util";
+import {homedir} from "os";
+import {zipSync} from "fflate";
 import {FM} from "../constants";
 import {resolveWikiLink, resolveTranscriptAudio} from "../utils/vault";
-
-const execFileAsync = promisify(execFile);
 
 interface RemoteDialogModule {
 	dialog?: {
@@ -102,30 +99,21 @@ export async function exportMeetingBundle(app: App, notePath: string): Promise<v
 
 	const zipPath = join(destRoot, `${noteFile.basename}.zip`);
 	const basePath = adapter.getBasePath();
-	// Stage the files under a folder named for the meeting inside a scratch dir,
-	// then zip that folder so the archive extracts to one tidy, named directory.
-	let stageRoot: string | null = null;
 	try {
-		stageRoot = await fs.mkdtemp(join(tmpdir(), "whispercal-export-"));
-		const bundleDir = join(stageRoot, noteFile.basename);
-		await fs.mkdir(bundleDir, {recursive: true});
+		// Build the archive in memory under one flat folder named for the meeting,
+		// so it extracts to one tidy, named directory and wiki links resolve by
+		// basename. fflate is bundled into main.js — no external-binary dependency
+		// (the old /usr/bin/zip was macOS/Linux-only, so export failed on Windows).
+		// Writing fresh bytes overwrites any stale archive from a prior export.
+		const entries: Record<string, Uint8Array> = {};
 		for (const f of files) {
-			await fs.copyFile(join(basePath, f.path), join(bundleDir, f.name));
+			entries[`${noteFile.basename}/${f.name}`] = await fs.readFile(join(basePath, f.path));
 		}
-		// zip appends to an existing archive, so clear a stale one first to avoid
-		// leaving behind entries from a previous export of the same meeting.
-		await fs.rm(zipPath, {force: true});
-		// -r recurse, -q quiet, -X drop extra macOS attributes; run from the stage
-		// root so archive paths are relative to the bundle folder, not absolute.
-		await execFileAsync("/usr/bin/zip", ["-r", "-q", "-X", zipPath, noteFile.basename], {
-			cwd: stageRoot,
-		});
+		await fs.writeFile(zipPath, zipSync(entries));
 	} catch (err) {
 		console.error("[WhisperCal] Export failed:", err);
 		new Notice(err instanceof Error ? `Export failed: ${err.message}` : "Export failed");
 		return;
-	} finally {
-		if (stageRoot) await fs.rm(stageRoot, {recursive: true, force: true}).catch(() => {});
 	}
 
 	new Notice(`Exported ${files.length} file${files.length === 1 ? "" : "s"} to ${zipPath}`);

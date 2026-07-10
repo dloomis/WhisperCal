@@ -33,6 +33,7 @@ export interface CalendarViewCallbacks {
 	onResearch: (notePath: string) => void;
 	getAuthState: () => AuthState;
 	onSignIn: () => Promise<void>;
+	onCancelSignIn: () => void;
 	onOpenSettings: () => void;
 	subscribeAuthState: (listener: (state: AuthState) => void) => () => void;
 	getUnlinkedProvider: () => UnlinkedRecordingProvider;
@@ -475,6 +476,13 @@ export class CalendarView extends ItemView {
 			this.authStatusEl.createDiv({
 				cls: "whisper-cal-auth-hint",
 				text: "Waiting for authorization\u2026",
+			});
+			const cancelBtn = this.authStatusEl.createEl("button", {
+				cls: "whisper-cal-btn whisper-cal-btn-secondary",
+				text: "Cancel",
+			});
+			cancelBtn.addEventListener("click", () => {
+				this.callbacks.onCancelSignIn();
 			});
 			break;
 		}

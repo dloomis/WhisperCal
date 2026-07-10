@@ -1179,6 +1179,80 @@
 	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
+/* Completion celebration — one-shot relay wave + gloss sweep when the
+   pipeline reaches "summarized". Each segment brightens and lifts in a
+   left→right stagger; the Summary segment fills from pending gray to done
+   green as the wave reaches it; then a shimmer chases the wave across the
+   rail once. Applied by renderCardDynamic for a short window after the
+   Summary stage flips to complete (see the celebration bookkeeping in
+   MeetingCard.ts) so the success path's back-to-back re-renders rebuild the
+   rail still-celebrating instead of cutting the moment short. Segments are
+   <button>s and the gutter badge is a <div>, so nth-of-type indexes the
+   segments correctly whether or not a badge is present. */
+.whisper-cal-rail-complete .whisper-cal-rail-seg {
+	animation: whisper-cal-relay 0.5s ease-out both;
+}
+
+.whisper-cal-rail-complete .whisper-cal-rail-seg:nth-of-type(2) {
+	animation-delay: 90ms;
+}
+
+.whisper-cal-rail-complete .whisper-cal-rail-seg:nth-of-type(3) {
+	animation-delay: 180ms;
+}
+
+.whisper-cal-rail-complete .whisper-cal-rail-seg:nth-of-type(4) {
+	animation-name: whisper-cal-relay-fill;
+	animation-delay: 270ms;
+}
+
+/* Gloss sweep — an overlay gradient traveling the rail once, trailing the
+   wave. Blend mode keeps it legible on any theme's greens, light or dark. */
+.whisper-cal-rail.whisper-cal-rail-complete::after {
+	content: "";
+	position: absolute;
+	inset: -3px 0;
+	border-radius: 3px;
+	background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.65) 50%, transparent 70%);
+	background-size: 300% 100%;
+	mix-blend-mode: overlay;
+	pointer-events: none;
+	animation: whisper-cal-rail-shimmer 0.8s ease-in-out 0.65s both;
+}
+
+@keyframes whisper-cal-relay {
+	0% { transform: none; filter: none; }
+	35% { transform: translateY(-2.5px); filter: brightness(1.45); }
+	100% { transform: none; filter: none; }
+}
+
+/* A just-finished segment starts from its pending gray and lands on done
+   green, so the motion visibly *seals* the stage. Shared by the wave's
+   Summary segment and the per-stage completions below. A playing animation
+   out-ranks the normal done-state background; the 100% frame matches it
+   exactly, so the hand-off when the animation ends is seamless. */
+@keyframes whisper-cal-relay-fill {
+	0% { background: var(--background-modifier-border); transform: none; filter: none; }
+	35% { background: var(--text-success); transform: translateY(-2.5px); filter: brightness(1.45); }
+	100% { background: var(--text-success); transform: none; filter: none; }
+}
+
+@keyframes whisper-cal-rail-shimmer {
+	0% { background-position: 120% 0; opacity: 1; }
+	85% { opacity: 1; }
+	100% { background-position: -60% 0; opacity: 0; }
+}
+
+/* Individual stage completion — the same relay beat, scoped to the one
+   segment that just finished, so each stage's completion foreshadows the
+   full-rail wave (which stays reserved for the end-to-end finish, and
+   supersedes these — renderCardDynamic never applies both). When several
+   stages land in one render, a left→right stagger matching the wave's is set
+   as an inline animation-delay. */
+.whisper-cal-rail-seg.whisper-cal-rail-seg-complete {
+	animation: whisper-cal-relay-fill 0.5s ease-out both;
+}
+
 .whisper-cal-rail-seg:not([aria-disabled="true"]):hover {
 	background: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
 }
@@ -2264,4 +2338,27 @@
 	background: var(--background-modifier-hover);
 	border-radius: var(--radius-s);
 	padding: 1px 6px;
+}
+
+/* Reduced motion — drop the completion celebration (the rail simply shows its
+   final green state) and still the infinite pulse/flash cues; the badge and
+   status text carry the same information statically. Selectors mirror the
+   animation rules at equal specificity and rely on source order to win; the
+   nth-of-type(4) entry is listed because its animation-name rule out-ranks
+   the plain descendant reset. */
+@media (prefers-reduced-motion: reduce) {
+	.whisper-cal-rail-complete .whisper-cal-rail-seg,
+	.whisper-cal-rail-complete .whisper-cal-rail-seg:nth-of-type(4),
+	.whisper-cal-rail-seg.whisper-cal-rail-seg-complete,
+	.whisper-cal-rail.whisper-cal-rail-complete::after,
+	.whisper-cal-rail-seg.whisper-cal-rail-seg-running,
+	.whisper-cal-rail-seg.whisper-cal-rail-seg-rec,
+	.whisper-cal-rail-seg.whisper-cal-rail-seg-pulsing,
+	.whisper-cal-rail-badge-progress .whisper-cal-rail-badge-label,
+	.whisper-cal-smart.whisper-cal-smart-busy,
+	.whisper-cal-card-status,
+	.whisper-cal-rec-dot-inline::after,
+	.whisper-cal-llm-banner {
+		animation: none;
+	}
 }

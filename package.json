@@ -34,5 +34,8 @@
 		"obsidian": "~1.10.3",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "8.35.1"
+	},
+	"dependencies": {
+		"fflate": "^0.8.3"
 	}
 }

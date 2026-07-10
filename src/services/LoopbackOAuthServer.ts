@@ -30,6 +30,8 @@ export class LoopbackOAuthServer {
 	private server: Server | null = null;
 	private timer: ReturnType<typeof setTimeout> | null = null;
 	private _timedOut = false;
+	/** Resolver for the in-flight code promise; nulled once settled. */
+	private resolveCode: ((code: string | null) => void) | null = null;
 
 	/** True if the most recent `start()` resolved its code as `null` due to timeout. */
 	get timedOut(): boolean {
@@ -39,11 +41,18 @@ export class LoopbackOAuthServer {
 	/** Total timeout window in milliseconds (used by callers for user-facing messages). */
 	static readonly TIMEOUT_MS = LOOPBACK_TIMEOUT_MS;
 
+	/** Resolve the pending code promise exactly once. */
+	private settle(code: string | null): void {
+		const resolve = this.resolveCode;
+		if (!resolve) return;
+		this.resolveCode = null;
+		resolve(code);
+	}
+
 	start(expectedState: string): Promise<LoopbackStartResult> {
 		this._timedOut = false;
 		return new Promise((resolveStart, rejectStart) => {
-			let resolveCode: (code: string | null) => void;
-			const codePromise = new Promise<string | null>((r) => { resolveCode = r; });
+			const codePromise = new Promise<string | null>((r) => { this.resolveCode = r; });
 
 			const server = createServer((req, res) => {
 				const url = new URL(req.url ?? "", "http://127.0.0.1");
@@ -60,12 +69,12 @@ export class LoopbackOAuthServer {
 				if (code) {
 					res.writeHead(200, {"Content-Type": "text/html"});
 					res.end(SIGN_IN_COMPLETE_HTML);
-					resolveCode(code);
+					this.settle(code);
 				} else {
 					const msg = error ?? "No authorization code received.";
 					res.writeHead(400, {"Content-Type": "text/plain"});
 					res.end(`Sign-in failed: ${msg}`);
-					resolveCode(null);
+					this.settle(null);
 				}
 			});
 
@@ -80,7 +89,7 @@ export class LoopbackOAuthServer {
 				this.server = server;
 				this.timer = setTimeout(() => {
 					this._timedOut = true;
-					resolveCode(null);
+					this.settle(null);
 					this.stop();
 				}, LOOPBACK_TIMEOUT_MS);
 				resolveStart({port: addr.port, code: codePromise});
@@ -97,5 +106,8 @@ export class LoopbackOAuthServer {
 			this.server.close();
 			this.server = null;
 		}
+		// Unblock any caller awaiting the code (e.g. the user cancelled sign-in)
+		// so the flow ends immediately instead of hanging until the timeout.
+		this.settle(null);
 	}
 }

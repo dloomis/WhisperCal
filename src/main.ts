@@ -207,6 +207,7 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			getAuthState: () => this.auth.getState(),
 			onSignIn: () => this.auth.startSignIn(),
+			onCancelSignIn: () => this.auth.cancelSignIn(),
 			onOpenSettings: () => {
 				// app.setting is undocumented but widely used by community plugins
 				const appWithSetting = this.app as unknown as {setting?: {open(): void; openTabById(id: string): void}};
@@ -500,20 +501,30 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
 			this.settings.recordingSource = "api";
 		}
-		// Auto-populate microphoneUser from macOS account on first install
-		if (Platform.isMacOS && !this.settings.microphoneUser) {
-			try {
-				const fullName = await new Promise<string>((resolve) => {
-					execFile("id", ["-F"], {encoding: "utf-8", timeout: 3000}, (err, stdout) => {
-						resolve(err ? "" : stdout.trim());
-					});
+		// Auto-populate microphoneUser from the OS account on first install
+		if (!this.settings.microphoneUser) {
+			const execFullName = (cmd: string, args: string[], timeoutMs: number): Promise<string> =>
+				new Promise<string>((resolve) => {
+					try {
+						execFile(cmd, args, {encoding: "utf-8", timeout: timeoutMs}, (err, stdout) => {
+							resolve(err ? "" : stdout.trim());
+						});
+					} catch {
+						resolve("");
+					}
 				});
-				if (fullName) {
-					this.settings.microphoneUser = fullName;
-					await this.persistData();
-				}
-			} catch {
-				// Leave empty — user can fill in manually
+			let fullName = "";
+			if (Platform.isMacOS) {
+				fullName = await execFullName("id", ["-F"], 3000);
+			} else if (Platform.isWin) {
+				// .NET UserPrincipal.DisplayName resolves both local and domain
+				// accounts; domain lookups can be slow, so allow a longer timeout.
+				fullName = await execFullName("powershell.exe", ["-NoProfile", "-Command",
+					"Add-Type -AssemblyName System.DirectoryServices.AccountManagement; [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName"], 5000);
+			}
+			if (fullName) {
+				this.settings.microphoneUser = fullName;
+				await this.persistData();
 			}
 		}
 		setTimeFormat(this.settings.timeFormat);
@@ -1098,11 +1109,13 @@ export default class WhisperCalPlugin extends Plugin {
 					}
 
 					// Auto-create People notes for confirmed speakers who are genuinely new to the
-					// vault (gated by the same toggle as calendar-organizer auto-create). The helper
-					// skips anyone an existing note already covers — including surname variants like
-					// "Steve" vs "Steven" — so the warning below still fires for those.
+					// vault. Not gated by the auto-create toggle (that governs the noisier calendar-
+					// organizer sweep): a tagged speaker's note is functional — it's what keeps the
+					// voiceprint library aligned with the People folder. The helper skips anyone an
+					// existing note already covers, including surname variants like "Joe Jackson" vs
+					// "Joseph Jackson", so a near-duplicate never spawns a second note.
 					let createdPeople: string[] = [];
-					if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath) {
+					if (this.settings.peopleFolderPath) {
 						try {
 							// Skip the microphone user — that's the note-taker, not a new person
 							// (mirrors the calendar-organizer path skipping the user's own email).
@@ -1125,13 +1138,13 @@ export default class WhisperCalPlugin extends Plugin {
 						}
 					}
 
-					// Warn only about enrolled speakers we did NOT just create a note for (e.g. a
-					// surname variant the guard deliberately skipped) — their voiceprint library
-					// name won't line up with any People note until the user reconciles it.
+					// Anyone enrolled but still without a note was deliberately skipped by the
+					// duplicate guard (e.g. a surname variant of an existing note). Their library
+					// stays "as typed" and keeps matching fine — log it, don't alarm the user.
 					const createdLower = new Set(createdPeople.map(n => n.toLowerCase()));
 					const stillUnmatched = enroll.unmatchedPeople.filter(n => !createdLower.has(n.toLowerCase()));
 					if (stillUnmatched.length > 0) {
-						new Notice(`Enrolled ${stillUnmatched.join(", ")} without a people note — create one to keep voiceprints aligned`);
+						debug("voiceprint", `enrolled without a People note (likely variants of existing notes, kept as typed): ${stillUnmatched.join(", ")}`);
 					}
 					if (enroll.sidecarMissing) {
 						new Notice("Voiceprint sidecar not found — speakers tagged, but not enrolled for acoustic matching");
