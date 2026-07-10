@@ -190,6 +190,9 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		candidates.push(file.path.replace(/\.md$/, ".voiceprints.json"));
 		for (const path of candidates) {
 			try {
+				// Adapter API on purpose: the sidecar is written by Tome outside
+				// Obsidian and may not be in the vault index yet, so vault lookups
+				// would miss a just-created file.
 				if (await this.app.vault.adapter.exists(path)) return path;
 			} catch { /* try the next candidate */ }
 		}

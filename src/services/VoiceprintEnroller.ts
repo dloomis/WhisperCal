@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile, parseYaml} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import {FM} from "../constants";
-import {ensureFolder, resolveWikiLink, stripWikiLink} from "../utils/vault";
+import {ensureFolder, listVaultJsonFiles, readVaultJson, resolveWikiLink, stripWikiLink, writeVaultJson} from "../utils/vault";
 import {sanitizeFilename} from "../utils/sanitize";
 import {cosine, meanNorm} from "../utils/vec";
 import {debug} from "../utils/debug";
@@ -145,6 +145,9 @@ export async function loadSidecar(app: App, transcriptPath: string): Promise<Voi
 
 	for (const path of candidates) {
 		try {
+			// Adapter API (not Vault API) on purpose: the sidecar is written by Tome
+			// OUTSIDE Obsidian and is often read moments later, before the vault
+			// watcher has indexed it — vault.getFileByPath would miss it.
 			if (!(await app.vault.adapter.exists(path))) {
 				debug("voiceprint", `loadSidecar: candidate does not exist: ${path}`);
 				continue;
@@ -175,13 +178,9 @@ async function trashLibrary(app: App, path: string): Promise<void> {
 }
 
 async function loadLibrary(app: App, path: string): Promise<VoiceprintLibrary | null> {
-	try {
-		if (!(await app.vault.adapter.exists(path))) return null;
-		const parsed = JSON.parse(await app.vault.adapter.read(path)) as VoiceprintLibrary;
-		return parsed && Array.isArray(parsed.samples) ? parsed : null;
-	} catch {
-		return null;
-	}
+	// Voiceprint libraries are WhisperCal-owned in-vault files — read via the Vault API.
+	const parsed = await readVaultJson<VoiceprintLibrary>(app, path);
+	return parsed && Array.isArray(parsed.samples) ? parsed : null;
 }
 
 /**
@@ -199,27 +198,21 @@ async function reconcileTranscriptSamples(
 	labelToName: Map<string, string>,
 ): Promise<number> {
 	let corrected = 0;
-	try {
-		if (!(await app.vault.adapter.exists(folder))) return 0;
-		const listing = await app.vault.adapter.list(folder);
-		for (const path of listing.files) {
-			if (!path.endsWith(".json")) continue;
-			const lib = await loadLibrary(app, path);
-			if (!lib || !lib.name || lib.samples.length === 0) continue;
-			const kept = lib.samples.filter(s =>
-				s.source !== source || labelToName.get(s.originalLabel) === lib.name
-			);
-			if (kept.length === lib.samples.length) continue; // nothing from this transcript to move
-			lib.samples = kept;
-			try {
-				if (lib.samples.length === 0) await trashLibrary(app, path);
-				else await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
-				corrected++;
-				console.warn(`[WhisperCal] reconciled voiceprint "${lib.name}" — dropped a stale sample from ${source}`);
-			} catch { /* skip an unwritable library */ }
-		}
-	} catch {
-		// folder missing or unreadable — nothing to reconcile
+	for (const file of listVaultJsonFiles(app, folder)) {
+		const path = file.path;
+		const lib = await loadLibrary(app, path);
+		if (!lib || !lib.name || lib.samples.length === 0) continue;
+		const kept = lib.samples.filter(s =>
+			s.source !== source || labelToName.get(s.originalLabel) === lib.name
+		);
+		if (kept.length === lib.samples.length) continue; // nothing from this transcript to move
+		lib.samples = kept;
+		try {
+			if (lib.samples.length === 0) await trashLibrary(app, path);
+			else await writeVaultJson(app, path, lib);
+			corrected++;
+			console.warn(`[WhisperCal] reconciled voiceprint "${lib.name}" — dropped a stale sample from ${source}`);
+		} catch { /* skip an unwritable library */ }
 	}
 	return corrected;
 }
@@ -352,7 +345,7 @@ export async function enrollVoiceprints(
 				lib.samples.sort((a, b) => b.activeSeconds - a.activeSeconds);
 				lib.samples = lib.samples.slice(0, MAX_SAMPLES_PER_PERSON);
 			}
-			await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
+			await writeVaultJson(app, path, lib);
 			result.enrolled.push(name);
 			debug("voiceprint", `  "${name}": WROTE ${path} (${lib.samples.length} samples total)`);
 		} catch (e) {
@@ -416,7 +409,7 @@ async function removeCulpritSample(app: App, folder: string, name: string, centr
 	lib.samples.splice(idx, 1);
 	try {
 		if (lib.samples.length === 0) await trashLibrary(app, path);
-		else await app.vault.adapter.write(path, JSON.stringify(lib, null, 2));
+		else await writeVaultJson(app, path, lib);
 	} catch {
 		return false;
 	}

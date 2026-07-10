@@ -110,6 +110,46 @@ export async function ensureFolder(app: App, folderPath: string): Promise<void> 
 }
 
 /**
+ * Read and parse a JSON file at an in-vault path via the Vault API (not the
+ * Adapter API). Returns null if the file is missing from the vault index or
+ * doesn't parse. Use only for WhisperCal-owned in-vault files — for files
+ * written externally (e.g. Tome sidecars) that may not be indexed yet, the
+ * Adapter API is still required.
+ */
+export async function readVaultJson<T>(app: App, path: string): Promise<T | null> {
+	const file = app.vault.getAbstractFileByPath(normalizePath(path));
+	if (!(file instanceof TFile)) return null;
+	try {
+		return JSON.parse(await app.vault.cachedRead(file)) as T;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Write a JSON value to an in-vault path via the Vault API: `process` in place
+ * when the file already exists, otherwise `create`. Preserves the vault's file
+ * cache and sync safety (unlike adapter.write).
+ */
+export async function writeVaultJson(app: App, path: string, value: unknown): Promise<void> {
+	const p = normalizePath(path);
+	const json = JSON.stringify(value, null, 2);
+	const existing = app.vault.getAbstractFileByPath(p);
+	if (existing instanceof TFile) {
+		await app.vault.process(existing, () => json);
+	} else {
+		await app.vault.create(p, json);
+	}
+}
+
+/** List the `.json` files directly under an in-vault folder (empty if it's missing). */
+export function listVaultJsonFiles(app: App, folderPath: string): TFile[] {
+	const folder = app.vault.getAbstractFileByPath(normalizePath(folderPath));
+	if (!(folder instanceof TFolder)) return [];
+	return folder.children.filter((c): c is TFile => c instanceof TFile && c.extension === "json");
+}
+
+/**
  * Collect all MacWhisper session IDs that are already linked to notes in the vault.
  */
 export function getLinkedSessionIds(app: App): Set<string> {

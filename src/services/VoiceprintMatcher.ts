@@ -2,6 +2,7 @@ import type {App} from "obsidian";
 import type {ProposedSpeakerMapping} from "./SpeakerTagParser";
 import {loadSidecar, VOICEPRINT_MODEL} from "./VoiceprintEnroller";
 import {cosine, meanNorm} from "../utils/vec";
+import {listVaultJsonFiles} from "../utils/vault";
 
 /**
  * Acoustic speaker matching. Matches each transcript speaker's centroid (from the
@@ -47,29 +48,23 @@ interface LibrarySummary {
 /** Load every enrolled library, reduced to one normalized mean vector per person. */
 async function loadLibraries(app: App, folder: string): Promise<LibrarySummary[]> {
 	const out: LibrarySummary[] = [];
-	try {
-		if (!(await app.vault.adapter.exists(folder))) return out;
-		const listing = await app.vault.adapter.list(folder);
-		for (const path of listing.files) {
-			if (!path.endsWith(".json")) continue;
-			try {
-				const lib = JSON.parse(await app.vault.adapter.read(path)) as {
-					model?: string;
-					name?: string;
-					samples?: {embedding?: number[]}[];
-				};
-				if (lib.model !== VOICEPRINT_MODEL || !lib.name || !Array.isArray(lib.samples)) continue;
-				const vecs = lib.samples
-					.map(s => s.embedding)
-					.filter((e): e is number[] => Array.isArray(e) && e.length > 0);
-				if (vecs.length === 0) continue;
-				out.push({name: lib.name, mean: meanNorm(vecs)});
-			} catch {
-				// skip an unreadable / malformed library file
-			}
+	// Enrolled libraries are WhisperCal-owned in-vault files — read via the Vault API.
+	for (const file of listVaultJsonFiles(app, folder)) {
+		try {
+			const lib = JSON.parse(await app.vault.cachedRead(file)) as {
+				model?: string;
+				name?: string;
+				samples?: {embedding?: number[]}[];
+			};
+			if (lib.model !== VOICEPRINT_MODEL || !lib.name || !Array.isArray(lib.samples)) continue;
+			const vecs = lib.samples
+				.map(s => s.embedding)
+				.filter((e): e is number[] => Array.isArray(e) && e.length > 0);
+			if (vecs.length === 0) continue;
+			out.push({name: lib.name, mean: meanNorm(vecs)});
+		} catch {
+			// skip an unreadable / malformed library file
 		}
-	} catch {
-		// folder missing or unreadable
 	}
 	return out;
 }
