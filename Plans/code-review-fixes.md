@@ -33,7 +33,8 @@
 
 ## Tier 1 — Critical / High (fix before advertising Windows support or submitting)
 
-### 1. [Critical] PS 5.1 mangles `--append-system-prompt` content containing double quotes — every default-config LLM run on Windows fails
+### 1. [Critical] ✅ DONE (Batch B) — PS 5.1 mangles `--append-system-prompt` content containing double quotes — every default-config LLM run on Windows fails
+**DEVIATION:** Chose fix option 3 (deliver the prompt in the user message on Windows) over option 1 (hand-rolled msvcrt escaping). Rationale: option 1's escaping can't be verified on macOS and is easy to get subtly wrong; option 3 sidesteps command-line quoting entirely and is robust. Cost: no prompt-cache/system-authority on Windows only (POSIX unchanged). Implemented as `windowsUserPrompt` prepended to the stdin trigger in both `buildLlmCommand` and `spawnLlmPromptTerminal`; `buildCliCommand`'s Windows `--append-system-prompt` branch is now unreachable (kept defensive, with `-Encoding UTF8`).
 `src/services/LlmInvoker.ts:220-226` (spawn at :343, `buildLlmCommand` at :250)
 On Windows the command runs under `powershell.exe` (Windows PowerShell 5.1) and expands the prompt file via `--append-system-prompt "$(Get-Content -Raw -LiteralPath '<sys>')"`. PS 5.1 uses legacy native-arg passing: it does **not** escape embedded `"` when building the child's command line, so any double quote in the prompt splits the argument into garbage tokens. All five bundled prompts in `Prompts/*.md` contain double quotes — this fires on every speaker-tag/summarize/research run with default settings. Additionally, if the CLI resolves to an npm `.cmd` shim, cmd.exe's batch parser drops everything after the first newline.
 **Fix (pick one, in preference order):**
@@ -43,7 +44,8 @@ On Windows the command runs under `powershell.exe` (Windows PowerShell 5.1) and 
 3. Fallback-of-last-resort: on Windows deliver the prompt in the user message (the existing `content === undefined` path) instead of `--append-system-prompt`.
 Whichever route: add a manual test with a prompt containing `"`, `\"`, and a trailing backslash (windows-compatibility-plan Phase 6 test #7).
 
-### 2. [High] Windows PowerShell 5.1 encoding defaults corrupt all non-ASCII text through the LLM pipeline (three legs)
+### 2. [High] ✅ DONE (Batch B) — Windows PowerShell 5.1 encoding defaults corrupt all non-ASCII text through the LLM pipeline (three legs)
+Added `-Encoding UTF8` to generated `Get-Content`, a `WIN_PS_UTF8_PRELUDE` (`[Console]::OutputEncoding` + `$OutputEncoding` = UTF8) prefixed to the background `-Command` and the debug `.ps1`, and a UTF-8 BOM on the `.ps1`. The system-prompt Get-Content leg is gone on Windows (item 1 fix delivers the prompt via user message).
 `src/services/LlmInvoker.ts:300, :223, :343, :515, :518`
 (1) Trigger/system-prompt tmp files are BOM-less UTF-8, but PS 5.1 `Get-Content -Raw` without `-Encoding` decodes them as ANSI → "José" becomes mojibake. (2) Piping into a native exe re-encodes via `$OutputEncoding` (default **ASCII** in 5.1) → non-ASCII becomes `?` on stdin. (3) CLI stdout is decoded via `[Console]::OutputEncoding` (OEM codepage) before Node reads it → speaker names in the returned JSON get double-mangled, then enrolled/written corrupted. The debug `.ps1` has the same BOM problem (parsed as ANSI).
 **Fix (all inside Windows-only branches):**
@@ -70,17 +72,17 @@ The autocomplete Enter handler calls `e.stopPropagation()`, which does **not** s
 
 ## Tier 2 — Medium (fix before release; none require restructuring)
 
-### 6. [Medium] `validateLlmCli` rejects absolute CLI paths on Windows, blocking every LLM run
+### 6. [Medium] ✅ DONE (Batch B) — `validateLlmCli` rejects absolute CLI paths on Windows, blocking every LLM run
 `src/services/LlmInvoker.ts:139-148` (gate at `src/main.ts:1738-1741`)
 The Windows validator runs `where.exe <cliPath>`, which searches PATH for a *pattern* and misparses fully-qualified paths → reports no match. Since `runLlmJob` hard-gates on validation, a user who sets an absolute path (the natural workaround for a PATH problem) can never run any LLM job.
 **Fix:** Short-circuit in `validateLlmCli` on both platforms: `if (path.isAbsolute(cliPath)) return fs.existsSync(cliPath)`; only fall back to `where.exe` / `command -v` for bare names.
 
-### 7. [Medium] Windows `killProcessTree` graceful phase is a guaranteed no-op → orphaned CLI processes when Obsidian quits mid-job
+### 7. [Medium] ✅ DONE (Batch B) — Windows `killProcessTree` graceful phase is a guaranteed no-op → orphaned CLI processes when Obsidian quits mid-job
 `src/services/LlmInvoker.ts:68-81` (unload escalation at `src/main.ts:412-421`)
 The spawn uses `windowsHide: true` (CREATE_NO_WINDOW), so graceful `taskkill /PID <pid> /T` (WM_CLOSE) can never terminate anything. On the timeout path this only wastes the 5 s grace window, but `onunload` relies on a 2 s `setTimeout` for the `/F` escalation — on app quit the renderer dies before the timer fires, leaving orphaned `claude`/`node` processes burning tokens.
 **Fix:** Make the Windows branch of `killProcessTree` always pass `["/PID", pid, "/T", "/F"]` regardless of requested signal (POSIX branch untouched). This also removes the wasted 5 s on the timeout path.
 
-### 8. [Medium] `closeMeetingApp` graceful `taskkill` just minimizes Teams/Zoom to the tray on Windows — call stays live
+### 8. [Medium] ✅ DONE (Batch B) — `closeMeetingApp` graceful `taskkill` just minimizes Teams/Zoom to the tray on Windows — call stays live
 `src/services/MeetingAppCloser.ts:37`
 `taskkill /IM <name>` without `/F` posts WM_CLOSE, which Teams/Zoom intercept as close-to-tray; the user stays in the meeting with mic/camera unchanged while the UI implies they've left. The macOS branch (SIGTERM via `killall`) actually terminates.
 **Fix:** Add `/F`: `execFile("taskkill", ["/F", "/IM", name], ...)`. The call is already best-effort/error-swallowing.
@@ -140,7 +142,7 @@ Voiceprint libraries live in a user-visible vault folder (default `Caches/Voicep
 - **20. Pin the loopback error branch to text/plain.** `src/services/LoopbackOAuthServer.ts:74-76` — currently safe *because* it's `text/plain`; add a comment that the content type must never become `text/html` (reflected provider `error` string).
 
 ### Windows polish
-- **21. Filter PS NativeCommandError decoration from stderr excerpts.** `src/services/LlmInvoker.ts:343`, consumed at `src/main.ts:1468, 1648` — drop `+ CategoryInfo` / `+ FullyQualifiedErrorId` / `At line:` lines before the 200-char excerpt so Windows users see the CLI's real error.
+- **21. ✅ DONE (Batch B) — Filter PS NativeCommandError decoration from stderr excerpts.** New `cleanLlmStderr` in LlmInvoker.ts drops `At line:` / `+ CategoryInfo` / `+ FullyQualifiedErrorId` / caret lines; used at both main.ts excerpt sites (replaced `stripAnsi`). `src/services/LlmInvoker.ts:343`, consumed at `src/main.ts:1468, 1648` — drop `+ CategoryInfo` / `+ FullyQualifiedErrorId` / `At line:` lines before the 200-char excerpt so Windows users see the CLI's real error.
 - **22. Cap `sanitizeFilename` length.** `src/utils/sanitize.ts:13-19` — no length cap; long Outlook subjects + `" - Transcript.voiceprints.json"` suffixes can exceed MAX_PATH (260) on Windows and fail late at sidecar rename. Truncate to ~120 chars, then re-strip trailing dots/spaces.
 - **23. Legacy-name fallback for the new trailing-dot strip.** `src/utils/sanitize.ts:16-18` (consumers: `VoiceprintEnroller.ts:319`, `SeriesPrep.ts:43`, `NoteCreator.ts:98`) — names ending in `.` now sanitize differently than before, so existing artifacts ("Robert Smith Jr..json" voiceprint libraries, series notes) are orphaned and duplicates get created. When a sanitized-path lookup misses, also probe the legacy un-stripped name (or one-time rename on match).
 

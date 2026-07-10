@@ -69,15 +69,15 @@ export function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKIL
 	if (Platform.isWin && child.pid) {
 		// taskkill /T kills the whole tree (PowerShell + the CLI it spawned).
 		// child.kill() alone would signal only powershell.exe, orphaning a hung
-		// CLI on timeout/unload. /F force-kills; the graceful form sends WM_CLOSE,
-		// which console CLIs often ignore — the spawnLlmPrompt force-kill timer
-		// covers that. Note: taskkill doesn't set child.killed, so that force-kill
-		// timer always fires on Windows; killing an already-dead PID just errors,
-		// which is swallowed. Don't "fix" it.
-		const args = signal === "SIGKILL"
-			? ["/PID", String(child.pid), "/T", "/F"]
-			: ["/PID", String(child.pid), "/T"];
-		execFile("taskkill", args, {timeout: 5000}, () => { /* best-effort */ });
+		// CLI on timeout/unload. Always force with /F regardless of the requested
+		// signal: the graceful WM_CLOSE form is a guaranteed no-op here because the
+		// process is spawned with windowsHide (CREATE_NO_WINDOW) and has no window
+		// to receive the message, so a "SIGTERM" would just waste the grace window —
+		// and on plugin unload the renderer dies before the escalation timer fires,
+		// leaving orphaned claude/node processes. Note: taskkill doesn't set
+		// child.killed, so the spawnLlmPrompt force-kill timer always fires on
+		// Windows; killing an already-dead PID just errors, which is swallowed.
+		execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], {timeout: 5000}, () => { /* best-effort */ });
 		return;
 	}
 	if (child.pid) {
@@ -107,6 +107,15 @@ function psQuote(s: string): string {
 }
 
 /**
+ * PowerShell prelude forcing UTF-8 on both the pipe encoding ($OutputEncoding,
+ * used when piping into a native exe — ASCII by default in PS 5.1) and the
+ * console decode ([Console]::OutputEncoding — OEM codepage by default), so
+ * non-ASCII text survives the stdin/stdout legs. Prepended to every generated
+ * Windows -Command string and .ps1 body.
+ */
+const WIN_PS_UTF8_PRELUDE = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; ";
+
+/**
  * Split a flag string on whitespace and append each token (quoted individually
  * to prevent injection) to flagParts. No-op for empty/whitespace-only input.
  */
@@ -133,10 +142,32 @@ export function stripAnsi(s: string): string {
 }
 
 /**
+ * Clean a CLI stderr string for a user-facing excerpt. Strips ANSI, then (on the
+ * Windows PowerShell path) drops PowerShell's NativeCommandError decoration
+ * lines — `At line:…`, `+ CategoryInfo …`, `+ FullyQualifiedErrorId …`, and the
+ * `+ … ~~~~` caret pointers — so the CLI's real error message shows through
+ * instead of PS boilerplate. Harmless on POSIX (those patterns don't appear).
+ */
+export function cleanLlmStderr(s: string): string {
+	return stripAnsi(s)
+		.split(/\r?\n/)
+		.filter(line => !/^\s*(At line:|\+\s+CategoryInfo|\+\s+FullyQualifiedErrorId|\+\s+.*~+\s*$)/.test(line))
+		.join("\n")
+		.trim();
+}
+
+/**
  * Check whether the LLM CLI is available on the user's PATH.
  * Returns true if found, false otherwise.
  */
 export async function validateLlmCli(cliPath: string): Promise<boolean> {
+	// A fully-qualified path is the natural workaround when the CLI isn't on PATH.
+	// where.exe/`command -v` search PATH for a *pattern* and misreport absolute
+	// paths as "not found", which would hard-gate every LLM job — so check the
+	// file directly instead.
+	if (path.isAbsolute(cliPath)) {
+		try { return fs.existsSync(cliPath); } catch { return false; }
+	}
 	if (Platform.isWin) {
 		return new Promise((resolve) => {
 			const child = spawn("where.exe", [cliPath], {
@@ -218,9 +249,13 @@ function buildCliCommand(opts: LlmInvokerOpts, systemPromptFile?: string): strin
 	// PowerShell's $(Get-Content -Raw …) subexpression is the direct analog, giving
 	// Windows the same system-prompt authority and prompt-cache behavior.
 	if (systemPromptFile) {
+		// Windows never reaches the isWin branch here — buildLlmCommand delivers the
+		// prompt via the user message on Windows (see review #1), so systemPromptFile
+		// is POSIX-only. The Windows form (with -Encoding UTF8) is kept defensive in
+		// case a future caller opts back into system-prompt delivery on Windows.
 		flagParts.push(
 			Platform.isWin
-				? `--append-system-prompt "$(Get-Content -Raw -LiteralPath ${psQuote(systemPromptFile)})"`
+				? `--append-system-prompt "$(Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(systemPromptFile)})"`
 				: `--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`,
 		);
 	}
@@ -250,17 +285,23 @@ function buildCliCommand(opts: LlmInvokerOpts, systemPromptFile?: string): strin
 function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; vaultPath: string; tmpFiles: string[]} {
 	const tmpFiles: string[] = [];
 	let systemPromptFile: string | undefined;
+	let windowsUserPrompt: string | undefined;
 
-	// Inject the static instructions (prompt file or inline prompt) into the
-	// system prefix via --append-system-prompt. Two reasons:
+	// Read the static instructions (prompt file or inline prompt). On POSIX we
+	// inject them into the system prefix via --append-system-prompt. Two reasons:
 	//   1. Cache: tools → system → messages is the cacheable prefix; keeping
 	//      variables in the user message preserves cache hits across runs.
 	//   2. Authority: the model treats system-prompt rules ("use the Edit tool",
 	//      etc.) as contracts. The same rules in the user message read like a
 	//      request, and Claude in print mode tends to answer in text instead.
-	// inlinePrompt wins when both are set (bypass mode). The mechanism (read the
-	// prompt file, write it to a vault-local tmp file) is cross-platform; PowerShell
-	// reads it back via $(Get-Content -Raw …) exactly as POSIX does via $(cat …).
+	// On Windows we DELIVER THE PROMPT IN THE USER MESSAGE instead. Windows spawns
+	// under PowerShell 5.1, whose legacy native-argument passing does not escape
+	// embedded double quotes when building the child command line — and all bundled
+	// prompts contain `"`, so `--append-system-prompt "$(Get-Content …)"` would
+	// shatter into garbage tokens and fail on every default-config run (review #1).
+	// Prepending the prompt to the stdin trigger sidesteps command-line quoting
+	// entirely (at the cost of prompt-cache/system-authority on Windows only).
+	// inlinePrompt wins when both are set (bypass mode).
 	{
 		let content: string | undefined;
 		if (opts.inlinePrompt) {
@@ -274,18 +315,26 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 			}
 		}
 		if (content !== undefined) {
-			try {
-				const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-				fs.writeFileSync(tmpFile, content, "utf-8");
-				tmpFiles.push(tmpFile);
-				systemPromptFile = tmpFile;
-			} catch {
-				// Temp write failed — fall back to user-message delivery.
+			if (Platform.isWin) {
+				windowsUserPrompt = content;
+			} else {
+				try {
+					const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+					fs.writeFileSync(tmpFile, content, "utf-8");
+					tmpFiles.push(tmpFile);
+					systemPromptFile = tmpFile;
+				} catch {
+					// Temp write failed — fall back to user-message delivery.
+				}
 			}
 		}
 	}
 
-	const trigger = buildTrigger(opts, !!systemPromptFile);
+	// promptInSystem omits the prompt reference from the trigger both when it lives
+	// in the system prompt (POSIX) and when we inline it into the user message below
+	// (Windows) — in the latter case we prepend the raw content instead.
+	let trigger = buildTrigger(opts, !!systemPromptFile || windowsUserPrompt !== undefined);
+	if (windowsUserPrompt !== undefined) trigger = `${windowsUserPrompt}\n\n${trigger}`;
 	const cli = buildCliCommand(opts, systemPromptFile);
 
 	let cmd: string;
@@ -294,10 +343,13 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 		// into the CLI via PowerShell. Get-Content -Raw feeds stdin the same way the
 		// POSIX heredoc does, avoiding ENAMETOOLONG on long prompts; `cli` already
 		// carries the `&` call operator that invokes the quoted CLI name off PATH.
+		// -Encoding UTF8 + the $OutputEncoding/[Console]::OutputEncoding prelude keep
+		// non-ASCII text (accented names) intact through the read → stdin → stdout
+		// legs; PS 5.1 defaults (ANSI read, ASCII pipe, OEM console) mangle it (#2).
 		const tmpTrigger = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-trigger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 		fs.writeFileSync(tmpTrigger, trigger, "utf-8");
 		tmpFiles.push(tmpTrigger);
-		cmd = `Get-Content -Raw -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
+		cmd = `${WIN_PS_UTF8_PRELUDE}Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
 	} else {
 		// Pipe trigger via stdin using a heredoc to avoid ENAMETOOLONG on long prompts.
 		cmd = `${cli} <<'__WCAL_EOF__'\n${trigger}\n__WCAL_EOF__`;
@@ -424,7 +476,9 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	const tmpFiles: string[] = [];
 
 	// Inject prompt file or inline prompt into the system prefix (see buildLlmCommand).
+	// On Windows deliver it via the user message instead (PS 5.1 quoting — review #1).
 	let systemPromptFile: string | undefined;
+	let windowsUserPrompt: string | undefined;
 	let systemPromptContent: string | undefined;
 	if (opts.inlinePrompt) {
 		systemPromptContent = opts.inlinePrompt;
@@ -435,16 +489,21 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 		} catch { /* fall back to user-message delivery */ }
 	}
 	if (systemPromptContent !== undefined) {
-		try {
-			const sysDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
-			const tmpFile = path.join(sysDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-			fs.writeFileSync(tmpFile, systemPromptContent, "utf-8");
-			tmpFiles.push(tmpFile);
-			systemPromptFile = tmpFile;
-		} catch { /* fall back */ }
+		if (Platform.isWin) {
+			windowsUserPrompt = systemPromptContent;
+		} else {
+			try {
+				const sysDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
+				const tmpFile = path.join(sysDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+				fs.writeFileSync(tmpFile, systemPromptContent, "utf-8");
+				tmpFiles.push(tmpFile);
+				systemPromptFile = tmpFile;
+			} catch { /* fall back */ }
+		}
 	}
 
-	const trigger = buildTrigger(opts, !!systemPromptFile);
+	let trigger = buildTrigger(opts, !!systemPromptFile || windowsUserPrompt !== undefined);
+	if (windowsUserPrompt !== undefined) trigger = `${windowsUserPrompt}\n\n${trigger}`;
 	const cli = buildCliCommand(opts, systemPromptFile);
 	const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
 	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
@@ -511,11 +570,15 @@ function spawnWindowsDebugTerminal(
 	// mirrors the background command form. Remove-Item cleans up after the CLI exits.
 	const rmList = tmpFiles.map(f => psQuote(f)).join(",");
 	const scriptBody = [
+		// Force UTF-8 on pipe + console so accented names survive (see #2); -Encoding
+		// UTF8 reads the BOM-less trigger correctly (PS 5.1 defaults to ANSI).
+		WIN_PS_UTF8_PRELUDE.trim(),
 		`Set-Location -LiteralPath ${psQuote(vaultPath)}`,
-		`Get-Content -Raw -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`,
+		`Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`,
 		`Remove-Item -LiteralPath ${rmList} -ErrorAction SilentlyContinue`,
 	].join("\r\n") + "\r\n";
-	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
+	// Write with a UTF-8 BOM so PS 5.1 parses the .ps1 itself as UTF-8, not ANSI.
+	fs.writeFileSync(tmpScript, "﻿" + scriptBody, "utf-8");
 
 	const psArgs = ["-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", tmpScript];
 

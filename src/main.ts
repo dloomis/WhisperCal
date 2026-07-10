@@ -4,7 +4,7 @@ import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./sett
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
-import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, stripAnsi} from "./services/LlmInvoker";
+import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr} from "./services/LlmInvoker";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
@@ -1465,7 +1465,7 @@ export default class WhisperCalPlugin extends Plugin {
 						this.setCardStatus(notePath, "Summarization complete", "check", 4000, "done", "Summarized");
 					}
 				} else {
-					const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
+					const excerpt = cleanLlmStderr(stderr).slice(0, 200);
 					new Notice(`Summarization failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
 				}
 			},
@@ -1645,7 +1645,7 @@ export default class WhisperCalPlugin extends Plugin {
 							this.setCardStatus(notePath, "Research complete", "check", 4000, "done", "Researched");
 						}
 					} else {
-						const excerpt = stripAnsi(stderr.trim()).slice(0, 200);
+						const excerpt = cleanLlmStderr(stderr).slice(0, 200);
 						new Notice(`Research failed (exit ${exitCode})${excerpt ? ": " + excerpt : ""}`);
 					}
 				},

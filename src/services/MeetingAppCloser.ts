@@ -34,7 +34,10 @@ function killByProcessName(name: string): Promise<void> {
 		// taskkill/killall exit non-zero when no matching process exists — that's
 		// expected (the app may already be closed), so errors are swallowed.
 		if (Platform.isWin) {
-			execFile("taskkill", ["/IM", name], {timeout: 5000}, () => resolve());
+			// /F force-terminates. Without it, taskkill posts WM_CLOSE, which
+			// Teams/Zoom intercept as "minimize to tray" — the call stays live
+			// with mic/camera on while the UI implies the user has left.
+			execFile("taskkill", ["/F", "/IM", name], {timeout: 5000}, () => resolve());
 		} else {
 			execFile("/usr/bin/killall", [name], {timeout: 5000}, () => resolve());
 		}
