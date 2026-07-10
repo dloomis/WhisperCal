@@ -3,9 +3,11 @@
  * Computes the UTC offset at actual midnight (not at the guess time)
  * to handle DST transitions correctly.
  */
-function midnightInTimezone(date: Date, timezone: string): Date {
-	// Get the calendar date in the target timezone
-	const localDate = formatDate(date, timezone); // "YYYY-MM-DD"
+/**
+ * Midnight (00:00 local) of a `YYYY-MM-DD` calendar date in `timezone`, as a UTC Date.
+ * Computes the UTC offset at actual midnight (not at the guess time) to handle DST.
+ */
+export function midnightFromDateKey(localDate: string, timezone: string): Date {
 	// Start with a rough guess: interpret as UTC midnight
 	const guess = new Date(`${localDate}T00:00:00Z`);
 
@@ -33,6 +35,31 @@ function midnightInTimezone(date: Date, timezone: string): Date {
 	if (offset1 === offset2) return midnight1;
 	// Re-adjust with the correct offset
 	return new Date(guess.getTime() - offset2);
+}
+
+/**
+ * Get midnight in a given timezone as a UTC Date.
+ * Computes the UTC offset at actual midnight (not at the guess time)
+ * to handle DST transitions correctly.
+ */
+function midnightInTimezone(date: Date, timezone: string): Date {
+	return midnightFromDateKey(formatDate(date, timezone), timezone);
+}
+
+/**
+ * Return local-midnight (in `timezone`) of the calendar day that is `offset`
+ * days from the day `date` falls on in that zone. Use this instead of
+ * `new Date(y, m-1, d + offset)` for day navigation: the latter builds
+ * system-local midnight, which drifts by a day whenever the configured
+ * timezone differs from the system zone. Calendar arithmetic is done on UTC
+ * date parts (tz-independent) before snapping to the zone's midnight.
+ */
+export function addDaysInTimezone(date: Date, timezone: string, offset: number): Date {
+	const [y, m, d] = formatDate(date, timezone).split("-").map(Number);
+	const shifted = new Date(Date.UTC(y!, m! - 1, d! + offset));
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const key = `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+	return midnightFromDateKey(key, timezone);
 }
 
 /**

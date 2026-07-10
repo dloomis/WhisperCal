@@ -90,7 +90,8 @@ The spawn uses `windowsHide: true` (CREATE_NO_WINDOW), so graceful `taskkill /PI
 `taskkill /IM <name>` without `/F` posts WM_CLOSE, which Teams/Zoom intercept as close-to-tray; the user stays in the meeting with mic/camera unchanged while the UI implies they've left. The macOS branch (SIGTERM via `killall`) actually terminates.
 **Fix:** Add `/F`: `execFile("taskkill", ["/F", "/IM", name], ...)`. The call is already best-effort/error-swallowing.
 
-### 9. [Medium] `zipSync` blocks the Obsidian UI thread for the whole export and buffers everything in memory (affects macOS too)
+### 9. [Medium] ✅ DONE (Batch E) — `zipSync` blocks the Obsidian UI thread for the whole export and buffers everything in memory (affects macOS too)
+Switched to fflate's async `zip()` (Promise-wrapped) with `{level:0}` (store, no deflate) since the payload is dominated by already-compressed `.m4a` audio.
 `src/services/MeetingExporter.ts:108-116`
 The export switched from an async `zip` subprocess to synchronous in-renderer `fflate.zipSync`, with all inputs (including the meeting audio, tens–hundreds of MB) and output held in memory. Deflating already-compressed `.m4a` is slow and pointless — the UI freezes for the duration.
 **Fix:** Use fflate's async `zip()` (callback-based), and pass `{level: 0}` for audio entries (or the whole archive).
@@ -113,17 +114,20 @@ The speakerTag `onSuccess` is now `async` and awaits `restoreTranscriptBody`/`ha
 `runLlmJob` deliberately awaits `onSuccess` so completion writes land before cleanup — but the speaker-tag caller defeats this by `void`ing `handleSpeakerTagSuccess(...)` / `restoreTranscriptBody(...)`. The `finally` releases the job and concurrency slot while the tail (tripwire read, snapshot restore, `writeSpeakerProposals`, auto-apply) is still mutating the transcript. A user re-clicking Speakers (or the auto-tagger re-dispatching) in that window interleaves `vault.process` writes and can snapshot half-restored content as the new "restore" baseline.
 **Fix:** Make the speakerTag `onSuccess` async and await the non-interactive tail (through `writeSpeakerProposals`/tripwire/frontmatter-restore; `await restoreTranscriptBody` on the failure path). Only the modal presentation (`presentSpeakerTagModal`) stays fire-and-forget — it already serializes on `speakerTagModalQueue`.
 
-### 13. [Medium] CalendarView day off-by-one whenever configured timezone ≠ system timezone
+### 13. [Medium] ✅ DONE (Batch E) — CalendarView day off-by-one whenever configured timezone ≠ system timezone
+Added `midnightFromDateKey`/`addDaysInTimezone` to time.ts (calendar arithmetic on UTC date parts, then snap to the zone's midnight). `navigateDay` uses `addDaysInTimezone`; `onActiveFileChanged` builds the day via `midnightFromDateKey(meetingDate, tz)` so the comparison equalizes and the debounce isn't defeated. The `new Date()` ("now"/today) assignments are left as-is — they format correctly in any zone.
 `src/ui/CalendarView.ts:1452-1461` (`navigateDay`), `:904-909` (`onActiveFileChanged`), `:292-299` (midnight rollover)
 `selectedDate` is built at *system-local* midnight (`new Date(y, m-1, d)`) but always rendered/compared via `formatDate(date, settings.timezone)`. With a configured zone west of the system zone: "next day" appears dead on first click, all displayed days shift, and `onActiveFileChanged` navigates to the wrong day — and since the comparison never equalizes, every leaf change resets `lastRefreshTime = 0` and re-fetches, bypassing the debounce indefinitely.
 **Fix:** Canonicalize the selected day as a `YYYY-MM-DD` string in `settings.timezone` (or construct via the existing `midnightInTimezone` helper in `src/utils/time.ts`). In `navigateDay`/`onActiveFileChanged`, derive the new day by formatting in `settings.timezone`, doing calendar-day arithmetic, and converting back with `midnightInTimezone`.
 
-### 14. [Medium] Auto-refresh does a full teardown re-render: scroll position resets and in-progress merge selection is wiped every 5 minutes
+### 14. [Medium] ✅ DONE (Batch E) — Auto-refresh does a full teardown re-render: scroll position resets and in-progress merge selection is wiped every 5 minutes
+`refresh({background:true})` skips `renderLoading` when `cachedEvents` exists and captures/restores `contentContainer.scrollTop` across the re-render. The timer skips the tick entirely while `mergeSelection.size > 0` (chosen over id-diffing for simplicity/safety).
 `src/ui/CalendarView.ts:315` (`renderLoading` inside `refresh`), `:506-513` (`renderEvents` clears `cards`/`mergeSelection`), `:1521-1528` (`startAutoRefresh`)
 The timer refresh unconditionally renders "Loading calendar..." (collapsing scroll to top) and rebuilds all cards, clearing merge mode and checked selections mid-use.
 **Fix:** For background/timer refreshes when `cachedEvents` exists, skip `renderLoading` and render new events directly; capture the scroll container's `scrollTop` before re-render and restore after. Preserve `mergeSelection` by dropping only ids no longer present (or skip the timer refresh entirely while `mergeSelection.size > 0`).
 
-### 15. [Medium] ResearchModal: advertised "leave empty to research from the meeting note alone" flow silently acts as Cancel
+### 15. [Medium] ✅ DONE (Batch E) — ResearchModal: advertised "leave empty to research from the meeting note alone" flow silently acts as Cancel
+Submit now blocks only bypass-mode-with-empty-prompt (visible inline `whisper-cal-research-error`); a submitted-empty normal-mode close resolves a valid `{paths:[], instructions:"", bypassPrompt:false}`. Error clears on typing / bypass toggle.
 `src/ui/ResearchModal.ts:156` (help text) vs `:404-413` (`onClose` validation)
 Clicking Research with nothing selected and no instructions resolves `null` — indistinguishable from Cancel, no feedback — contradicting the help text.
 **Fix:** Honor the help text: treat submitted-with-empty as a valid `{paths: [], instructions: "", bypassPrompt: false}` result. For bypass mode with empty textarea, block submission with a visible inline error instead of silently dismissing.

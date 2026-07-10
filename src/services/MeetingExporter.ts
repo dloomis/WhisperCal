@@ -2,7 +2,7 @@ import {App, FileSystemAdapter, Notice, TFile} from "obsidian";
 import {promises as fs} from "fs";
 import {join} from "path";
 import {homedir} from "os";
-import {zipSync} from "fflate";
+import {zip, type Zippable} from "fflate";
 import {FM} from "../constants";
 import {resolveWikiLink, resolveTranscriptAudio} from "../utils/vault";
 
@@ -100,16 +100,23 @@ export async function exportMeetingBundle(app: App, notePath: string): Promise<v
 	const zipPath = join(destRoot, `${noteFile.basename}.zip`);
 	const basePath = adapter.getBasePath();
 	try {
-		// Build the archive in memory under one flat folder named for the meeting,
-		// so it extracts to one tidy, named directory and wiki links resolve by
-		// basename. fflate is bundled into main.js — no external-binary dependency
-		// (the old /usr/bin/zip was macOS/Linux-only, so export failed on Windows).
-		// Writing fresh bytes overwrites any stale archive from a prior export.
-		const entries: Record<string, Uint8Array> = {};
+		// Build the archive under one flat folder named for the meeting, so it
+		// extracts to one tidy, named directory and wiki links resolve by basename.
+		// fflate is bundled into main.js — no external-binary dependency (the old
+		// /usr/bin/zip was macOS/Linux-only, so export failed on Windows). Writing
+		// fresh bytes overwrites any stale archive from a prior export.
+		// Use the ASYNC zip() (offloads off the UI thread) with level:0 (store, no
+		// deflate): the payload is dominated by already-compressed .m4a audio, so
+		// deflating it is slow and pointless and previously froze Obsidian for the
+		// whole export.
+		const entries: Zippable = {};
 		for (const f of files) {
 			entries[`${noteFile.basename}/${f.name}`] = await fs.readFile(join(basePath, f.path));
 		}
-		await fs.writeFile(zipPath, zipSync(entries));
+		const archive = await new Promise<Uint8Array>((resolve, reject) => {
+			zip(entries, {level: 0}, (err, data) => (err ? reject(err) : resolve(data)));
+		});
+		await fs.writeFile(zipPath, archive);
 	} catch (err) {
 		console.error("[WhisperCal] Export failed:", err);
 		new Notice(err instanceof Error ? `Export failed: ${err.message}` : "Export failed");

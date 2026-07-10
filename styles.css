@@ -2232,6 +2232,18 @@
 	gap: 8px;
 }
 
+.whisper-cal-research-error {
+	margin-right: auto;
+	align-self: center;
+	text-align: left;
+	color: var(--text-error);
+	font-size: var(--font-ui-smaller);
+}
+
+.whisper-cal-research-error.is-hidden {
+	display: none;
+}
+
 /* Merge meeting cards */
 .whisper-cal-card-gutter-toprow {
 	display: flex;

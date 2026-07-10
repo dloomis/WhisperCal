@@ -14,7 +14,7 @@ import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
-import {coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, parseDateTime} from "../utils/time";
+import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
@@ -273,7 +273,10 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	async refresh(): Promise<void> {
+	async refresh(opts?: {background?: boolean}): Promise<void> {
+		// A background (timer) refresh must not disturb the user: no "Loading…"
+		// teardown, scroll position preserved across the re-render.
+		const background = opts?.background ?? false;
 		const now = Date.now();
 		if (now - this.lastRefreshTime < CalendarView.DEBOUNCE_MS) {
 			return;
@@ -312,7 +315,12 @@ export class CalendarView extends ItemView {
 		await this.reconcileRecordingLock();
 		if (gen !== this.refreshGeneration) return;
 
-		this.renderLoading();
+		// Keep the current cards on screen during a background fetch (no flash to
+		// "Loading…" and no scroll jump). A foreground refresh (day nav, manual)
+		// shows the loading state as before.
+		if (!(background && this.cachedEvents)) {
+			this.renderLoading();
+		}
 
 		try {
 			const events = await this.provider.fetchEvents(this.selectedDate, this.settings.timezone);
@@ -329,7 +337,12 @@ export class CalendarView extends ItemView {
 					return;
 				}
 			}
+			// Preserve scroll position across a background re-render.
+			const prevScroll = background ? this.contentContainer?.scrollTop ?? 0 : 0;
 			this.renderEvents(events);
+			if (background && this.contentContainer) {
+				this.contentContainer.scrollTop = prevScroll;
+			}
 
 			// Auto-create People notes for unmatched organizers (fire-and-forget)
 			if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath && this.settings.peopleTemplatePath) {
@@ -903,7 +916,10 @@ export class CalendarView extends ItemView {
 		if (meetingDate !== displayedDate) {
 			const [y, m, d] = meetingDate.split("-").map(Number);
 			if (!isNaN(y as number) && !isNaN(m as number) && !isNaN(d as number)) {
-				this.selectedDate = new Date(y as number, (m as number) - 1, d as number);
+				// Build the day in settings.timezone (not system-local) so it formats
+				// back to exactly meetingDate — otherwise the comparison above never
+				// equalizes and every leaf change re-fetches, defeating the debounce.
+				this.selectedDate = midnightFromDateKey(meetingDate, this.settings.timezone);
 				this.lastRefreshTime = 0;
 				this.updateHeader();
 				void this.refresh();
@@ -1450,11 +1466,10 @@ export class CalendarView extends ItemView {
 
 
 	private navigateDay(offset: number): void {
-		this.selectedDate = new Date(
-			this.selectedDate.getFullYear(),
-			this.selectedDate.getMonth(),
-			this.selectedDate.getDate() + offset,
-		);
+		// Step by calendar day IN THE CONFIGURED TIMEZONE. Building system-local
+		// midnight here drifts a day whenever settings.timezone differs from the
+		// system zone (the whole view then formats via settings.timezone).
+		this.selectedDate = addDaysInTimezone(this.selectedDate, this.settings.timezone, offset);
 		this.lastRefreshTime = 0; // reset debounce
 		this.updateHeader();
 		void this.refresh();
@@ -1522,7 +1537,11 @@ export class CalendarView extends ItemView {
 		this.stopAutoRefresh();
 		const intervalMs = this.settings.refreshIntervalMinutes * 60 * 1000;
 		this.refreshTimerId = window.setInterval(() => {
-			void this.refresh();
+			// Don't tear down an in-progress merge selection on a background tick —
+			// renderEvents clears mergeSelection. Skip this tick; the next one (or a
+			// manual refresh) picks up once the user finishes merging.
+			if (this.mergeSelection.size > 0) return;
+			void this.refresh({background: true});
 		}, intervalMs);
 		this.registerInterval(this.refreshTimerId);
 	}

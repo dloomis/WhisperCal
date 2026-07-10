@@ -32,6 +32,7 @@ export class ResearchModal extends Modal {
 	private toggleChevron!: HTMLElement;
 	private toggleText!: HTMLElement;
 	private submitBtn!: HTMLButtonElement;
+	private errorEl!: HTMLElement;
 	private initialInstructions: string;
 	private initialBypass: boolean;
 	private researchPromptPath: string | null;
@@ -225,6 +226,8 @@ export class ResearchModal extends Modal {
 			cls: "whisper-cal-research-instructions",
 		});
 		this.instructionsEl.rows = 6;
+		// Clear the inline validation error as soon as the user types a prompt.
+		this.instructionsEl.addEventListener("input", () => this.errorEl?.addClass("is-hidden"));
 		// Seed from any series-note prep before resolving the label state.
 		this.bypassCheckbox.checked = this.initialBypass;
 		this.instructionsEl.value = this.initialInstructions;
@@ -235,8 +238,22 @@ export class ResearchModal extends Modal {
 		const cancelBtn = btnRow.createEl("button", {text: "Cancel"});
 		cancelBtn.addEventListener("click", () => this.close());
 
+		// Inline validation message (hidden until a blocked submit). Lives above the
+		// buttons so it's visible without scrolling.
+		this.errorEl = btnRow.createDiv({cls: "whisper-cal-research-error is-hidden"});
+
 		this.submitBtn = btnRow.createEl("button", {text: "Research", cls: "mod-cta"});
 		this.submitBtn.addEventListener("click", () => {
+			// Bypass mode replaces the prompt file, so an empty direct prompt would run
+			// the LLM with nothing to do — block it visibly instead of silently
+			// dismissing (which read as Cancel). Normal mode with everything empty is
+			// valid: "research from the meeting note alone" per the picker help text.
+			if (this.bypassCheckbox.checked && this.instructionsEl.value.trim().length === 0) {
+				this.errorEl.setText("Enter a direct prompt, or uncheck bypass to use the research prompt file.");
+				this.errorEl.removeClass("is-hidden");
+				this.instructionsEl.focus();
+				return;
+			}
 			this.submitted = true;
 			this.close();
 		});
@@ -279,6 +296,7 @@ export class ResearchModal extends Modal {
 	}
 
 	private updateBypassState(): void {
+		this.errorEl?.addClass("is-hidden");
 		const bypass = this.bypassCheckbox.checked;
 		this.instructionsLabel.setText(bypass
 			? "Direct prompt (replaces the prompt file)"
@@ -405,10 +423,10 @@ export class ResearchModal extends Modal {
 		if (this.debounceTimer) clearTimeout(this.debounceTimer);
 		const bypass = this.bypassCheckbox.checked;
 		const text = this.instructionsEl.value.trim();
-		const hasValidInput = bypass
-			? text.length > 0                       // bypass mode: prompt text required
-			: (this.selected.size > 0 || text.length > 0); // normal mode: notes or instructions
-		const result: ResearchResult | null = this.submitted && hasValidInput
+		// The submit handler already blocks the one invalid case (bypass mode with an
+		// empty prompt), so any submitted close is a valid result — including the
+		// deliberately-empty normal-mode case (research from the meeting note alone).
+		const result: ResearchResult | null = this.submitted
 			? {paths: [...this.selected], instructions: text, bypassPrompt: bypass}
 			: null;
 
