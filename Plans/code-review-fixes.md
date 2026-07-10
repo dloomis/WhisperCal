@@ -95,17 +95,20 @@ The spawn uses `windowsHide: true` (CREATE_NO_WINDOW), so graceful `taskkill /PI
 The export switched from an async `zip` subprocess to synchronous in-renderer `fflate.zipSync`, with all inputs (including the meeting audio, tens–hundreds of MB) and output held in memory. Deflating already-compressed `.m4a` is slow and pointless — the UI freezes for the duration.
 **Fix:** Use fflate's async `zip()` (callback-based), and pass `{level: 0}` for audio entries (or the whole archive).
 
-### 10. [Medium] "Speakers already tagged" guard downgrades a summarized meeting note back to "tagged"
+### 10. [Medium] ✅ DONE (Batch D) — "Speakers already tagged" guard downgrades a summarized meeting note back to "tagged"
+The heal now mirrors the transcript's actual `state` instead of hard-coding "tagged".
 `src/main.ts:668-675`
 The early guard in `doTagSpeakers` fires for any transcript state ≠ "titled" — including "summarized" — and unconditionally "heals" the meeting note to `pipeline_state: tagged`. Re-running Tag speakers on a summarized meeting regresses the note's state, re-offers Summarize, and lets `doSummarize` run a duplicate summary.
 **Fix:** Mirror the transcript's actual state (`updateFrontmatter(..., FM.PIPELINE_STATE, state)`) instead of hard-coding "tagged"; or only heal when the note's current state is absent/"note"/"titled".
 
-### 11. [Medium] DST fall-back day: `getDayEndUTC` returns the day's *start* → day cached as permanently empty
+### 11. [Medium] ✅ DONE (Batch D) — DST fall-back day: `getDayEndUTC` returns the day's *start* → day cached as permanently empty
+**DEVIATION:** Instead of string-based calendar arithmetic (which reintroduces a tz-anchor edge case for UTC+13/+14 zones), normalize to this day's `midnightInTimezone` and step **26h** forward before snapping — a civil day is ≤25h, so 26h always lands strictly inside the next calendar day and snaps back to next-day midnight on normal/spring-forward/fall-back days alike. Outcome is identical, no tz-anchor fragility.
 `src/utils/time.ts:50-53` (triggered from `src/services/CalendarCache.ts:211-226`)
 On a 25-hour fall-back day, local midnight + 24 h is still 23:00 of the same day, so `end === start`. `prefetchFutureDays` then queries Graph with `startDateTime === endDateTime` → zero events → caches the day as empty. If the user doesn't open Obsidian on the day itself, it rolls into the past-day cache, which is served forever — every meeting on that day permanently invisible (next occurrence: Nov 1 2026, America/New_York).
 **Fix:** Compute the end by calendar arithmetic on the date key: format `date` to `YYYY-MM-DD` in the target zone, add one calendar day, and run `midnightInTimezone` on that — rather than instant +24 h.
 
-### 12. [Medium] Speaker-tag completion tail runs after the job slot is released — second run can race the restore/apply writes
+### 12. [Medium] ✅ DONE (Batch D) — Speaker-tag completion tail runs after the job slot is released — second run can race the restore/apply writes
+The speakerTag `onSuccess` is now `async` and awaits `restoreTranscriptBody`/`handleSpeakerTagSuccess`; `handleSpeakerTagSuccess` fire-and-forgets only `presentSpeakerTagModal` (voided), so the non-interactive writes finish before `runLlmJob`'s finally releases the slot.
 `src/main.ts:849-859` (onSuccess voids the handler) and `:1776-1798` (`runLlmJob` awaits `onSuccess`, then `finally` cleans up)
 `runLlmJob` deliberately awaits `onSuccess` so completion writes land before cleanup — but the speaker-tag caller defeats this by `void`ing `handleSpeakerTagSuccess(...)` / `restoreTranscriptBody(...)`. The `finally` releases the job and concurrency slot while the tail (tripwire read, snapshot restore, `writeSpeakerProposals`, auto-apply) is still mutating the transcript. A user re-clicking Speakers (or the auto-tagger re-dispatching) in that window interleaves `vault.process` writes and can snapshot half-restored content as the new "restore" baseline.
 **Fix:** Make the speakerTag `onSuccess` async and await the non-interactive tail (through `writeSpeakerProposals`/tripwire/frontmatter-restore; `await restoreTranscriptBody` on the failure path). Only the modal presentation (`presentSpeakerTagModal`) stays fire-and-forget — it already serializes on `speakerTagModalQueue`.
@@ -125,7 +128,8 @@ The timer refresh unconditionally renders "Loading calendar..." (collapsing scro
 Clicking Research with nothing selected and no instructions resolves `null` — indistinguishable from Cancel, no feedback — contradicting the help text.
 **Fix:** Honor the help text: treat submitted-with-empty as a valid `{paths: [], instructions: "", bypassPrompt: false}` result. For bypass mode with empty textarea, block submission with a visible inline error instead of silently dismissing.
 
-### 16. [Medium] Speaker-tag apply/enroll uses the transcript path string captured before the LLM run — rename mid-flight discards the user's entire review
+### 16. [Medium] ✅ DONE (Batch D) — Speaker-tag apply/enroll uses the transcript path string captured before the LLM run — rename mid-flight discards the user's entire review
+Both apply paths now resolve `const currentPath = transcriptFile.path;` at use time and use it for applySpeakerTags/enrollVoiceprints/healVoiceprints/applyWordReplacements (and the auto-apply path).
 `src/main.ts:1090` (`applySpeakerTags(this.app, transcriptPath, ...)`), also `:1100` (`enrollVoiceprints`) and `:1310` (`autoApplyVoiceprintTags`); throw site `src/services/SpeakerTagApplier.ts:19-22`
 The modal receives both a live `TFile` (path stays current across renames) and a frozen path string captured at job spawn. If the user renames the note + related files while the LLM job runs (card ⋯ → Rename), the apply throws "Transcript file not found", the queue's catch swallows it, and every by-ear confirmation is lost.
 **Fix:** Resolve at use time: `const currentPath = transcriptFile.path;` immediately before `applySpeakerTags`/`enrollVoiceprints`/`hasCachedProposals` in `presentSpeakerTagModal` and the auto-apply path.

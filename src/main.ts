@@ -669,8 +669,10 @@ export default class WhisperCalPlugin extends Plugin {
 		if (state && state !== "titled") {
 			if (auto) return;
 			new Notice("Speakers already tagged for this transcript");
-			// Heal: ensure the meeting note also reflects at least "tagged"
-			void updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
+			// Heal: mirror the transcript's ACTUAL state to the note. Hard-coding
+			// "tagged" here would regress a "summarized" note back to "tagged",
+			// re-offering Summarize and allowing a duplicate summary run.
+			void updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, state);
 			return;
 		}
 
@@ -846,15 +848,20 @@ export default class WhisperCalPlugin extends Plugin {
 				debugMode: this.settings.llmDebugMode,
 				debugLogging: this.settings.llmDebugLogging,
 			}),
-			onSuccess: (result) => {
+			onSuccess: async (result) => {
 				// runLlmJob calls onSuccess even on nonzero exit (after logging the error to
 				// the note). Because the LLM now edits the transcript in place, a crash/timeout
 				// can leave a half-rewritten file — revert to the pre-LLM snapshot.
+				// AWAIT the tail: runLlmJob awaits onSuccess before its finally releases the
+				// job + concurrency slot, so awaiting here ensures the non-interactive writes
+				// (snapshot restore, writeSpeakerProposals, tripwire/frontmatter restore)
+				// finish before a re-dispatch can race them. The modal itself stays
+				// fire-and-forget inside handleSpeakerTagSuccess.
 				if (result.exitCode !== 0) {
-					void this.restoreTranscriptBody(transcriptPath, preBody, notePath, auto);
+					await this.restoreTranscriptBody(transcriptPath, preBody, notePath, auto);
 					return;
 				}
-				void this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto, preBody);
+				await this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto, preBody);
 			},
 		});
 	}
@@ -970,7 +977,12 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		await this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
+		// Fire-and-forget: the modal is interactive and long-lived, and it
+		// serializes on speakerTagModalQueue. Awaiting it here would hold the LLM
+		// job slot (runLlmJob awaits onSuccess) for the entire user review. The
+		// non-interactive tail above (proposals/tripwire/frontmatter) IS awaited,
+		// so it completes before the slot is released.
+		void this.presentSpeakerTagModal(mappings, transcriptFile, transcriptPath, notePath);
 	}
 
 	/**
@@ -1087,17 +1099,24 @@ export default class WhisperCalPlugin extends Plugin {
 					return;
 				}
 
-				await applySpeakerTags(this.app, transcriptPath, decisions);
+				// Resolve the transcript's CURRENT path at use time: the modal was open
+				// while the LLM/user worked, and a rename mid-flight (card ⋯ → Rename)
+				// leaves the captured transcriptPath string stale — applySpeakerTags would
+				// then throw "Transcript file not found" and the queue would swallow it,
+				// silently discarding the whole by-ear review. transcriptFile.path tracks
+				// renames.
+				const currentPath = transcriptFile.path;
+				await applySpeakerTags(this.app, currentPath, decisions);
 
 				// Enroll acoustic voiceprints for the confirmed speakers when Tome wrote a
 				// sidecar next to this transcript. Best-effort — never blocks tagging.
-				debug("voiceprint", `presentSpeakerTagModal: tags applied for ${transcriptPath} — invoking enrollVoiceprints`);
+				debug("voiceprint", `presentSpeakerTagModal: tags applied for ${currentPath} — invoking enrollVoiceprints`);
 				try {
 					const enroll = await enrollVoiceprints(
 						this.app,
 						this.settings.voiceprintFolderPath,
 						this.settings.peopleFolderPath,
-						transcriptPath,
+						currentPath,
 						decisions,
 						new Date().toISOString().slice(0, 10),
 					);
@@ -1156,7 +1175,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// Self-heal: if you overrode a voiceprint match, drop the culprit sample from
 				// the wrongly-matched person's library so it stops causing false matches.
 				try {
-					const healed = await healVoiceprints(this.app, this.settings.voiceprintFolderPath, transcriptPath, decisions, vpProposals);
+					const healed = await healVoiceprints(this.app, this.settings.voiceprintFolderPath, currentPath, decisions, vpProposals);
 					if (healed > 0) new Notice(`Corrected ${healed} voiceprint${healed === 1 ? "" : "s"}`);
 				} catch (e) {
 					console.warn("[WhisperCal] voiceprint heal failed", e);
@@ -1166,7 +1185,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// expose new matches). Silent, like the other pipeline passes — a Notice belongs
 				// only to the explicit "Run word replacements" command, not a tagging side effect.
 				if (this.settings.replacementFilePath) {
-					const result = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+					const result = await applyWordReplacements(this.app, currentPath, this.settings.replacementFilePath);
 					if (result.totalCount > 0) {
 						console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) to transcript`);
 					}
@@ -1307,12 +1326,16 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 		this.refreshCalendarCards(notePath);
 		try {
-			await applySpeakerTags(this.app, transcriptPath, decisions);
+			// Resolve the transcript's current path at use time — a rename between job
+			// spawn and here would strand the captured transcriptPath string (see the
+			// modal apply path). transcriptFile.path tracks renames.
+			const currentPath = transcriptFile.path;
+			await applySpeakerTags(this.app, currentPath, decisions);
 
 			// Word replacements run after tagging so stub→name substitutions can expose new
 			// matches — parity with the modal apply path. No enroll/heal here (see method doc).
 			if (this.settings.replacementFilePath) {
-				const result = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
+				const result = await applyWordReplacements(this.app, currentPath, this.settings.replacementFilePath);
 				if (result.totalCount > 0) {
 					console.debug(`[WhisperCal] Applied ${result.totalCount} word replacement(s) to transcript`);
 				}
@@ -1334,7 +1357,7 @@ export default class WhisperCalPlugin extends Plugin {
 				void this.doSummarize(notePath, true);
 			}
 
-			this.refreshCalendarCards(transcriptPath);
+			this.refreshCalendarCards(currentPath);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			console.error("[WhisperCal] Auto-tag (skip modal) failed:", e);

@@ -45,11 +45,20 @@ export function getDayStartUTC(date: Date, timezone: string): string {
 
 /**
  * Get the end of a day (start of next day) in a given timezone as a UTC ISO string.
- * Computes next-day midnight directly instead of adding fixed 24h (which is wrong on DST days).
+ *
+ * Adding a fixed 24h to the day's start is wrong on a 25-hour fall-back day: it
+ * lands at 23:00 of the SAME calendar day, so midnightInTimezone snaps back to
+ * this day's midnight and end === start — the caller then queries Graph with an
+ * empty range and caches the day as permanently empty (next occurrence:
+ * Nov 1 2026, America/New_York). Instead, normalize to this day's midnight and
+ * step 26h forward: since a civil day is at most 25h, 26h always lands strictly
+ * inside the next calendar day, and midnightInTimezone snaps that back to
+ * next-day midnight correctly on normal, spring-forward, and fall-back days.
  */
 export function getDayEndUTC(date: Date, timezone: string): string {
-	const nextDay = new Date(date.getTime() + 24 * 3600_000);
-	return midnightInTimezone(nextDay, timezone).toISOString();
+	const start = midnightInTimezone(date, timezone);
+	const wellIntoNextDay = new Date(start.getTime() + 26 * 3600_000);
+	return midnightInTimezone(wellIntoNextDay, timezone).toISOString();
 }
 
 /**
