@@ -1,4 +1,4 @@
-import {requestUrl} from "obsidian";
+import {requestUrl, type RequestUrlResponse} from "obsidian";
 import {createHash, randomBytes} from "crypto";
 import type {TokenCache} from "./AuthTypes";
 import {AuthError} from "./CalendarAuth";
@@ -151,27 +151,44 @@ export class GoogleAuth extends BaseCalendarAuth {
 	protected async doRefreshToken(refreshToken: string): Promise<TokenCache> {
 		const {clientId, clientSecret} = this.config;
 
-		const response = await requestUrl({
-			url: GOOGLE_TOKEN_URL,
-			method: "POST",
-			headers: {"Content-Type": "application/x-www-form-urlencoded"},
-			body: new URLSearchParams({
-				grant_type: "refresh_token",
-				client_id: clientId,
-				client_secret: clientSecret,
-				refresh_token: refreshToken,
-			}).toString(),
-		});
-
-		const token = response.json as {
-			access_token: string;
-			expires_in: number;
+		type GoogleTokenResponse = {
+			access_token?: string;
+			expires_in?: number;
 			error?: string;
 			error_description?: string;
 		};
 
-		if (token.error) {
-			throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
+		let response: RequestUrlResponse;
+		try {
+			// throw:false so a 4xx OAuth error resolves (we classify it below) instead
+			// of throwing a generic error; a genuine transport failure still rejects.
+			response = await requestUrl({
+				url: GOOGLE_TOKEN_URL,
+				method: "POST",
+				headers: {"Content-Type": "application/x-www-form-urlencoded"},
+				throw: false,
+				body: new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: clientId,
+					client_secret: clientSecret,
+					refresh_token: refreshToken,
+				}).toString(),
+			});
+		} catch (e) {
+			// Offline / DNS / VPN flap — transient. Keep the refresh token (NETWORK).
+			throw new AuthError(`Network error refreshing token: ${e instanceof Error ? e.message : String(e)}`, "NETWORK");
+		}
+
+		let token: GoogleTokenResponse | undefined;
+		try { token = response.json as GoogleTokenResponse; } catch { token = undefined; }
+
+		// Explicit OAuth error body or a 4xx means the grant is actually bad.
+		if (token?.error || (response.status >= 400 && response.status < 500)) {
+			throw new AuthError(token?.error_description ?? token?.error ?? `Token refresh failed (HTTP ${response.status})`, "AUTH_FAILED");
+		}
+		// 5xx or a missing access token — treat as transient, not a credential failure.
+		if (!token?.access_token || token.expires_in === undefined) {
+			throw new AuthError(`Token refresh returned no access token (HTTP ${response.status})`, "NETWORK");
 		}
 
 		return {

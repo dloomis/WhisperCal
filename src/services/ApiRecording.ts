@@ -193,14 +193,23 @@ export function watchApiRecording(opts: {
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 100; // ~5 minutes
 
-/** Find the newest file in a folder created after a given timestamp. */
-function findNewestFile(app: App, folderPath: string, afterMs: number): TFile | null {
+/**
+ * Find the newest transcript file in a folder created after a given timestamp.
+ * Restricted to `.md` files whose basename starts with `namePrefix` (the
+ * recording's suggestedFilename) so concurrent recordings can't cross-adopt each
+ * other's transcripts, and so a sibling `.m4a`/`.voiceprints.json` that lands
+ * before the `.md` is never mistaken for the transcript.
+ */
+function findNewestFile(app: App, folderPath: string, afterMs: number, namePrefix: string | undefined): TFile | null {
 	const folder = app.vault.getAbstractFileByPath(folderPath);
 	if (!(folder instanceof TFolder)) return null;
 	let newest: TFile | null = null;
 	let newestTime = afterMs;
 	for (const child of folder.children) {
-		if (child instanceof TFile && child.stat.ctime > newestTime) {
+		if (!(child instanceof TFile)) continue;
+		if (child.extension !== "md") continue;
+		if (namePrefix && !child.basename.startsWith(namePrefix)) continue;
+		if (child.stat.ctime > newestTime) {
 			newest = child;
 			newestTime = child.stat.ctime;
 		}
@@ -296,19 +305,22 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		// it from the suggestedFilename captured at record-start, so the expected
 		// path derives from the ORIGINAL notePath even if the note was renamed.
 		const expectedPath = getTranscriptPath(notePath, transcriptFolderPath);
+		const namePrefix = info?.suggestedFilename;
 		let transcriptFile: TFile | null = null;
 
-		// Wait for the file to appear — check expected path first, then scan folder
+		// Poll ONLY the expected path for the full window. With concurrent
+		// recordings, an immediate newest-file fallback could adopt another
+		// meeting's transcript and then cross-wire its frontmatter — so we scan
+		// the folder only once, after the window expires, and only for a file
+		// whose basename matches this recording's suggestedFilename.
 		for (let i = 0; i < 15 && !transcriptFile; i++) {
 			await sleep(1000);
 			if (watchersStopped) return;
 			const byPath = app.vault.getAbstractFileByPath(expectedPath);
-			if (byPath instanceof TFile) {
-				transcriptFile = byPath;
-			} else {
-				// Fallback: find the newest file in the transcript folder
-				transcriptFile = findNewestFile(app, transcriptFolderPath, beforeStop);
-			}
+			if (byPath instanceof TFile) transcriptFile = byPath;
+		}
+		if (!transcriptFile) {
+			transcriptFile = findNewestFile(app, transcriptFolderPath, beforeStop, namePrefix);
 		}
 
 		if (!transcriptFile) {

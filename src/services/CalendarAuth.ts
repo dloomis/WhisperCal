@@ -16,9 +16,11 @@ export interface CalendarAuth {
 }
 
 export class AuthError extends Error {
-	code: "NOT_AUTHENTICATED" | "AUTH_FAILED";
+	// NETWORK marks a transient transport failure (offline, DNS, VPN flap): the
+	// refresh token is still valid, so the caller must NOT sign the user out.
+	code: "NOT_AUTHENTICATED" | "AUTH_FAILED" | "NETWORK";
 
-	constructor(message: string, code: "NOT_AUTHENTICATED" | "AUTH_FAILED") {
+	constructor(message: string, code: "NOT_AUTHENTICATED" | "AUTH_FAILED" | "NETWORK") {
 		super(message);
 		this.name = "AuthError";
 		this.code = code;

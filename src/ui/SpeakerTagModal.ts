@@ -339,6 +339,13 @@ export class SpeakerTagModal extends Modal {
 		for (let i = 0; i < this.inputs.length; i++) {
 			this.inputs[i]!.addEventListener("keydown", (e) => {
 				if (e.key === "Enter") {
+					// Belt-and-braces: if this row's autocomplete dropdown is open with a
+					// highlighted suggestion, this Enter belongs to the dropdown (it should
+					// have stopped propagation already) — never treat it as submit/next.
+					const dd = this.inputs[i]!.parentElement?.querySelector(".whisper-cal-autocomplete-dropdown");
+					if (dd && !dd.classList.contains("whisper-cal-hidden") && dd.querySelector(".is-selected")) {
+						return;
+					}
 					e.preventDefault();
 					if (i === this.inputs.length - 1) {
 						this.submitted = true;
@@ -464,7 +471,11 @@ export class SpeakerTagModal extends Modal {
 				highlightItem(items);
 			} else if (e.key === "Enter" && selectedIdx >= 0) {
 				e.preventDefault();
-				e.stopPropagation();
+				// stopImmediatePropagation (not stopPropagation) so the row's own
+				// second keydown listener — the Apply/next-field submit handler on the
+				// SAME element — doesn't also fire. Otherwise Enter-selecting a
+				// suggestion on the last row would instantly Apply the whole modal.
+				e.stopImmediatePropagation();
 				items[selectedIdx]!.dispatchEvent(new MouseEvent("mousedown", {bubbles: true}));
 			} else if (e.key === "Escape") {
 				showDropdown(false);

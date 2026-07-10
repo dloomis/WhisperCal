@@ -98,6 +98,14 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 			await this.saveToken(newCache);
 			return newCache.accessToken;
 		} catch (e) {
+			// A NETWORK failure is transient — leave the cached refresh token intact
+			// so the next attempt (once connectivity returns) can succeed. Signing
+			// out here would persist a null cache and force a full browser re-auth
+			// for a passing Wi-Fi/VPN hiccup.
+			if (e instanceof AuthError && e.code === "NETWORK") throw e;
+			// AUTH_FAILED (bad grant) and any other error mean the credentials are
+			// no longer usable — surface as a sign-in-required condition. Preserve a
+			// specific AuthError; wrap anything else.
 			if (e instanceof AuthError) throw e;
 			await this.signOut();
 			throw new AuthError("Session expired. Please sign in again.", "NOT_AUTHENTICATED");
