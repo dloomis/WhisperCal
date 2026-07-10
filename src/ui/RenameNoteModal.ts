@@ -44,7 +44,7 @@ export class RenameNoteModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-rename-note-modal");
 
-		contentEl.createEl("h3", {text: "Rename note"});
+		this.setTitle("Rename note");
 
 		const input = contentEl.createEl("input", {
 			cls: "whisper-cal-rename-input",

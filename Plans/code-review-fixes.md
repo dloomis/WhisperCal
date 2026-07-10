@@ -170,13 +170,13 @@ Voiceprint libraries live in a user-visible vault folder (default `Caches/Voicep
 - **30. ✅ DONE (G, PARTIAL) — Keyboard accessibility for click-only divs.** Card title (`MeetingCard.ts:553-560`), join/organizer links (`:309, :578` — `<a>` without href), Today button (`CalendarView.ts:149-150`), unlinked-section header (`:1028-1039`), SpeakerTagModal disclosure/timestamps/caret (`:256-266, :161-166, :490-500`), ResearchModal disclosure/rows/chips (`:139-147, :368-388, :271-277`), organizer chip remove (`settings.ts:1264-1274`). Convert to `<button>` or add `tabindex="0"` + `role` + Enter/Space handlers.
 
 ### Obsidian directory compliance polish
-- **31. Use `Modal.setTitle()` instead of `<h2>/<h3>` in contentEl** — ten modals: `settings.ts:186`, `NameInputModal.ts:28`, `MergeConfirmModal.ts:51`, `WordReplacementModal.ts:37`, `RenameNoteModal.ts:47`, `DeleteTranscriptModal.ts:28`, `ActiveRecordingNoticeModal.ts:23`, `ModalHeader.ts:57`, `CachedProposalModal.ts:25`, `DeleteNoteModal.ts:43`. Review bot flags raw heading elements.
-- **32. `normalizePath` user-configured folder paths on save.** `settings.ts:265-305` folder inputs store verbatim; `main.ts:228` does `startsWith(transcriptFolderPath + "/")` (a trailing slash silently disables transcript→note mirroring); `VoiceprintEnroller.ts:319` concatenates un-normalized. Normalize+trim in `addTextSetting` for path inputs, or at the two consumption sites.
-- **33. Replace the one inline style with a CSS custom property.** `MeetingCard.ts:1111` `el.style.animationDelay` → `el.setCssProps({"--whisper-cal-seg-delay": ...})` + `animation-delay: var(--whisper-cal-seg-delay)` in styles.css.
-- **34. Replace hardcoded red with a theme variable.** `styles.css:1413` `#e53935` → `var(--color-red)`.
-- **35. Stop hardcoding the plugin folder name in the tmp path.** `LlmInvoker.ts:54` hardcodes `"plugins/whisper-cal"`; thread `manifest.dir` (available in `main.ts:177`) into `LlmInvokerOpts`.
-- **36. README Disclosures: add the two missing plaintext secrets.** Add one bullet: the optional Anthropic API key (`settings.ts:1148`) and the Google OAuth client secret (`settings.ts:31`) are stored unencrypted in `data.json` alongside OAuth tokens.
-- **37. Collapse `versions.json`.** ~330 redundant entries; only two minAppVersion boundaries exist. Collapse to `{"0.1.0": "1.4.10", "0.8.1": "1.6.0"}`.
+- **31. ✅ DONE (H) — Use `Modal.setTitle()` instead of `<h2>/<h3>` in contentEl** — ten modals: `settings.ts:186`, `NameInputModal.ts:28`, `MergeConfirmModal.ts:51`, `WordReplacementModal.ts:37`, `RenameNoteModal.ts:47`, `DeleteTranscriptModal.ts:28`, `ActiveRecordingNoticeModal.ts:23`, `ModalHeader.ts:57`, `CachedProposalModal.ts:25`, `DeleteNoteModal.ts:43`. Review bot flags raw heading elements.
+- **32. ✅ DONE (H) — `normalizePath` user-configured folder paths on save.** `settings.ts:265-305` folder inputs store verbatim; `main.ts:228` does `startsWith(transcriptFolderPath + "/")` (a trailing slash silently disables transcript→note mirroring); `VoiceprintEnroller.ts:319` concatenates un-normalized. Normalize+trim in `addTextSetting` for path inputs, or at the two consumption sites.
+- **33. ✅ DONE (H) — Replace the one inline style with a CSS custom property.** `MeetingCard.ts:1111` `el.style.animationDelay` → `el.setCssProps({"--whisper-cal-seg-delay": ...})` + `animation-delay: var(--whisper-cal-seg-delay)` in styles.css.
+- **34. ✅ DONE (H) — Replace hardcoded red with a theme variable.** `styles.css:1413` `#e53935` → `var(--color-red)`.
+- **35. ✅ DONE (H) — Stop hardcoding the plugin folder name in the tmp path.** `LlmInvoker.ts:54` hardcodes `"plugins/whisper-cal"`; thread `manifest.dir` (available in `main.ts:177`) into `LlmInvokerOpts`.
+- **36. ✅ DONE (H) — README Disclosures: add the two missing plaintext secrets.** Add one bullet: the optional Anthropic API key (`settings.ts:1148`) and the Google OAuth client secret (`settings.ts:31`) are stored unencrypted in `data.json` alongside OAuth tokens.
+- **37. ✅ DONE (H) — Collapse `versions.json`.** ~330 redundant entries; only two minAppVersion boundaries exist. Collapse to `{"0.1.0": "1.4.10", "0.8.1": "1.6.0"}`.
 - **38. (No code change) `app.setting` private API.** `main.ts:212-216` — tolerated, already optional-chained; be ready to justify in the submission PR.
 
 ---
@@ -187,6 +187,13 @@ Voiceprint libraries live in a user-visible vault folder (default `Caches/Voicep
 - **24:** `parseDateTime` gained an optional `timezone` param; wired at the recording-match site (main.ts, the documented "No matching recording found" symptom). Display/creation sites (CalendarView positioning, ModalHeader, NoteCreator) left on system-local — they render via tz-aware formatters already and changing them risked shifting shown times.
 - **25:** `query` now rejects with `MacWhisperDbError` (not silent "[]"); LinkRecording surfaces "Couldn't read the MacWhisper database", the passive unlinked list swallows+logs it, getTranscript propagates.
 - **30:** Added shared `addActivateOnKey` helper (tabindex+role+Enter/Space→click). Applied to: Today button, unlinked-section header, card title, join/organizer links, speaker-tag timestamps + disclosure, research disclosure + chip remove, settings organizer chip remove. Skipped: the autocomplete caret (mousedown-only affordance; the input itself is already focusable) and dynamic research result rows.
+
+
+**Batch H notes:**
+- **31:** 10 simple Modal subclasses now use `this.setTitle(...)`. `ModalHeader.renderModalHeader` (used by SpeakerTag/Research modals) keeps its custom two-line header but the `<h3>` became a styled `.whisper-cal-modal-title` div (setTitle can't express title+subtitle).
+- **32:** `addTextSetting` now `normalizePath`es path inputs (suggest set) on change and browse; empty stays empty so a folder setting can still mean "disabled".
+- **35:** `LlmInvokerOpts.configDir` → `pluginDir` (from `manifest.dir`); tmp path no longer hardcodes `plugins/whisper-cal`.
+- **38:** (no code) `app.setting` private API — left as-is, already optional-chained; justify in the PR.
 
 ## Verified clean — do NOT re-audit these
 

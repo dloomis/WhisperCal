@@ -62,6 +62,14 @@
 	text-decoration: underline;
 }
 
+.whisper-cal-modal-title {
+	font-size: var(--h3-size);
+	font-weight: var(--h3-weight);
+	line-height: var(--line-height-tight);
+	color: var(--text-normal);
+	margin: 0 0 8px;
+}
+
 .whisper-cal-modal-subtitle {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
@@ -1251,6 +1259,7 @@
    as an inline animation-delay. */
 .whisper-cal-rail-seg.whisper-cal-rail-seg-complete {
 	animation: whisper-cal-relay-fill 0.5s ease-out both;
+	animation-delay: var(--whisper-cal-seg-delay, 0ms);
 }
 
 .whisper-cal-rail-seg:not([aria-disabled="true"]):hover {
@@ -1410,7 +1419,7 @@
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
-	background: #e53935;
+	background: var(--color-red);
 	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
 }
 

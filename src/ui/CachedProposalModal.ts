@@ -22,7 +22,7 @@ export class CachedProposalModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-cached-proposal-modal");
 
-		contentEl.createEl("h3", {text: "A prior speaker mapping is available"});
+		this.setTitle("A prior speaker mapping is available");
 		/* eslint-disable obsidianmd/ui/sentence-case */
 		contentEl.createEl("p", {
 			text: "Speaker proposals from a previous run are cached on this transcript. You can review them or re-run the LLM for fresh results.",

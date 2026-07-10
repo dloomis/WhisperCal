@@ -25,7 +25,7 @@ export class DeleteTranscriptModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-delete-transcript-modal");
 
-		contentEl.createEl("h3", {text: "Delete transcript"});
+		this.setTitle("Delete transcript");
 
 		contentEl.createEl("p", {
 			text: `Are you sure you want to delete "${this.title}"? The transcript file will be moved to the system trash.`,

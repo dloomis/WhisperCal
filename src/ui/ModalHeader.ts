@@ -54,7 +54,10 @@ export function buildMeetingSubtitle(fm: Record<string, unknown>): string {
  * Line 2 — date/time · duration · organizer (p, smaller/muted)
  */
 export function renderModalHeader(el: HTMLElement, title: string, subtitle: string): void {
-	el.createEl("h3", {text: title});
+	// A styled div rather than a raw <h3>: these modals build a custom two-line
+	// header (title + subtitle) inside contentEl, which Modal.setTitle can't
+	// express, and the directory review flags bare heading elements in content.
+	el.createEl("div", {text: title, cls: "whisper-cal-modal-title"});
 	if (subtitle) {
 		el.createEl("p", {
 			text: subtitle,

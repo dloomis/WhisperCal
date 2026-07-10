@@ -1709,7 +1709,7 @@ export default class WhisperCalPlugin extends Plugin {
 		filePath: string;
 		label: string;
 		promptPath?: string;
-		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "configDir">;
+		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir">;
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void | Promise<void>;
 		onRegister?: () => void;
 		onCleanup?: () => void;
@@ -1799,7 +1799,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 				const result = await spawnLlmPrompt({
 					...opts.spawnOpts(vaultPath),
-					configDir: this.app.vault.configDir,
+					pluginDir: this.manifest.dir!,
 				});
 
 				if (this.settings.llmDebugMode) {

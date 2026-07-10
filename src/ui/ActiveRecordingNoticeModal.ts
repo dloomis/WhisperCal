@@ -20,7 +20,7 @@ export class ActiveRecordingNoticeModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-rerecord-modal");
 
-		contentEl.createEl("h3", {text: "Recording already in progress"});
+		this.setTitle("Recording already in progress");
 
 		const p = contentEl.createEl("p", {cls: "whisper-cal-rerecord-warning"});
 		if (this.subject) {

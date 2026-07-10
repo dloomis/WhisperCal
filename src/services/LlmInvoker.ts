@@ -9,7 +9,7 @@ interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on
 	targetLabel?: string;     // label for the target in the trigger string (default: "Transcript")
 	vaultPath: string;        // absolute path to vault root
-	configDir: string;        // vault-relative config dir (e.g. ".obsidian"); supplied by Vault#configDir
+	pluginDir: string;        // vault-relative plugin dir (e.g. ".obsidian/plugins/whisper-cal"); from manifest.dir
 	promptPath?: string;      // absolute or vault-relative path to the prompt file (omit when using inlinePrompt)
 	inlinePrompt?: string;    // direct prompt text — replaces the prompt file reference when set
 	llmCli: string;
@@ -50,8 +50,8 @@ function ensureMcpConfigFile(flags: string): void {
  * Return a plugin-local temp directory inside the vault.
  * Using the vault avoids OS-specific temp paths and works cross-platform.
  */
-function getPluginTmpDir(vaultPath: string, configDir: string): string {
-	const dir = path.join(vaultPath, configDir, "plugins", "whisper-cal", "tmp");
+function getPluginTmpDir(vaultPath: string, pluginDir: string): string {
+	const dir = path.join(vaultPath, pluginDir, "tmp");
 	// mode 0o700: the prompt/trigger files hold meeting content and live inside a
 	// possibly-synced vault — keep them owner-only (no-op on Windows).
 	if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true, mode: 0o700});
@@ -321,7 +321,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 				windowsUserPrompt = content;
 			} else {
 				try {
-					const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+					const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.pluginDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 					fs.writeFileSync(tmpFile, content, {encoding: "utf-8", mode: 0o600});
 					tmpFiles.push(tmpFile);
 					systemPromptFile = tmpFile;
@@ -348,7 +348,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 		// -Encoding UTF8 + the $OutputEncoding/[Console]::OutputEncoding prelude keep
 		// non-ASCII text (accented names) intact through the read → stdin → stdout
 		// legs; PS 5.1 defaults (ANSI read, ASCII pipe, OEM console) mangle it (#2).
-		const tmpTrigger = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-trigger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+		const tmpTrigger = path.join(getPluginTmpDir(opts.vaultPath, opts.pluginDir), `wcal-trigger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 		fs.writeFileSync(tmpTrigger, trigger, {encoding: "utf-8", mode: 0o600});
 		tmpFiles.push(tmpTrigger);
 		cmd = `${WIN_PS_UTF8_PRELUDE}Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
@@ -500,7 +500,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 			windowsUserPrompt = systemPromptContent;
 		} else {
 			try {
-				const sysDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
+				const sysDir = getPluginTmpDir(opts.vaultPath, opts.pluginDir);
 				const tmpFile = path.join(sysDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
 				fs.writeFileSync(tmpFile, systemPromptContent, {encoding: "utf-8", mode: 0o600});
 				tmpFiles.push(tmpFile);
@@ -512,7 +512,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	let trigger = buildTrigger(opts, !!systemPromptFile || windowsUserPrompt !== undefined);
 	if (windowsUserPrompt !== undefined) trigger = `${windowsUserPrompt}\n\n${trigger}`;
 	const cli = buildCliCommand(opts, systemPromptFile);
-	const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
+	const tmpDir = getPluginTmpDir(opts.vaultPath, opts.pluginDir);
 	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
 	fs.writeFileSync(tmpTrigger, trigger, {encoding: "utf-8", mode: 0o600});
 	tmpFiles.push(tmpTrigger);

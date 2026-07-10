@@ -45,9 +45,7 @@ export class ReRecordConfirmModal extends Modal {
 			&& this.context.pipelineState !== "titled";
 		const linked = this.context.linked !== false;
 
-		contentEl.createEl("h3", {
-			text: linked ? "Transcript already linked" : "Transcript file already exists",
-		});
+		this.setTitle(linked ? "Transcript already linked" : "Transcript file already exists");
 
 		if (speakersTagged) {
 			const warn = contentEl.createDiv({cls: "whisper-cal-rerecord-alert"});

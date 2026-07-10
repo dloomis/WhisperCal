@@ -1112,7 +1112,7 @@ function renderCardDynamic(
 				const el = segEls[i];
 				if ((cel.segUntil[i] ?? 0) > now && el instanceof HTMLElement) {
 					el.addClass("whisper-cal-rail-seg-complete");
-					el.style.animationDelay = `${cel.segDelay[i] ?? 0}ms`;
+					el.setCssProps({"--whisper-cal-seg-delay": `${cel.segDelay[i] ?? 0}ms`});
 				}
 			}
 		}

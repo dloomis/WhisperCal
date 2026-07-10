@@ -40,7 +40,7 @@ export class DeleteNoteModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-delete-note-modal");
 
-		contentEl.createEl("h3", {text: "Delete note"});
+		this.setTitle("Delete note");
 
 		contentEl.createEl("p", {
 			cls: "whisper-cal-delete-warning",

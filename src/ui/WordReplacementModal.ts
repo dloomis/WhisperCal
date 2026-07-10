@@ -34,7 +34,7 @@ export class WordReplacementModal extends Modal {
 		const {contentEl} = this;
 		contentEl.addClass("whisper-cal-word-replacement-modal");
 
-		contentEl.createEl("h3", {text: "Run word replacements"});
+		this.setTitle("Run word replacements");
 
 		contentEl.createEl("p", {
 			text: `This will apply all word replacement rules to "${this.targetName}". Replacements are case-sensitive and use word boundaries to avoid partial matches.`,

@@ -25,7 +25,7 @@ export class NameInputModal extends Modal {
 
 	onOpen(): void {
 		const {contentEl} = this;
-		contentEl.createEl("h3", {text: "Name this meeting"});
+		this.setTitle("Name this meeting");
 
 		const input = contentEl.createEl("input", {
 			type: "text",

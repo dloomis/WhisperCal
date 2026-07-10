@@ -1,4 +1,4 @@
-import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, requestUrl} from "obsidian";
+import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, normalizePath, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
@@ -184,7 +184,7 @@ class LlmConsentModal extends Modal {
 	onOpen(): void {
 		const {contentEl} = this;
 		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		contentEl.createEl("h2", {text: "Enable LLM features?"});
+		this.setTitle("Enable LLM features?");
 		contentEl.createEl("p", {
 			text: "Speaker tagging and summarization send meeting transcripts and note content to a cloud LLM provider. " +
 				"This may include sensitive or controlled information.",
@@ -278,13 +278,22 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		browse?: boolean;
 	}): Setting {
 		const s = new Setting(opts.container).setName(opts.name).setDesc(opts.desc);
+		// Path inputs (suggest set) are normalized so a stray trailing slash or "./"
+		// doesn't break consumers like `startsWith(folder + "/")` (which a trailing
+		// slash silently defeats) or un-normalized path concatenation. Empty stays
+		// empty — for folder settings that means "disabled", which normalizePath
+		// would otherwise turn into "/".
+		const normalize = (v: string): string => {
+			if (opts.suggest) return v.trim() ? normalizePath(v) : "";
+			return opts.trim ? v.trim() : v;
+		};
 		let textComp: TextComponent | null = null;
 		s.addText(text => {
 			textComp = text;
 			if (opts.placeholder) text.setPlaceholder(opts.placeholder);
 			text.setValue(opts.get())
 				.onChange((value) => {
-					opts.set(opts.trim ? value.trim() : value);
+					opts.set(normalize(value));
 					this.debouncedSave();
 				});
 			if (opts.suggest === "folder") new FolderSuggest(this.app, text.inputEl);
@@ -297,7 +306,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.onClick(async () => {
 					const folder = await new FolderSelectModal(this.app).pick();
 					if (folder !== null) {
-						const v = opts.trim ? folder.trim() : folder;
+						const v = normalize(folder);
 						opts.set(v);
 						textComp?.setValue(v);
 						this.debouncedSave();
