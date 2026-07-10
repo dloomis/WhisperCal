@@ -6,6 +6,7 @@ import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time"
 import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
 import {closeMeetingApp} from "../services/MeetingAppCloser";
 import {resolveWikiLink} from "../utils/vault";
+import {addActivateOnKey} from "../utils/a11y";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import type {JobTracker} from "../services/JobTracker";
@@ -335,6 +336,7 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 		const locIcon = locLink.createSpan({cls: "whisper-cal-card-icon"});
 		setIcon(locIcon, "map-pin");
 		locLink.createSpan({text: event.location || "No location"});
+		addActivateOnKey(locLink, "link");
 	} else {
 		const locEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
 		const locIcon = locEl.createSpan({cls: "whisper-cal-card-icon"});
@@ -558,6 +560,7 @@ export function renderMeetingCard(
 	subjectEl.addEventListener("click", () => {
 		void openOrCreateNote(opts);
 	});
+	addActivateOnKey(subjectEl);
 
 	renderMetadata(content, event, opts);
 
@@ -583,6 +586,7 @@ export function renderMeetingCard(
 				e.preventDefault();
 				void app.workspace.openLinkText(personInfo.notePath, "", false);
 			});
+			addActivateOnKey(link, "link");
 		} else {
 			orgEl.createSpan({text: event.organizerName});
 		}

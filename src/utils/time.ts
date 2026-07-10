@@ -7,34 +7,36 @@
  * Midnight (00:00 local) of a `YYYY-MM-DD` calendar date in `timezone`, as a UTC Date.
  * Computes the UTC offset at actual midnight (not at the guess time) to handle DST.
  */
+/** UTC offset (ms) of `timezone` at the given instant: local wall-clock minus UTC. */
+function tzOffsetMs(instant: Date, timezone: string): number {
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone: timezone,
+		year: "numeric", month: "2-digit", day: "2-digit",
+		hour: "2-digit", minute: "2-digit", second: "2-digit",
+		hour12: false,
+	}).formatToParts(instant);
+	const get = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
+	const localMs = Date.UTC(
+		get("year"), get("month") - 1, get("day"),
+		get("hour") === 24 ? 0 : get("hour"), get("minute"), get("second"),
+	);
+	return localMs - instant.getTime();
+}
+
+/**
+ * Resolve a wall-clock instant "YYYY-MM-DDTHH:MM:SS" (interpreted in `timezone`)
+ * to the correct UTC Date, handling DST via a two-pass offset check.
+ */
+function zonedWallTime(isoLocal: string, timezone: string): Date {
+	const guess = new Date(`${isoLocal}Z`); // treat the wall time as UTC first
+	const offset1 = tzOffsetMs(guess, timezone);
+	const t1 = new Date(guess.getTime() - offset1);
+	const offset2 = tzOffsetMs(t1, timezone);
+	return offset1 === offset2 ? t1 : new Date(guess.getTime() - offset2);
+}
+
 export function midnightFromDateKey(localDate: string, timezone: string): Date {
-	// Start with a rough guess: interpret as UTC midnight
-	const guess = new Date(`${localDate}T00:00:00Z`);
-
-	// Compute UTC offset at the guess time by comparing formatted local parts to UTC
-	const computeOffset = (instant: Date): number => {
-		const parts = new Intl.DateTimeFormat("en-US", {
-			timeZone: timezone,
-			year: "numeric", month: "2-digit", day: "2-digit",
-			hour: "2-digit", minute: "2-digit", second: "2-digit",
-			hour12: false,
-		}).formatToParts(instant);
-		const get = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
-		const localMs = Date.UTC(
-			get("year"), get("month") - 1, get("day"),
-			get("hour") === 24 ? 0 : get("hour"), get("minute"), get("second"),
-		);
-		return localMs - instant.getTime();
-	};
-
-	// First pass: compute offset at the guess
-	const offset1 = computeOffset(guess);
-	const midnight1 = new Date(guess.getTime() - offset1);
-	// Second pass: verify the offset at the computed midnight (may differ on DST boundary)
-	const offset2 = computeOffset(midnight1);
-	if (offset1 === offset2) return midnight1;
-	// Re-adjust with the correct offset
-	return new Date(guess.getTime() - offset2);
+	return zonedWallTime(`${localDate}T00:00:00`, timezone);
 }
 
 /**
@@ -181,8 +183,13 @@ export function isSameDay(a: Date, b: Date, timezone: string): boolean {
 /**
  * Parse a date string ("YYYY-MM-DD") and a time string ("9:00 AM") into a Date.
  * Returns null if either part is missing or unparseable.
+ *
+ * `timezone` interprets the wall-clock value in that zone (frontmatter times are
+ * written in the configured zone). Omit it only for legacy callers that want
+ * system-local parsing — a traveling user with a configured zone would otherwise
+ * get a Date offset by hours and "No matching recording found".
  */
-export function parseDateTime(dateStr: string, timeStr: string): Date | null {
+export function parseDateTime(dateStr: string, timeStr: string, timezone?: string): Date | null {
 	const dateParts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 	if (!dateParts) return null;
 
@@ -203,6 +210,11 @@ export function parseDateTime(dateStr: string, timeStr: string): Date | null {
 		minute = parseInt(timeMatch24![2]!, 10);
 	}
 
+	if (timezone) {
+		const pad = (n: number) => String(n).padStart(2, "0");
+		const d = zonedWallTime(`${dateParts[1]}-${dateParts[2]}-${dateParts[3]}T${pad(hour)}:${pad(minute)}:00`, timezone);
+		return isNaN(d.getTime()) ? null : d;
+	}
 	const d = new Date(
 		parseInt(dateParts[1]!, 10),
 		parseInt(dateParts[2]!, 10) - 1,

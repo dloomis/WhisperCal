@@ -1,5 +1,5 @@
 import {App, Notice} from "obsidian";
-import {findRecordingsNear, hasTranscriptLines, type MacWhisperRecording} from "./MacWhisperDb";
+import {findRecordingsNear, hasTranscriptLines, MacWhisperDbError, type MacWhisperRecording} from "./MacWhisperDb";
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
 import {updateFrontmatter} from "../utils/frontmatter";
@@ -107,7 +107,17 @@ export async function linkRecording(opts: {
 }): Promise<boolean> {
 	const {app, meetingStart, notePath, subject, timezone, transcriptFolderPath, attendees, isRecurring, windowMinutes, onStatus} = opts;
 
-	const allRecordings = await findRecordingsNear(meetingStart, windowMinutes);
+	let allRecordings: MacWhisperRecording[];
+	try {
+		allRecordings = await findRecordingsNear(meetingStart, windowMinutes);
+	} catch (err) {
+		// A DB read failure is not the same as "no recording matched" — say so.
+		if (err instanceof MacWhisperDbError) {
+			new Notice(err.message);
+			return false;
+		}
+		throw err;
+	}
 
 	// Exclude recordings already linked to any note in the vault
 	const linked = getLinkedSessionIds(app);

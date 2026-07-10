@@ -1,5 +1,6 @@
 import {Modal, App, Menu, TFile, setIcon} from "obsidian";
 import {renderModalHeader} from "./ModalHeader";
+import {addActivateOnKey} from "../utils/a11y";
 
 type SortMode =
 	| "name-asc" | "name-desc"
@@ -145,6 +146,7 @@ export class ResearchModal extends Modal {
 				this.applyDisclosure();
 				if (this.expanded) setTimeout(() => this.searchInput.focus(), 0);
 			});
+			addActivateOnKey(toggle);
 		}
 
 		// Advanced controls: note picker (search + results) and prompt editor.
@@ -287,11 +289,13 @@ export class ResearchModal extends Modal {
 			});
 			const remove = chip.createSpan({cls: "whisper-cal-chip-remove"});
 			setIcon(remove, "x");
+			remove.setAttribute("aria-label", "Remove note");
 			remove.addEventListener("click", () => {
 				this.selected.delete(path);
 				this.renderChips();
 				this.renderResults();
 			});
+			addActivateOnKey(remove);
 		}
 	}
 

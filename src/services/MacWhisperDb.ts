@@ -81,19 +81,35 @@ function isValidHexId(id: string): boolean {
  * Uses `sqlite3` CLI — no npm dependencies needed.
  */
 
+/**
+ * A real failure reading the MacWhisper DB (locked file, missing `sqlite3`, bad
+ * path) — distinct from a successful query that returned no rows. Callers surface
+ * this as "Couldn't read the MacWhisper database" rather than the misleading
+ * "No matching recording found".
+ */
+export class MacWhisperDbError extends Error {
+	readonly detail: string;
+	constructor(detail: string) {
+		super("Couldn't read the MacWhisper database");
+		this.name = "MacWhisperDbError";
+		this.detail = detail;
+	}
+}
+
 function query(sql: string): Promise<string> {
 	const flags = ["-readonly", "-json"];
 	// Collapse newlines/tabs to spaces for clean SQL
 	const flat = sql.replace(/[\n\t]+/g, " ").trim();
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		execFile(
 			"sqlite3",
 			[...flags, MACWHISPER_DB_PATH, flat],
 			{encoding: "utf-8", timeout: 5000},
 			(err, stdout) => {
 				if (err) {
+					// Reject (don't resolve "[]"): a DB error is NOT an empty result.
 					console.warn("[WhisperCal] SQLite query failed:", err.message);
-					resolve("[]");
+					reject(new MacWhisperDbError(err.message));
 				} else {
 					resolve(stdout.trim());
 				}

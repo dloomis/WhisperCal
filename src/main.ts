@@ -421,8 +421,50 @@ export default class WhisperCalPlugin extends Plugin {
 		}, 2000);
 	}
 
+	/**
+	 * Rebuild the auth + calendar-provider stack when the configured provider type
+	 * changed (Microsoft ↔ Google). Shared by saveSettings and
+	 * onExternalSettingsChange so a synced provider switch on another machine
+	 * doesn't leave the old stack in place. Returns true if a rebuild happened.
+	 */
+	private async rebuildProviderStackIfChanged(): Promise<boolean> {
+		if (this.settings.calendarProvider === this.activeProviderType) return false;
+		this.auth.cancelSignIn();
+		await this.cachedProvider?.clear();
+
+		this.activeProviderType = this.settings.calendarProvider;
+		const stack = createCalendarStack(
+			this.settings.calendarProvider,
+			this.settings,
+			{
+				loadTokenCache: () => this.loadTokenCache(),
+				saveTokenCache: (cache) => this.saveTokenCache(cache),
+				onStateChange: (state) => this.notifyAuthStateListeners(state),
+			},
+		);
+		this.auth = stack.auth;
+		this.upstream = stack.provider;
+		this.peopleSearch = stack.peopleSearch;
+		this.auth.initialize();
+
+		this.cachedProvider = new CachedCalendarProvider(
+			this.app,
+			this.upstream,
+			this.manifest.dir!,
+			this.settings.cacheFutureDays,
+			this.settings.cacheRetentionDays,
+			this.settings.timezone,
+		);
+		await this.cachedProvider.loadCache();
+		this.provider = this.cachedProvider;
+		return true;
+	}
+
 	async onExternalSettingsChange(): Promise<void> {
 		await this.loadSettings();
+		// A synced settings change from another machine may switch the calendar
+		// provider — rebuild the stack before propagating config to live components.
+		await this.rebuildProviderStackIfChanged();
 		// Propagate updated settings to live components (same as saveSettings does)
 		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
 		this.cachedProvider?.updateConfig(
@@ -536,36 +578,7 @@ export default class WhisperCalPlugin extends Plugin {
 		setDebugLogging(this.settings.llmDebugLogging);
 
 		// If provider type changed, rebuild the entire stack
-		if (this.settings.calendarProvider !== this.activeProviderType) {
-			this.auth.cancelSignIn();
-			await this.cachedProvider?.clear();
-
-			this.activeProviderType = this.settings.calendarProvider;
-			const stack = createCalendarStack(
-				this.settings.calendarProvider,
-				this.settings,
-				{
-					loadTokenCache: () => this.loadTokenCache(),
-					saveTokenCache: (cache) => this.saveTokenCache(cache),
-					onStateChange: (state) => this.notifyAuthStateListeners(state),
-				},
-			);
-			this.auth = stack.auth;
-			this.upstream = stack.provider;
-			this.peopleSearch = stack.peopleSearch;
-			this.auth.initialize();
-
-			this.cachedProvider = new CachedCalendarProvider(
-				this.app,
-				this.upstream,
-				this.manifest.dir!,
-				this.settings.cacheFutureDays,
-				this.settings.cacheRetentionDays,
-				this.settings.timezone,
-			);
-			await this.cachedProvider.loadCache();
-			this.provider = this.cachedProvider;
-		}
+		await this.rebuildProviderStackIfChanged();
 
 		// Update auth config (e.g. client ID/secret changed)
 		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
@@ -1366,6 +1379,9 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
+	/** Transcript paths with a "Review speakers" modal open/queued — double-click guard. */
+	private reviewingSpeakers = new Set<string>();
+
 	/**
 	 * Open the speaker review modal from the transcript's current frontmatter. Serves both the
 	 * green "candidates ready" badge (cached proposals) and the hover "+" on an already-tagged
@@ -1378,12 +1394,20 @@ export default class WhisperCalPlugin extends Plugin {
 			new Notice("No linked transcript found");
 			return;
 		}
-		const mappings = buildMappingsFromCache(this.app, transcriptFile.path);
+		const key = transcriptFile.path;
+		// Guard a double-click: presentSpeakerTagModal serializes on its queue, so a
+		// second click would enqueue a second modal that opens (after the first
+		// closes) with now-stale pre-apply proposals. Ignore re-entry until the
+		// in-flight review for this transcript settles.
+		if (this.reviewingSpeakers.has(key)) return;
+		const mappings = buildMappingsFromCache(this.app, key);
 		if (mappings.length === 0) {
 			new Notice("No speakers found in the transcript");
 			return;
 		}
-		void this.presentSpeakerTagModal(mappings, transcriptFile, transcriptFile.path, notePath);
+		this.reviewingSpeakers.add(key);
+		void this.presentSpeakerTagModal(mappings, transcriptFile, key, notePath)
+			.finally(() => this.reviewingSpeakers.delete(key));
 	}
 
 	/**
@@ -1935,7 +1959,10 @@ export default class WhisperCalPlugin extends Plugin {
 			const dateStr = rawDate instanceof Date
 				? rawDate.toISOString().slice(0, 10)
 				: rawDate as string;
-			meetingStart = parseDateTime(dateStr, timeStr);
+			// Parse the frontmatter wall time in the configured zone — matching it
+			// against recording timestamps in system-local time gave a traveling
+			// user hours of offset and a spurious "No matching recording found".
+			meetingStart = parseDateTime(dateStr, timeStr, this.settings.timezone);
 		}
 		if (!meetingStart || isNaN(meetingStart.getTime())) {
 			// Fall back to file creation time (covers unscheduled/ad-hoc notes)

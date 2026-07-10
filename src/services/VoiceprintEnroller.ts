@@ -1,9 +1,9 @@
 import type {App} from "obsidian";
-import {TFile, parseYaml} from "obsidian";
+import {TFile, normalizePath, parseYaml} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import {FM} from "../constants";
 import {ensureFolder, listVaultJsonFiles, readVaultJson, resolveWikiLink, stripWikiLink, writeVaultJson} from "../utils/vault";
-import {sanitizeFilename} from "../utils/sanitize";
+import {legacyFilename, sanitizeFilename} from "../utils/sanitize";
 import {cosine, meanNorm} from "../utils/vec";
 import {debug} from "../utils/debug";
 import {PeopleMatchService} from "./PeopleMatchService";
@@ -309,7 +309,15 @@ export async function enrollVoiceprints(
 	await ensureFolder(app, voiceprintFolderPath);
 
 	for (const [name, samples] of pending) {
-		const path = `${voiceprintFolderPath}/${sanitizeFilename(name)}.json`;
+		let path = `${voiceprintFolderPath}/${sanitizeFilename(name)}.json`;
+		// If nothing exists at the current path but an older version wrote this
+		// person's library under the pre-strip name, keep appending to that file
+		// instead of orphaning it and starting a duplicate.
+		const legacy = legacyFilename(name);
+		if (legacy && !(app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFile)) {
+			const legacyPath = `${voiceprintFolderPath}/${legacy}.json`;
+			if (app.vault.getAbstractFileByPath(normalizePath(legacyPath)) instanceof TFile) path = legacyPath;
+		}
 		try {
 			const existing = await loadLibrary(app, path);
 			const lib: VoiceprintLibrary = existing && existing.model === VOICEPRINT_MODEL

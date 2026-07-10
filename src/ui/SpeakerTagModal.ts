@@ -1,6 +1,7 @@
 import {Modal, App, TFolder, TFile, Notice, setIcon} from "obsidian";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
+import {addActivateOnKey} from "../utils/a11y";
 import {transcriptBody, findSpeakerLabels} from "../utils/transcript";
 import {renderModalHeader} from "./ModalHeader";
 
@@ -164,6 +165,7 @@ export class SpeakerTagModal extends Modal {
 				tsEl.createSpan({text: stripped});
 				tsEl.setAttribute("aria-label", "Play this snippet");
 				tsEl.addEventListener("click", () => this.playSnippet(start));
+				addActivateOnKey(tsEl);
 			} else {
 				blockEl.createDiv({cls: "whisper-cal-excerpt-ts", text: stripped});
 			}
@@ -264,6 +266,7 @@ export class SpeakerTagModal extends Modal {
 					toggle.toggleClass("is-collapsed", !hidden);
 				};
 				toggle.addEventListener("click", flipToggle);
+				addActivateOnKey(toggle);
 			}
 
 			left.createSpan({

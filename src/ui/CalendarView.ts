@@ -15,6 +15,7 @@ import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCard
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
 import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
+import {addActivateOnKey} from "../utils/a11y";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/AuthTypes";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
@@ -148,6 +149,7 @@ export class CalendarView extends ItemView {
 		// Today button (hidden when already viewing today)
 		this.todayBtn = header.createDiv({cls: "whisper-cal-today-btn", text: "Today"});
 		this.registerDomEvent(this.todayBtn, "click", () => this.navigateToToday());
+		addActivateOnKey(this.todayBtn);
 		this.updateTodayButtonVisibility();
 
 		// Status row: [dot] "Cached 5 min ago" [refresh] [settings]
@@ -1053,6 +1055,7 @@ export class CalendarView extends ItemView {
 			arrow.textContent = this.unlinkedCollapsed ? "\u25B8" : "\u25BE";
 			body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
 		});
+		addActivateOnKey(header);
 
 		for (const recording of pending) {
 			this.renderUnlinkedCard(body, recording);
@@ -1453,13 +1456,15 @@ export class CalendarView extends ItemView {
 	}
 
 	private formatRecordingDate(date: Date): string {
-		const now = new Date();
-		const sameYear = date.getFullYear() === now.getFullYear();
-		const dateOpts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric"};
+		const tz = this.settings.timezone;
+		// Compare years IN the configured zone so the date and time parts agree
+		// (the time part below already formats in `tz`).
+		const sameYear = formatDate(date, tz).slice(0, 4) === formatDate(new Date(), tz).slice(0, 4);
+		const dateOpts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric", timeZone: tz};
 		if (!sameYear) dateOpts.year = "numeric";
 		const datePart = date.toLocaleDateString(undefined, dateOpts);
 		const timePart = date.toLocaleTimeString(undefined, {
-			hour: "numeric", minute: "2-digit", timeZone: this.settings.timezone, hour12: getHour12(),
+			hour: "numeric", minute: "2-digit", timeZone: tz, hour12: getHour12(),
 		});
 		return `${datePart}, ${timePart}`;
 	}

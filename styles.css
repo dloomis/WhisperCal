@@ -2244,6 +2244,12 @@
 	display: none;
 }
 
+/* Invalid numeric/timezone settings input — signals the value was not accepted. */
+.whisper-cal-setting-invalid {
+	border-color: var(--text-error) !important;
+	box-shadow: 0 0 0 1px var(--text-error);
+}
+
 /* Merge meeting cards */
 .whisper-cal-card-gutter-toprow {
 	display: flex;

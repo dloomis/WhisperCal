@@ -4,6 +4,7 @@ import type {AuthState, CloudInstance} from "./services/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
 import type {CalendarProviderType} from "./types";
 import {MACWHISPER_DB_PATH} from "./constants";
+import {addActivateOnKey} from "./utils/a11y";
 import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
@@ -343,19 +344,74 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		set: (v: number) => void;
 	}): Setting {
 		const min = opts.min ?? 1;
+		// Strict integer: parseInt would accept "5x". Show invalid input instead of
+		// silently ignoring it, and revert to the stored value on blur.
+		const valid = (v: string) => /^\d+$/.test(v.trim()) && Number(v.trim()) >= min;
 		return new Setting(opts.container)
 			.setName(opts.name)
 			.setDesc(opts.desc)
-			.addText(text => text
-				.setPlaceholder(opts.placeholder ?? String(min))
-				.setValue(String(opts.get()))
-				.onChange((value) => {
-					const num = parseInt(value, 10);
-					if (!isNaN(num) && num >= min) {
-						opts.set(num);
+			.addText(text => {
+				text.setPlaceholder(opts.placeholder ?? String(min)).setValue(String(opts.get()));
+				text.onChange((value) => {
+					if (valid(value)) {
+						text.inputEl.removeClass("whisper-cal-setting-invalid");
+						opts.set(Number(value.trim()));
 						this.debouncedSave();
+					} else {
+						text.inputEl.addClass("whisper-cal-setting-invalid");
 					}
-				}));
+				});
+				text.inputEl.addEventListener("blur", () => {
+					if (!valid(text.inputEl.value)) {
+						text.setValue(String(opts.get()));
+						text.inputEl.removeClass("whisper-cal-setting-invalid");
+					}
+				});
+			});
+	}
+
+	/**
+	 * Create a float text-input setting bounded to [min, max]. Like
+	 * addNumberSetting, shows invalid input and reverts to the stored value on blur
+	 * instead of silently ignoring it.
+	 */
+	private addFloatSetting(opts: {
+		container: HTMLElement;
+		name: string;
+		desc: string;
+		placeholder?: string;
+		min: number;
+		max: number;
+		get: () => number;
+		set: (v: number) => void;
+	}): Setting {
+		const valid = (v: string) => {
+			const t = v.trim();
+			if (!/^\d*\.?\d+$/.test(t)) return false;
+			const n = Number(t);
+			return n >= opts.min && n <= opts.max;
+		};
+		return new Setting(opts.container)
+			.setName(opts.name)
+			.setDesc(opts.desc)
+			.addText(text => {
+				text.setPlaceholder(opts.placeholder ?? String(opts.min)).setValue(String(opts.get()));
+				text.onChange((value) => {
+					if (valid(value)) {
+						text.inputEl.removeClass("whisper-cal-setting-invalid");
+						opts.set(Number(value.trim()));
+						this.debouncedSave();
+					} else {
+						text.inputEl.addClass("whisper-cal-setting-invalid");
+					}
+				});
+				text.inputEl.addEventListener("blur", () => {
+					if (!valid(text.inputEl.value)) {
+						text.setValue(String(opts.get()));
+						text.inputEl.removeClass("whisper-cal-setting-invalid");
+					}
+				});
+			});
 	}
 
 	display(): void {
@@ -455,19 +511,32 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Timezone")
 			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
-			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				.setPlaceholder("America/New_York")
-				.setValue(this.plugin.settings.timezone)
-				.onChange((value) => {
-					try {
-						Intl.DateTimeFormat(undefined, {timeZone: value});
-					} catch {
-						return; // Ignore invalid timezone — keep previous value
+			.addText(text => {
+				const validTz = (v: string) => {
+					try { Intl.DateTimeFormat(undefined, {timeZone: v.trim()}); return true; }
+					catch { return false; }
+				};
+				text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
+					.setPlaceholder("America/New_York")
+					.setValue(this.plugin.settings.timezone)
+					.onChange((value) => {
+						if (validTz(value)) {
+							text.inputEl.removeClass("whisper-cal-setting-invalid");
+							this.plugin.settings.timezone = value.trim();
+							this.debouncedSave();
+						} else {
+							// Show the invalid input instead of silently keeping the old value.
+							text.inputEl.addClass("whisper-cal-setting-invalid");
+						}
+					});
+				text.inputEl.addEventListener("blur", () => {
+					if (!validTz(text.inputEl.value)) {
+						text.setValue(this.plugin.settings.timezone);
+						text.inputEl.removeClass("whisper-cal-setting-invalid");
 					}
-					this.plugin.settings.timezone = value;
-					this.debouncedSave();
-				}));
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Time format")
@@ -755,24 +824,18 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			browse: true,
 		});
 
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(containerEl)
-			.setName("Voiceprint match floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
+		this.addFloatSetting({
+			container: containerEl,
+			name: "Voiceprint match floor",
+			desc: "Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
 				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
 				"Default 0.50. Solo-library matches always use at least 0.55.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.50")
-				.setValue(String(this.plugin.settings.voiceprintMatchFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintMatchFloor = num;
-						this.debouncedSave();
-					}
-				}));
+			placeholder: "0.50",
+			min: 0,
+			max: 1,
+			get: () => this.plugin.settings.voiceprintMatchFloor,
+			set: v => { this.plugin.settings.voiceprintMatchFloor = v; },
+		});
 
 		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
 		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
@@ -796,43 +859,31 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		// Move the toggle above its sub-setting container.
 		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
 
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(autoTagSkipSub)
-			.setName("Auto-tag confidence floor")
-			.setDesc(
-				"Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
+		this.addFloatSetting({
+			container: autoTagSkipSub,
+			name: "Auto-tag confidence floor",
+			desc: "Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
 				"Keep it high so unattended tagging stays strict. Default 0.80.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.80")
-				.setValue(String(this.plugin.settings.voiceprintAutoTagFloor))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintAutoTagFloor = num;
-						this.debouncedSave();
-					}
-				}));
+			placeholder: "0.80",
+			min: 0,
+			max: 1,
+			get: () => this.plugin.settings.voiceprintAutoTagFloor,
+			set: v => { this.plugin.settings.voiceprintAutoTagFloor = v; },
+		});
 
-		// Float in [0, 1] — addNumberSetting only handles integers, so parse inline.
-		new Setting(autoTagSkipSub)
-			.setName("Ignore minor speakers")
-			.setDesc(
-				"Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
+		this.addFloatSetting({
+			container: autoTagSkipSub,
+			name: "Ignore minor speakers",
+			desc: "Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
 				"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
 				"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
 				"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
-			)
-			.addText(text => text
-				.setPlaceholder("0.05")
-				.setValue(String(this.plugin.settings.voiceprintAutoTagMinorMaxShare))
-				.onChange((value) => {
-					const num = parseFloat(value);
-					if (!isNaN(num) && num >= 0 && num <= 1) {
-						this.plugin.settings.voiceprintAutoTagMinorMaxShare = num;
-						this.debouncedSave();
-					}
-				}));
+			placeholder: "0.05",
+			min: 0,
+			max: 1,
+			get: () => this.plugin.settings.voiceprintAutoTagMinorMaxShare,
+			set: v => { this.plugin.settings.voiceprintAutoTagMinorMaxShare = v; },
+		});
 		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
 
 		this.addPromptGroup(
@@ -1276,6 +1327,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					void this.plugin.saveSettings();
 					renderChips();
 				});
+				addActivateOnKey(removeBtn);
 				chipField.insertBefore(chip, input);
 			}
 			input.placeholder = this.plugin.settings.importantOrganizers.length > 0

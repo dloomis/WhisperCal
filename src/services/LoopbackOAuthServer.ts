@@ -72,6 +72,10 @@ export class LoopbackOAuthServer {
 					this.settle(code);
 				} else {
 					const msg = error ?? "No authorization code received.";
+					// MUST stay text/plain: `msg` reflects the provider-supplied `error`
+					// string back to the browser. As text/plain it renders inertly; as
+					// text/html it would be a reflected-XSS sink. Do not change this
+					// content type, and never echo `error` into an HTML response.
 					res.writeHead(400, {"Content-Type": "text/plain"});
 					res.end(`Sign-in failed: ${msg}`);
 					this.settle(null);

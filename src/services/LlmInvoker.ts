@@ -52,7 +52,9 @@ function ensureMcpConfigFile(flags: string): void {
  */
 function getPluginTmpDir(vaultPath: string, configDir: string): string {
 	const dir = path.join(vaultPath, configDir, "plugins", "whisper-cal", "tmp");
-	if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true});
+	// mode 0o700: the prompt/trigger files hold meeting content and live inside a
+	// possibly-synced vault — keep them owner-only (no-op on Windows).
+	if (!fs.existsSync(dir)) fs.mkdirSync(dir, {recursive: true, mode: 0o700});
 	return dir;
 }
 
@@ -320,7 +322,7 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 			} else {
 				try {
 					const tmpFile = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-					fs.writeFileSync(tmpFile, content, "utf-8");
+					fs.writeFileSync(tmpFile, content, {encoding: "utf-8", mode: 0o600});
 					tmpFiles.push(tmpFile);
 					systemPromptFile = tmpFile;
 				} catch {
@@ -347,12 +349,17 @@ function buildLlmCommand(opts: LlmInvokerOpts): {cmd: string; trigger: string; v
 		// non-ASCII text (accented names) intact through the read → stdin → stdout
 		// legs; PS 5.1 defaults (ANSI read, ASCII pipe, OEM console) mangle it (#2).
 		const tmpTrigger = path.join(getPluginTmpDir(opts.vaultPath, opts.configDir), `wcal-trigger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-		fs.writeFileSync(tmpTrigger, trigger, "utf-8");
+		fs.writeFileSync(tmpTrigger, trigger, {encoding: "utf-8", mode: 0o600});
 		tmpFiles.push(tmpTrigger);
 		cmd = `${WIN_PS_UTF8_PRELUDE}Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
 	} else {
 		// Pipe trigger via stdin using a heredoc to avoid ENAMETOOLONG on long prompts.
-		cmd = `${cli} <<'__WCAL_EOF__'\n${trigger}\n__WCAL_EOF__`;
+		// Randomize the delimiter per invocation: a fixed sentinel could appear
+		// verbatim in third-party trigger content (attendee names, roster,
+		// instructions) and prematurely close the heredoc, spilling the rest into
+		// the login shell. A random token can't be predicted or injected.
+		const eof = `__WCAL_EOF_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}__`;
+		cmd = `${cli} <<'${eof}'\n${trigger}\n${eof}`;
 	}
 	return {cmd, trigger, vaultPath: opts.vaultPath, tmpFiles};
 }
@@ -495,7 +502,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 			try {
 				const sysDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
 				const tmpFile = path.join(sysDir, `wcal-sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
-				fs.writeFileSync(tmpFile, systemPromptContent, "utf-8");
+				fs.writeFileSync(tmpFile, systemPromptContent, {encoding: "utf-8", mode: 0o600});
 				tmpFiles.push(tmpFile);
 				systemPromptFile = tmpFile;
 			} catch { /* fall back */ }
@@ -507,7 +514,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	const cli = buildCliCommand(opts, systemPromptFile);
 	const tmpDir = getPluginTmpDir(opts.vaultPath, opts.configDir);
 	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
-	fs.writeFileSync(tmpTrigger, trigger, "utf-8");
+	fs.writeFileSync(tmpTrigger, trigger, {encoding: "utf-8", mode: 0o600});
 	tmpFiles.push(tmpTrigger);
 
 	if (Platform.isWin) {
@@ -520,7 +527,7 @@ function spawnLlmPromptTerminal(opts: LlmInvokerOpts): Promise<{exitCode: number
 	tmpFiles.push(tmpScript);
 	const rmFiles = tmpFiles.map(f => shellQuote(f)).join(" ");
 	const scriptBody = `cd ${shellQuote(vaultPath)} && ${cli} < ${shellQuote(tmpTrigger)}\nrm -f ${rmFiles}\n`;
-	fs.writeFileSync(tmpScript, scriptBody, "utf-8");
+	fs.writeFileSync(tmpScript, scriptBody, {encoding: "utf-8", mode: 0o600});
 
 	// Source the script in the Terminal's login shell so PATH is inherited.
 	const termCmd = `. ${shellQuote(tmpScript)}`;
@@ -578,7 +585,7 @@ function spawnWindowsDebugTerminal(
 		`Remove-Item -LiteralPath ${rmList} -ErrorAction SilentlyContinue`,
 	].join("\r\n") + "\r\n";
 	// Write with a UTF-8 BOM so PS 5.1 parses the .ps1 itself as UTF-8, not ANSI.
-	fs.writeFileSync(tmpScript, "﻿" + scriptBody, "utf-8");
+	fs.writeFileSync(tmpScript, "﻿" + scriptBody, {encoding: "utf-8", mode: 0o600});
 
 	const psArgs = ["-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", tmpScript];
 
