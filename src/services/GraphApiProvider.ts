@@ -1,7 +1,7 @@
 import {htmlToMarkdown, requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory, ResponseStatus} from "../types";
 import {getDayStartUTC, getDayEndUTC} from "../utils/time";
-import type {MsalAuth} from "./MsalAuth";
+import type {CalendarAuth} from "./CalendarAuth";
 
 // Graph API response shapes (Microsoft-specific)
 interface GraphDateTimeZone {
@@ -87,11 +87,11 @@ interface MasterCategory {
 }
 
 export class GraphApiProvider implements CalendarProvider {
-	private auth: MsalAuth;
+	private auth: CalendarAuth;
 	private userEmail: string | null = null;
 	private categoryColors: Map<string, string> | null = null;
 
-	constructor(auth: MsalAuth) {
+	constructor(auth: CalendarAuth) {
 		this.auth = auth;
 	}
 

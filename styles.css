@@ -656,6 +656,28 @@
 	padding: 32px 16px;
 }
 
+/* WhisperCore install gate (shown in place of the calendar when Core is absent) */
+.whisper-cal-core-gate {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	text-align: center;
+	padding: 40px 20px;
+}
+
+.whisper-cal-core-gate-title {
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+.whisper-cal-core-gate-desc {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	max-width: 32ch;
+}
+
 /* Settings — version label */
 .whisper-cal-settings-version {
 	text-align: right;

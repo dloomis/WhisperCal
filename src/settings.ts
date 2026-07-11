@@ -1,8 +1,7 @@
 import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, normalizePath, requestUrl} from "obsidian";
 import type WhisperCalPlugin from "./main";
-import type {AuthState, CloudInstance} from "./services/AuthTypes";
-import {CLOUD_INSTANCE_OPTIONS} from "./services/AuthTypes";
 import type {CalendarProviderType} from "./types";
+import {getWhisperCoreApi} from "./services/CoreBridge";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {addActivateOnKey} from "./utils/a11y";
 import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
@@ -23,14 +22,8 @@ export interface WhisperCalSettings {
 	noteFolderPath: string;
 	noteFilenameTemplate: string;
 	noteTemplatePath: string;
-	// Microsoft-specific
-	tenantId: string;
-	clientId: string;
-	cloudInstance: CloudInstance;
-	// Google-specific
-	googleClientId: string;
-	googleClientSecret: string;
-	// Shared
+	// Provider auth config (tenant/clientId/cloud, Google id/secret) moved to
+	// WhisperCore in the C3 cutover — no longer stored or edited here.
 	peopleFolderPath: string;
 	transcriptFolderPath: string;
 	seriesNotesFolderPath: string;
@@ -109,6 +102,9 @@ export interface WhisperCalSettings {
 	 * Only consulted when voiceprintAutoTagSkipModal is on.
 	 */
 	voiceprintAutoTagMinorMaxShare: number;
+	/** Set once the one-time WhisperCore credential/token hand-off has run
+	 *  (DESIGN §8.3). Internal migration flag, not user-facing. */
+	coreMigrationDone: boolean;
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -118,11 +114,6 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	noteFolderPath: "Meetings",
 	noteFilenameTemplate: "{{date}} - {{subject}}",
 	noteTemplatePath: "",
-	tenantId: "",
-	clientId: "",
-	cloudInstance: "Public",
-	googleClientId: "",
-	googleClientSecret: "",
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
 	seriesNotesFolderPath: "",
@@ -168,6 +159,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	voiceprintAutoTagSkipModal: false,
 	voiceprintAutoTagFloor: 0.80,
 	voiceprintAutoTagMinorMaxShare: 0.05,
+	coreMigrationDone: false,
 };
 
 class LlmConsentModal extends Modal {
@@ -223,7 +215,6 @@ type SettingsTabId = "calendar" | "notes" | "recording" | "speakers" | "summary"
 
 export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
-	private authStatusEl: HTMLElement | null = null;
 	private authUnsubscribe: (() => void) | null = null;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchTimer: number | null = null;
@@ -425,10 +416,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	display(): void {
 		// Unsubscribe any previous auth listener to prevent stacking on re-render.
-		// The auth status element only exists while the Calendar tab is rendered.
+		// The connection status block only exists while the Calendar tab is rendered.
 		this.authUnsubscribe?.();
 		this.authUnsubscribe = null;
-		this.authStatusEl = null;
 		// Model dropdowns re-register with whichever tab renders them.
 		this.modelSelects = [];
 
@@ -497,24 +487,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				});
 			});
 
-		// Provider-specific credential sections + auth status (colocated with provider dropdown)
-		if (this.plugin.settings.calendarProvider === "microsoft") {
-			this.renderMicrosoftAuthSettings(containerEl);
-		} else {
-			this.renderGoogleAuthSettings(containerEl);
-		}
-
-		containerEl.createEl("div", {
-			cls: "whisper-cal-settings-warning",
-			// eslint-disable-next-line obsidianmd/ui/sentence-case -- "OAuth" is a product term
-			text: "OAuth tokens are stored unencrypted in this vault's plugin data folder. Avoid syncing the data file to untrusted services; revoke access from the provider's account portal if the file is exposed.",
-		});
-
-		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
-		this.renderAuthStatus(this.plugin.auth.getState());
-		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
-			this.renderAuthStatus(state);
-		});
+		// Provider credentials (tenant/clientId/cloud, Google id/secret) and the
+		// OAuth token live in WhisperCore now (DESIGN §8.4). WhisperCal shows a
+		// connection status block that delegates sign-in/out through the API and
+		// points at Core's settings tab for configuration.
+		this.renderConnectionStatus(containerEl);
 
 		// General calendar settings (apply to both providers)
 		new Setting(containerEl)
@@ -1232,74 +1209,91 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		}
 	}
 
-	private renderMicrosoftAuthSettings(containerEl: HTMLElement): void {
-		new Setting(containerEl)
-			.setName("Microsoft account")
-			.setHeading();
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Tenant ID",
-			desc: "Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.",
-			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-			get: () => this.plugin.settings.tenantId,
-			set: v => { this.plugin.settings.tenantId = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Client ID",
-			desc: "Application (client) ID from your Azure AD app registration",
-			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-			get: () => this.plugin.settings.clientId,
-			set: v => { this.plugin.settings.clientId = v; },
-		});
-
-		new Setting(containerEl)
-			.setName("Cloud instance")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Microsoft cloud environment (Public, USGov, USGovHigh, USGovDoD, China)")
-			.addDropdown(dropdown => {
-				for (const option of CLOUD_INSTANCE_OPTIONS) {
-					dropdown.addOption(option, option);
-				}
-				dropdown.setValue(this.plugin.settings.cloudInstance);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.cloudInstance = value as CloudInstance;
-					await this.plugin.saveSettings();
+	/**
+	 * Connection status block (DESIGN §8.4). Renders the calendar-provider
+	 * connection (with a Sign in / Sign out button delegating through the
+	 * WhisperCore API — routine auth never leaves WhisperCal) and the LLM key
+	 * status, plus a shared jump to Core's settings tab. Collapses to the install
+	 * gate when Core is absent. Re-renders on every auth-state change.
+	 */
+	private renderConnectionStatus(containerEl: HTMLElement): void {
+		const block = containerEl.createDiv({cls: "whisper-cal-core-status"});
+		const render = () => {
+			block.empty();
+			const api = getWhisperCoreApi(this.app);
+			if (!api) {
+				block.createDiv({
+					cls: "whisper-cal-settings-warning",
+					 
+					text: "WhisperCore required — install and enable the WhisperCore plugin to connect your calendar and configure the LLM.",
 				});
-			});
+				return;
+			}
+
+			const provider = this.plugin.settings.calendarProvider;
+			 
+			const providerLabel = provider === "microsoft" ? "Microsoft 365" : "Google Calendar";
+			const info = api.getConnectionInfo(provider);
+
+			const calRow = new Setting(block).setName(`${providerLabel} calendar`);
+			if (!info.configured) {
+				const cfgHint = provider === "microsoft"
+					? "Configure tenant and client id in WhisperCore settings"
+					 
+					: "Configure client id and secret in WhisperCore settings";
+				calRow.setDesc(cfgHint);
+			} else if (info.state === "signed-in") {
+				const cloudSuffix = info.cloudInstance ? ` (${info.cloudInstance})` : "";
+				calRow.setDesc(`Signed in${cloudSuffix}`);
+				calRow.addButton(b => b
+					.setButtonText("Sign out")
+					.onClick(() => { void this.plugin.auth.signOut(); }));
+			} else if (info.state === "signing-in") {
+				calRow.setDesc(info.message ?? "Signing in…");
+				calRow.addButton(b => b
+					.setButtonText("Cancel")
+					.onClick(() => { this.plugin.auth.cancelSignIn(); }));
+			} else {
+				calRow.setDesc(info.state === "error" ? (info.message ?? "Sign-in error") : "Signed out");
+				calRow.addButton(b => b
+					.setButtonText("Sign in")
+					.setCta()
+					.onClick(() => { void this.plugin.auth.startSignIn(); }));
+			}
+
+			const llm = api.getLlmConfig();
+			new Setting(block)
+				.setName("LLM")
+				.setDesc(llm.anthropicApiKey
+					 
+					? "API key set in WhisperCore"
+					 
+					: "API key not set in WhisperCore");
+
+			new Setting(block).addButton(b => b
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+				.setButtonText("Open WhisperCore settings")
+				.onClick(() => this.openCoreSettings()));
+		};
+
+		render();
+		// Re-render on any auth transition (driven by main's whispercore:auth-changed
+		// and whispercore:ready bridges through onAuthStateChange).
+		this.authUnsubscribe = this.plugin.onAuthStateChange(() => render());
 	}
 
-	private renderGoogleAuthSettings(containerEl: HTMLElement): void {
-		new Setting(containerEl)
-			.setName("Google account")
-			.setHeading();
-
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		this.addTextSetting({
-			container: containerEl,
-			name: "Client ID",
-			desc: "OAuth client ID from your Google Cloud Console desktop app credentials",
-			placeholder: "xxxxxxxxxxxx.apps.googleusercontent.com",
-			get: () => this.plugin.settings.googleClientId,
-			set: v => { this.plugin.settings.googleClientId = v; },
-		});
-
-		// Client secret needs `inputEl.type = "password"` — keep direct.
-		new Setting(containerEl)
-			.setName("Client secret")
-			.setDesc("OAuth client secret from your Google Cloud Console desktop app credentials")
-			.addText(text => {
-				text.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
-					.setValue(this.plugin.settings.googleClientSecret)
-					.onChange((value) => {
-						this.plugin.settings.googleClientSecret = value;
-						this.debouncedSave();
-					});
-				text.inputEl.type = "password";
-			});
-		/* eslint-enable obsidianmd/ui/sentence-case */
+	/** Open WhisperCore's settings tab directly. `app.setting` is community-standard
+	 *  but unofficial (same status as `app.plugins`) — optional-chain and fall back
+	 *  to a Notice. */
+	private openCoreSettings(): void {
+		const appWithSetting = this.app as unknown as {setting?: {open(): void; openTabById(id: string): void}};
+		if (appWithSetting.setting?.open && appWithSetting.setting?.openTabById) {
+			appWithSetting.setting.open();
+			appWithSetting.setting.openTabById("whispercore");
+		} else {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- Settings menu + product name
+			new Notice("Open Settings → WhisperCore");
+		}
 	}
 
 	private renderImportantOrganizers(containerEl: HTMLElement): void {
@@ -1480,76 +1474,5 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				renderSuggestions();
 			}, 200);
 		});
-	}
-
-	private renderAuthStatus(state: AuthState): void {
-		if (!this.authStatusEl) return;
-		this.authStatusEl.empty();
-
-		const statusContainer = this.authStatusEl.createDiv({cls: "whisper-cal-auth-section"});
-
-		switch (state.status) {
-		case "signed-out": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label",
-				text: "Not signed in",
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn",
-				text: "Sign in",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.startSignIn();
-			});
-			break;
-		}
-		case "signing-in": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label",
-				text: state.message ?? "Signing in\u2026",
-			});
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-hint",
-				text: "Waiting for authorization\u2026",
-			});
-			const cancelBtn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn whisper-cal-btn-secondary",
-				text: "Cancel",
-			});
-			cancelBtn.addEventListener("click", () => {
-				this.plugin.auth.cancelSignIn();
-				this.renderAuthStatus({status: "signed-out"});
-			});
-			break;
-		}
-		case "signed-in": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label whisper-cal-auth-success",
-				text: "Signed in",
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn whisper-cal-btn-secondary",
-				text: "Sign out",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.signOut();
-			});
-			break;
-		}
-		case "error": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label whisper-cal-auth-error",
-				text: state.message,
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn",
-				text: "Try again",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.startSignIn();
-			});
-			break;
-		}
-		}
 	}
 }

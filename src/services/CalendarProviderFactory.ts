@@ -1,12 +1,10 @@
+import type {App} from "obsidian";
 import type {CalendarProviderType, CalendarProvider} from "../types";
-import type {WhisperCalSettings} from "../settings";
 import type {CalendarAuth} from "./CalendarAuth";
 import type {PeopleSearchProvider} from "./PeopleSearchProvider";
-import type {AuthCallbacks} from "./BaseCalendarAuth";
-import {MsalAuth} from "./MsalAuth";
+import {CoreCalendarAuth} from "./CoreCalendarAuth";
 import {GraphApiProvider} from "./GraphApiProvider";
 import {GraphPeopleSearch} from "./GraphPeopleSearch";
-import {GoogleAuth} from "./GoogleAuth";
 import {GoogleCalendarProvider} from "./GoogleCalendarProvider";
 import {GooglePeopleSearch} from "./GooglePeopleSearch";
 
@@ -16,53 +14,29 @@ export interface CalendarStack {
 	peopleSearch: PeopleSearchProvider;
 }
 
+/**
+ * Build the calendar stack for the chosen provider. Auth is a thin
+ * CoreCalendarAuth delegating to the WhisperCore API (DESIGN §8.2) — provider
+ * config and tokens live in Core; WhisperCal only selects which provider Core
+ * should answer for.
+ */
 export function createCalendarStack(
 	type: CalendarProviderType,
-	settings: WhisperCalSettings,
-	callbacks: AuthCallbacks,
+	app: App,
 ): CalendarStack {
-	switch (type) {
-	case "microsoft": {
-		const auth = new MsalAuth(
-			{
-				tenantId: settings.tenantId,
-				clientId: settings.clientId,
-				cloudInstance: settings.cloudInstance,
-			},
-			callbacks,
-		);
-		const provider = new GraphApiProvider(auth);
-		const peopleSearch = new GraphPeopleSearch(auth);
-		return {auth, provider, peopleSearch};
-	}
-	case "google": {
-		const auth = new GoogleAuth(
-			{
-				clientId: settings.googleClientId,
-				clientSecret: settings.googleClientSecret,
-			},
-			callbacks,
-		);
-		const provider = new GoogleCalendarProvider(auth);
-		const peopleSearch = new GooglePeopleSearch(auth);
-		return {auth, provider, peopleSearch};
-	}
-	}
-}
-
-/** Build the provider-specific auth config from settings. */
-export function getAuthConfig(type: CalendarProviderType, settings: WhisperCalSettings): Record<string, string> {
+	const auth = new CoreCalendarAuth(app, type);
 	switch (type) {
 	case "microsoft":
 		return {
-			tenantId: settings.tenantId,
-			clientId: settings.clientId,
-			cloudInstance: settings.cloudInstance,
+			auth,
+			provider: new GraphApiProvider(auth),
+			peopleSearch: new GraphPeopleSearch(auth),
 		};
 	case "google":
 		return {
-			clientId: settings.googleClientId,
-			clientSecret: settings.googleClientSecret,
+			auth,
+			provider: new GoogleCalendarProvider(auth),
+			peopleSearch: new GooglePeopleSearch(auth),
 		};
 	}
 }

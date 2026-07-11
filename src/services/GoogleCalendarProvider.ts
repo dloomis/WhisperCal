@@ -1,7 +1,7 @@
 import {requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory} from "../types";
 import {getDayStartUTC, getDayEndUTC} from "../utils/time";
-import type {GoogleAuth} from "./GoogleAuth";
+import type {CalendarAuth} from "./CalendarAuth";
 
 const CALENDAR_BASE = "https://www.googleapis.com/calendar/v3";
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
@@ -72,10 +72,10 @@ interface GoogleEventsResponse {
 }
 
 export class GoogleCalendarProvider implements CalendarProvider {
-	private auth: GoogleAuth;
+	private auth: CalendarAuth;
 	private userEmail: string | null = null;
 
-	constructor(auth: GoogleAuth) {
+	constructor(auth: CalendarAuth) {
 		this.auth = auth;
 	}
 

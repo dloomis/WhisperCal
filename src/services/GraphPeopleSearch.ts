@@ -1,17 +1,16 @@
 import {requestUrl} from "obsidian";
 import type {CalendarAuth} from "./CalendarAuth";
 import type {PeopleSearchProvider, PeopleSearchResult} from "./PeopleSearchProvider";
-import type {MsalAuth} from "./MsalAuth";
 
 /**
  * Microsoft Graph people search — extracted from settings.ts.
  * Tries /me/people first (People.Read), falls back to /users (User.ReadBasic.All).
  */
 export class GraphPeopleSearch implements PeopleSearchProvider {
-	private auth: MsalAuth;
+	private auth: CalendarAuth;
 
 	constructor(auth: CalendarAuth) {
-		this.auth = auth as MsalAuth;
+		this.auth = auth;
 	}
 
 	isAvailable(): boolean {

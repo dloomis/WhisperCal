@@ -22,11 +22,13 @@ import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
 import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
 import {debug, setDebugLogging} from "./utils/debug";
-import type {AuthState, TokenCache} from "./services/AuthTypes";
+import type {AuthState} from "./services/CalendarAuth";
 import type {CalendarAuth} from "./services/CalendarAuth";
 import type {CalendarProvider, CalendarProviderType} from "./types";
 import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
-import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFactory";
+import {createCalendarStack} from "./services/CalendarProviderFactory";
+import {getWhisperCoreApi} from "./services/CoreBridge";
+import type {CoreImportBundle} from "./types/whispercore";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
@@ -108,12 +110,12 @@ function distinctSpeakerLabels(content: string): number {
 	return new Set(findSpeakerLabels(transcriptBody(content)).map(l => l.name)).size;
 }
 
-interface PluginData extends WhisperCalSettings {
-	// Legacy single token cache (migrated on load)
-	tokenCache?: TokenCache | null;
-	// Per-provider token caches
-	microsoftTokenCache?: TokenCache | null;
-	googleTokenCache?: TokenCache | null;
+/** Legacy per-provider token cache shape, read only during the one-time
+ *  WhisperCore hand-off (DESIGN §8.3); tokens now live in Core's data.json. */
+interface LegacyTokenCache {
+	accessToken: string;
+	refreshToken: string;
+	expiresAt: number;
 }
 
 export default class WhisperCalPlugin extends Plugin {
@@ -127,8 +129,6 @@ export default class WhisperCalPlugin extends Plugin {
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private viewCallbacks!: CalendarViewCallbacks;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
-	private microsoftTokenCache: TokenCache | null = null;
-	private googleTokenCache: TokenCache | null = null;
 	private activeProviderType: CalendarProviderType = "microsoft";
 	private unlinkedProvider!: UnlinkedRecordingProvider;
 	private autoTagger!: AutoSpeakerTagger;
@@ -157,19 +157,33 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(
-			this.settings.calendarProvider,
-			this.settings,
-			{
-				loadTokenCache: () => this.loadTokenCache(),
-				saveTokenCache: (cache) => this.saveTokenCache(cache),
-				onStateChange: (state) => this.notifyAuthStateListeners(state),
-			},
-		);
+		const stack = createCalendarStack(this.settings.calendarProvider, this.app);
 		this.auth = stack.auth;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
 		this.auth.initialize();
+
+		// WhisperCore is a hard prerequisite (DESIGN §4.9 exception, D2). Bridge
+		// its auth-state changes into WhisperCal's existing listener chain so the
+		// sidebar banner + settings status re-render on every sign-in/out/refresh,
+		// and re-render the calendar (which shows the install gate when Core is
+		// absent) when Core finishes loading.
+		this.registerEvent(
+			this.app.workspace.on("whispercore:auth-changed" as never, () => {
+				this.notifyAuthStateListeners(this.auth.getState());
+			}),
+		);
+		this.registerEvent(
+			this.app.workspace.on("whispercore:ready" as never, () => {
+				void this.runCoreHandoff();
+				// Drive the settings status block; the calendar view re-renders its
+				// own gate via its own whispercore:ready subscription.
+				this.notifyAuthStateListeners(this.auth.getState());
+			}),
+		);
+		// One-time credential/token hand-off if Core is already present at load
+		// (§8.3). If Core isn't ready yet, the whispercore:ready handler retries.
+		void this.runCoreHandoff();
 
 		this.cachedProvider = new CachedCalendarProvider(
 			this.app,
@@ -433,15 +447,7 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.cachedProvider?.clear();
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(
-			this.settings.calendarProvider,
-			this.settings,
-			{
-				loadTokenCache: () => this.loadTokenCache(),
-				saveTokenCache: (cache) => this.saveTokenCache(cache),
-				onStateChange: (state) => this.notifyAuthStateListeners(state),
-			},
-		);
+		const stack = createCalendarStack(this.settings.calendarProvider, this.app);
 		this.auth = stack.auth;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
@@ -465,8 +471,8 @@ export default class WhisperCalPlugin extends Plugin {
 		// A synced settings change from another machine may switch the calendar
 		// provider — rebuild the stack before propagating config to live components.
 		await this.rebuildProviderStackIfChanged();
-		// Propagate updated settings to live components (same as saveSettings does)
-		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
+		// Propagate updated settings to live components. Provider auth config now
+		// lives in WhisperCore, so there is nothing to push into `this.auth` here.
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
 			this.settings.cacheRetentionDays,
@@ -492,16 +498,8 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const data = await this.loadData() as Partial<PluginData> | null;
+		const data = await this.loadData() as Partial<WhisperCalSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-
-		// Migrate legacy single tokenCache → microsoftTokenCache
-		if (data?.tokenCache && !data.microsoftTokenCache) {
-			this.microsoftTokenCache = data.tokenCache;
-		} else {
-			this.microsoftTokenCache = data?.microsoftTokenCache ?? null;
-		}
-		this.googleTokenCache = data?.googleTokenCache ?? null;
 
 		// Migrate old importantOrganizerEmails (string[]) to importantOrganizers ({name, email}[])
 		const legacy = data as Record<string, unknown> | null;
@@ -580,8 +578,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// If provider type changed, rebuild the entire stack
 		await this.rebuildProviderStackIfChanged();
 
-		// Update auth config (e.g. client ID/secret changed)
-		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
+		// Provider auth config lives in WhisperCore now — nothing to push here.
 		// Update cache config
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
@@ -613,27 +610,88 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	private loadTokenCache(): TokenCache | null {
-		return this.activeProviderType === "google"
-			? this.googleTokenCache
-			: this.microsoftTokenCache;
-	}
-
-	private async saveTokenCache(cache: TokenCache | null): Promise<void> {
-		if (this.activeProviderType === "google") {
-			this.googleTokenCache = cache;
-		} else {
-			this.microsoftTokenCache = cache;
-		}
-		await this.persistData();
-	}
-
 	private async persistData(): Promise<void> {
-		await this.saveData({
-			...this.settings,
-			microsoftTokenCache: this.microsoftTokenCache,
-			googleTokenCache: this.googleTokenCache,
-		});
+		await this.saveData(this.settings);
+	}
+
+	/**
+	 * One-time hand-off of provider config + tokens + LLM config to WhisperCore
+	 * (DESIGN §8.3). Runs when Core is present+ready and WhisperCal's data.json
+	 * still carries legacy keys. Core fills empty slots only (never overwrites),
+	 * so a signed-in Core keeps its own tokens and WhisperCal's stale copy is
+	 * skipped. After a successful import WhisperCal deletes the moved AUTH keys
+	 * and token caches from its own data.json (LLM keys stay put until C4, which
+	 * switches WhisperCal to read them from Core). Idempotent via
+	 * `coreMigrationDone`; if Core is absent, this is a no-op that retries on a
+	 * later load / whispercore:ready.
+	 */
+	private async runCoreHandoff(): Promise<void> {
+		if (this.settings.coreMigrationDone) return;
+		const api = getWhisperCoreApi(this.app);
+		if (!api) return; // Core absent/not-ready — retry later
+
+		const raw = await this.loadData() as Record<string, unknown> | null;
+		if (!raw) return;
+
+		const str = (k: string): string | undefined => {
+			const v = raw[k];
+			return typeof v === "string" && v.length > 0 ? v : undefined;
+		};
+		const tok = (k: string): LegacyTokenCache | undefined => {
+			const v = raw[k] as Partial<LegacyTokenCache> | null | undefined;
+			return v && typeof v.accessToken === "string" && typeof v.refreshToken === "string" && typeof v.expiresAt === "number"
+				? {accessToken: v.accessToken, refreshToken: v.refreshToken, expiresAt: v.expiresAt}
+				: undefined;
+		};
+
+		// Legacy single tokenCache predates the per-provider split — treat as Microsoft.
+		const msToken = tok("microsoftTokenCache") ?? tok("tokenCache");
+		const bundle: CoreImportBundle = {};
+		const ms: NonNullable<CoreImportBundle["microsoft"]> = {};
+		if (str("tenantId") !== undefined) ms.tenantId = str("tenantId");
+		if (str("clientId") !== undefined) ms.clientId = str("clientId");
+		if (str("cloudInstance") !== undefined) ms.cloudInstance = str("cloudInstance");
+		if (msToken) ms.tokenCache = msToken;
+		if (Object.keys(ms).length > 0) bundle.microsoft = ms;
+
+		const gToken = tok("googleTokenCache");
+		const g: NonNullable<CoreImportBundle["google"]> = {};
+		if (str("googleClientId") !== undefined) g.clientId = str("googleClientId");
+		if (str("googleClientSecret") !== undefined) g.clientSecret = str("googleClientSecret");
+		if (gToken) g.tokenCache = gToken;
+		if (Object.keys(g).length > 0) bundle.google = g;
+
+		const llm: NonNullable<CoreImportBundle["llm"]> = {};
+		if (str("anthropicApiKey") !== undefined) llm.anthropicApiKey = str("anthropicApiKey");
+		if (str("llmCli") !== undefined) llm.cli = str("llmCli");
+		if (str("llmExtraFlags") !== undefined) llm.extraFlags = str("llmExtraFlags");
+		if (Object.keys(llm).length > 0) bundle.llm = llm;
+
+		const hasLegacy = bundle.microsoft || bundle.google || bundle.llm;
+		if (!hasLegacy) {
+			// Nothing to migrate (fresh install) — mark done so we stop probing.
+			this.settings.coreMigrationDone = true;
+			await this.persistData();
+			return;
+		}
+
+		try {
+			const result = await api.importConfig(bundle);
+			// Remove the moved AUTH config + token caches from WhisperCal's own
+			// data.json (tokens are obsolete whether adopted or skipped). LLM keys
+			// (anthropicApiKey/llmCli/llmExtraFlags) are migrated into the bundle but
+			// intentionally retained here until C4 repoints WhisperCal at getLlmConfig().
+			const AUTH_KEYS = ["tenantId", "clientId", "cloudInstance", "googleClientId", "googleClientSecret",
+				"microsoftTokenCache", "googleTokenCache", "tokenCache"];
+			for (const k of AUTH_KEYS) delete (this.settings as unknown as Record<string, unknown>)[k];
+			this.settings.coreMigrationDone = true;
+			await this.persistData();
+			console.debug(`[WhisperCal] WhisperCore hand-off complete — adopted: [${result.adopted.join(", ")}], skipped: [${result.skipped.join(", ")}]`);
+		} catch (e) {
+			// importConfig only throws "not ready" (a race with disable). Leave
+			// coreMigrationDone false so a later load retries.
+			console.warn("[WhisperCal] WhisperCore hand-off deferred:", e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	private resolveTagSpeakersContext(

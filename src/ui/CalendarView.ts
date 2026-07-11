@@ -17,7 +17,8 @@ import type {CardUiState} from "../services/CardUiState";
 import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
 import {addActivateOnKey} from "../utils/a11y";
 import {AuthError} from "../services/CalendarAuth";
-import type {AuthState} from "../services/AuthTypes";
+import type {AuthState} from "../services/CalendarAuth";
+import {getWhisperCoreApi} from "../services/CoreBridge";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {resolveRecordingApiBaseUrl, recordingStatus} from "../services/RecordingApi";
@@ -188,6 +189,16 @@ export class CalendarView extends ItemView {
 			this.renderAuthInline(state);
 		});
 
+		// When WhisperCore finishes loading, drop the install gate and render the
+		// real calendar (DESIGN §8.4 — "re-enable heals without reload"). Reset the
+		// debounce so this refresh isn't swallowed by a just-completed initial load.
+		this.registerEvent(
+			this.app.workspace.on("whispercore:ready" as never, () => {
+				this.lastRefreshTime = 0;
+				void this.refresh();
+			}),
+		);
+
 		// Initial load
 		await this.refresh();
 
@@ -291,6 +302,15 @@ export class CalendarView extends ItemView {
 		this.autoLinkAttempted.clear();
 
 		if (!this.contentContainer) return;
+
+		// WhisperCore is a hard prerequisite for calendar auth (DESIGN §8.4). When
+		// it's absent/disabled/not-ready, show a single install gate instead of the
+		// calendar — no spinner, no retry loop. The view re-renders on the next
+		// refresh tick and on whispercore:ready.
+		if (!getWhisperCoreApi(this.app)) {
+			this.renderGate();
+			return;
+		}
 
 		// Check for midnight rollover — auto-advance only if viewing the old "today"
 		const todayString = getTodayString(this.settings.timezone);
@@ -462,6 +482,33 @@ export class CalendarView extends ItemView {
 			cls: "whisper-cal-error",
 			text: message,
 		});
+	}
+
+	/**
+	 * The WhisperCore install gate (DESIGN §8.4): shown in place of the calendar
+	 * when WhisperCore is absent/disabled/mismatched/not-ready. Hides the auth
+	 * banner (there is nothing to sign into) and offers a jump to settings.
+	 */
+	private renderGate(): void {
+		if (!this.contentContainer) return;
+		this.authStatusEl?.addClass("whisper-cal-hidden");
+		this.mergeBarEl?.addClass("whisper-cal-hidden");
+		this.contentContainer.empty();
+		const gate = this.contentContainer.createDiv({cls: "whisper-cal-core-gate"});
+		gate.createDiv({
+			cls: "whisper-cal-core-gate-title",
+			 
+			text: "WhisperCore required",
+		});
+		gate.createDiv({
+			cls: "whisper-cal-core-gate-desc",
+			 
+			text: "Install and enable the WhisperCore plugin to connect your calendar.",
+		});
+		const btn = gate.createEl("button", {cls: "whisper-cal-btn", text: "Open settings"});
+		this.registerDomEvent(btn, "click", () => { this.callbacks.onOpenSettings(); });
+		this.updateStatusIndicator();
+		this.updateTodayButtonVisibility();
 	}
 
 	/** Render the persistent auth banner: sign-in button, device code, or hidden when signed in. */
