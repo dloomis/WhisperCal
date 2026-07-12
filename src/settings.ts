@@ -468,11 +468,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		// Provider credentials (tenant/clientId/cloud, Google id/secret) and the
 		// OAuth token live in WhisperCore (DESIGN §8.4); sign in/out still delegates
 		// through the API so routine auth never leaves WhisperCal.
-		new Setting(containerEl).setName("Provider").setHeading();
+		this.addSubHeading(containerEl, "Provider");
 		this.renderConnectionStatus(containerEl);
 
 		// General calendar settings (apply to both providers).
-		new Setting(containerEl).setName("General").setHeading();
+		this.addSubHeading(containerEl, "General");
 
 		new Setting(containerEl)
 			.setName("Timezone")
@@ -1009,7 +1009,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	 * Collapses to the install gate when Core is absent (DESIGN §8.4).
 	 */
 	private renderCoreLlmMirror(containerEl: HTMLElement): void {
-		this.addSubHeading(containerEl, "LLM engine (WhisperCore)");
+		this.addSubHeading(containerEl, "LLM engine");
 
 		const api = getWhisperCoreApi(this.app);
 		if (!api) {
