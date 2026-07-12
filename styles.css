@@ -2452,3 +2452,20 @@
 		animation: none;
 	}
 }
+
+/* Settings — buttons show a solid face (Obsidian's light button fill) with an
+   outline so they stand out against the grey settings panel; hovering fills them
+   with the theme's accent (selection) color for a clear highlight. Shared Whisper
+   family standard (matches WhisperCore / WhisperOrg). */
+.whisper-cal-settings .setting-item button {
+	background-color: var(--interactive-normal);
+	box-shadow: none;
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-accent);
+}
+
+.whisper-cal-settings .setting-item button:hover {
+	background-color: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
