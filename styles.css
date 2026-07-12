@@ -767,6 +767,47 @@
 	margin-top: 8px;
 }
 
+/* "Managed in WhisperCore" is a normal Obsidian .setting-item (so the theme styles
+   it identically to every other section — same background/card, no custom shade).
+   The header row (name/desc + button) stays on top; the read-only list wraps to a
+   full-width row beneath it. */
+.whisper-cal-managed-item {
+	flex-wrap: wrap;
+}
+
+.whisper-cal-managed-item .whisper-cal-kv-list {
+	flex-basis: 100%;
+	width: 100%;
+	margin: 10px 0 0;
+}
+
+/* Read-only key:value list for the values pulled from WhisperCore. */
+.whisper-cal-kv-list {
+	margin: 4px 0 16px;
+}
+
+.whisper-cal-kv-row {
+	display: flex;
+	gap: 12px;
+	padding: 5px 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	font-size: var(--font-ui-small);
+}
+
+.whisper-cal-kv-row:last-child {
+	border-bottom: none;
+}
+
+.whisper-cal-kv-key {
+	color: var(--text-muted);
+	flex: 0 0 150px;
+}
+
+.whisper-cal-kv-value {
+	color: var(--text-normal);
+	word-break: break-word;
+}
+
 .whisper-cal-auth-section {
 	display: flex;
 	flex-direction: column;

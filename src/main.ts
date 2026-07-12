@@ -28,7 +28,7 @@ import type {CalendarProvider, CalendarProviderType} from "./types";
 import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
 import {createCalendarStack} from "./services/CalendarProviderFactory";
 import {getWhisperCoreApi} from "./services/CoreBridge";
-import type {CoreImportBundle} from "./types/whispercore";
+import type {CoreImportBundle, LlmConfigDto} from "./types/whispercore";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
@@ -144,7 +144,8 @@ export default class WhisperCalPlugin extends Plugin {
 			app: this.app,
 			getSettings: () => this.settings,
 			jobs: this.jobs,
-			canStartLlm: () => this.activeLlmCount < this.settings.llmMaxConcurrent,
+			canStartLlm: () => this.activeLlmCount < this.coreLlm().maxConcurrent,
+			isLlmDebugMode: () => this.coreLlm().debugMode,
 			runAutoTag: (file, fm, notePath) =>
 				this.doTagSpeakers(file, fm, notePath, undefined, {auto: true}),
 			registerEvent: (ref) => this.registerEvent(ref),
@@ -516,9 +517,12 @@ export default class WhisperCalPlugin extends Plugin {
 			if (!this.settings.summarizerModel) this.settings.summarizerModel = old;
 			if (!this.settings.researchModel) this.settings.researchModel = old;
 		}
-		// Backfill llmExtraFlags for installs that saved before the default existed
-		if (!this.settings.llmExtraFlags) {
-			this.settings.llmExtraFlags = DEFAULT_SETTINGS.llmExtraFlags;
+		// LLM CLI command, shared flags, and Anthropic API key moved to WhisperCore
+		// (C4). They were migrated into Core by the C3 hand-off; drop any leftover
+		// copies here so WhisperCal's data.json stops carrying them (getLlmConfig()
+		// is the single source of truth now).
+		for (const k of ["anthropicApiKey", "llmCli", "llmExtraFlags"]) {
+			delete (this.settings as unknown as Record<string, unknown>)[k];
 		}
 		// Migrate legacy autoRecordOnLaunch → automateMeetingRecording (the toggle
 		// now also closes the meeting app when recording is stopped from WhisperCal).
@@ -568,12 +572,28 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 		setTimeFormat(this.settings.timeFormat);
-		setDebugLogging(this.settings.llmDebugLogging);
+		setDebugLogging(this.coreLlm().debugLogging);
+	}
+
+	/**
+	 * Core-owned LLM runtime config (prompt dir, timeout, concurrency cap, debug
+	 * toggles) — migrated out of WhisperCal's settings into WhisperCore, read via
+	 * getLlmConfig(). Fetched FRESH per the consumer rules (never cached across an
+	 * await). Falls back to Core's documented defaults when Core is absent/not-ready
+	 * so a stray read can't produce NaN/undefined; the actual LLM spawn is still
+	 * gated on the real Core config in runLlmJob (DESIGN §8.4).
+	 */
+	coreLlm(): LlmConfigDto {
+		return getWhisperCoreApi(this.app)?.getLlmConfig() ?? {
+			cli: "", extraFlags: "", anthropicApiKey: null,
+			promptDir: "", timeoutMinutes: 10, maxConcurrent: 2,
+			debugMode: false, debugLogging: false,
+		};
 	}
 
 	async saveSettings() {
 		await this.persistData();
-		setDebugLogging(this.settings.llmDebugLogging);
+		setDebugLogging(this.coreLlm().debugLogging);
 
 		// If provider type changed, rebuild the entire stack
 		await this.rebuildProviderStackIfChanged();
@@ -789,7 +809,7 @@ export default class WhisperCalPlugin extends Plugin {
 		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath && !singleSourceNoHint;
 		let slotClaimed = false;
 		if (runLlm) {
-			if (this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+			if (this.activeLlmCount >= this.coreLlm().maxConcurrent) {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				if (!auto) new Notice("LLM concurrency limit reached — try again when a running job finishes");
 				return;
@@ -898,27 +918,28 @@ export default class WhisperCalPlugin extends Plugin {
 			cardNotePath: notePath,
 			onRegister: () => this.updateBanners(transcriptPath),
 			onCleanup: () => this.updateBanners(transcriptPath),
-			spawnOpts: (vaultPath) => ({
-				targetPath: transcriptPath,
-				targetLabel: "Transcript",
-				vaultPath,
-				promptPath: this.settings.speakerTaggingPromptPath,
-				microphoneUser: this.settings.microphoneUser,
-				llmCli: this.settings.llmCli,
-				llmExtraFlags: this.settings.llmExtraFlags,
-				llmPromptFlags: this.settings.speakerTagFlags || undefined,
-				llmModel: this.settings.speakerTagModel || undefined,
-				transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
-				peopleFolderPath: this.settings.peopleFolderPath || undefined,
-				calendarAttendees,
-				peopleRoster,
-				voiceprintMatches,
-				additionalInstructions: customInstructions,
-				outputFormat: 'Output format: After your edits, end your final message with ONLY a fenced JSON code block in this schema: {"speakers":[{"index":0,"original_name":"<verbatim stub label>","proposed_name":"<full name, or JSON null>","confidence":"CERTAIN|HIGH|LOW, or JSON null","evidence":"..."}]}. Use the value null (never the string "null") when unknown. No other text after the JSON block.',
-				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
-				debugMode: this.settings.llmDebugMode,
-				debugLogging: this.settings.llmDebugLogging,
-			}),
+			spawnOpts: (vaultPath) => {
+				const llm = this.coreLlm();
+				return {
+					targetPath: transcriptPath,
+					targetLabel: "Transcript",
+					vaultPath,
+					promptPath: this.settings.speakerTaggingPromptPath,
+					microphoneUser: this.settings.microphoneUser,
+					llmPromptFlags: this.settings.speakerTagFlags || undefined,
+					llmModel: this.settings.speakerTagModel || undefined,
+					transcriptFolderPath: this.settings.transcriptFolderPath || undefined,
+					peopleFolderPath: this.settings.peopleFolderPath || undefined,
+					calendarAttendees,
+					peopleRoster,
+					voiceprintMatches,
+					additionalInstructions: customInstructions,
+					outputFormat: 'Output format: After your edits, end your final message with ONLY a fenced JSON code block in this schema: {"speakers":[{"index":0,"original_name":"<verbatim stub label>","proposed_name":"<full name, or JSON null>","confidence":"CERTAIN|HIGH|LOW, or JSON null","evidence":"..."}]}. Use the value null (never the string "null") when unknown. No other text after the JSON block.',
+					timeoutMs: llm.timeoutMinutes > 0 ? llm.timeoutMinutes * 60000 : 0,
+					debugMode: llm.debugMode,
+					debugLogging: llm.debugLogging,
+				};
+			},
 			onSuccess: async (result) => {
 				// runLlmJob calls onSuccess even on nonzero exit (after logging the error to
 				// the note). Because the LLM now edits the transcript in place, a crash/timeout
@@ -1541,20 +1562,21 @@ export default class WhisperCalPlugin extends Plugin {
 			cardModel: this.settings.summarizerModel || undefined,
 			onRegister: () => this.updateBanners(notePath),
 			onCleanup: () => this.updateBanners(notePath),
-			spawnOpts: (vaultPath) => ({
-				targetPath: notePath,
-				targetLabel: "Meeting note",
-				vaultPath,
-				promptPath: this.settings.summarizerPromptPath,
-				llmCli: this.settings.llmCli,
-				llmExtraFlags: this.settings.llmExtraFlags,
-				llmPromptFlags: this.settings.summarizerFlags || undefined,
-				llmModel: this.settings.summarizerModel || undefined,
-				additionalInstructions: customInstructions,
-				timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
-				debugMode: this.settings.llmDebugMode,
-				debugLogging: this.settings.llmDebugLogging,
-			}),
+			spawnOpts: (vaultPath) => {
+				const llm = this.coreLlm();
+				return {
+					targetPath: notePath,
+					targetLabel: "Meeting note",
+					vaultPath,
+					promptPath: this.settings.summarizerPromptPath,
+					llmPromptFlags: this.settings.summarizerFlags || undefined,
+					llmModel: this.settings.summarizerModel || undefined,
+					additionalInstructions: customInstructions,
+					timeoutMs: llm.timeoutMinutes > 0 ? llm.timeoutMinutes * 60000 : 0,
+					debugMode: llm.debugMode,
+					debugLogging: llm.debugLogging,
+				};
+			},
 			onSuccess: async ({exitCode, stderr}) => {
 				if (exitCode === 0) {
 					if (!this.app.vault.getAbstractFileByPath(notePath)) {
@@ -1720,24 +1742,25 @@ export default class WhisperCalPlugin extends Plugin {
 				cardModel: this.settings.researchModel || undefined,
 				onRegister: () => this.updateBanners(notePath),
 				onCleanup: () => this.updateBanners(notePath),
-				spawnOpts: (vaultPath) => ({
-					targetPath: notePath,
-					targetLabel: "Meeting note",
-					vaultPath,
-					...(result.bypassPrompt
-						? {inlinePrompt: `Use the Edit tool to add a "## Research" section to the meeting note (replace the existing ## Research section if one is present). Do your research first, then make a single Edit call to write the section. Do not just print the results — they must be written into the file. Instructions: ${result.instructions}`}
-						: {promptPath: this.settings.researchPromptPath}),
-					llmCli: this.settings.llmCli,
-					llmExtraFlags: this.settings.llmExtraFlags,
-					llmPromptFlags: this.settings.researchFlags || undefined,
-					llmModel: this.settings.researchModel || undefined,
-					researchNotePaths: result.paths.length > 0 ? result.paths : undefined,
-					additionalInstructions: result.bypassPrompt ? undefined : (result.instructions || undefined),
-					peopleFolderPath: this.settings.peopleFolderPath || undefined,
-					timeoutMs: this.settings.llmTimeoutMinutes > 0 ? this.settings.llmTimeoutMinutes * 60000 : 0,
-					debugMode: this.settings.llmDebugMode,
-					debugLogging: this.settings.llmDebugLogging,
-				}),
+				spawnOpts: (vaultPath) => {
+					const llm = this.coreLlm();
+					return {
+						targetPath: notePath,
+						targetLabel: "Meeting note",
+						vaultPath,
+						...(result.bypassPrompt
+							? {inlinePrompt: `Use the Edit tool to add a "## Research" section to the meeting note (replace the existing ## Research section if one is present). Do your research first, then make a single Edit call to write the section. Do not just print the results — they must be written into the file. Instructions: ${result.instructions}`}
+							: {promptPath: this.settings.researchPromptPath}),
+						llmPromptFlags: this.settings.researchFlags || undefined,
+						llmModel: this.settings.researchModel || undefined,
+						researchNotePaths: result.paths.length > 0 ? result.paths : undefined,
+						additionalInstructions: result.bypassPrompt ? undefined : (result.instructions || undefined),
+						peopleFolderPath: this.settings.peopleFolderPath || undefined,
+						timeoutMs: llm.timeoutMinutes > 0 ? llm.timeoutMinutes * 60000 : 0,
+						debugMode: llm.debugMode,
+						debugLogging: llm.debugLogging,
+					};
+				},
 				onSuccess: async ({exitCode, stderr}) => {
 					if (exitCode === 0) {
 						if (!this.app.vault.getAbstractFileByPath(notePath)) {
@@ -1767,7 +1790,7 @@ export default class WhisperCalPlugin extends Plugin {
 		filePath: string;
 		label: string;
 		promptPath?: string;
-		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir">;
+		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir" | "llmCli" | "llmExtraFlags">;
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void | Promise<void>;
 		onRegister?: () => void;
 		onCleanup?: () => void;
@@ -1796,12 +1819,25 @@ export default class WhisperCalPlugin extends Plugin {
 			releaseClaim();
 			return;
 		}
+		// LLM credentials/config come from WhisperCore (C4). Gate the same way as
+		// calendar features when Core is absent/disabled/not-ready (DESIGN §8.4).
+		const llmConfig = getWhisperCoreApi(this.app)?.getLlmConfig();
+		if (!llmConfig) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+			new Notice("WhisperCore required — install and enable the WhisperCore plugin to run LLM actions.");
+			releaseClaim();
+			return;
+		}
+		// Core's llmCli defaults to empty; fall back to the historical "claude" so a
+		// not-yet-configured Core still spawns (matches the old WhisperCal default).
+		const llmCli = llmConfig.cli || "claude";
+		const llmExtraFlags = llmConfig.extraFlags;
 		if (this.jobs.has(jobKind, filePath)) {
 			new Notice(`${label} already in progress`);
 			releaseClaim();
 			return;
 		}
-		if (!preClaimed && this.activeLlmCount >= this.settings.llmMaxConcurrent) {
+		if (!preClaimed && this.activeLlmCount >= llmConfig.maxConcurrent) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("LLM concurrency limit reached — try again when a running job finishes");
 			return;
@@ -1820,7 +1856,7 @@ export default class WhisperCalPlugin extends Plugin {
 		if (opts.cardIcon) {
 			// The badge shows which model is running; when no model override is
 			// configured, fall back to the CLI name (capitalized) so it never reads blank.
-			const cli = this.settings.llmCli.split("/").pop() || this.settings.llmCli;
+			const cli = llmCli.split("/").pop() || llmCli;
 			const modelName = opts.cardModel
 				? formatModelName(opts.cardModel)
 				: cli.charAt(0).toUpperCase() + cli.slice(1);
@@ -1840,8 +1876,9 @@ export default class WhisperCalPlugin extends Plugin {
 			try {
 				const vaultPath = this.getVaultPath();
 
-				if (!await validateLlmCli(this.settings.llmCli)) {
-					new Notice(`LLM CLI '${this.settings.llmCli}' not found — check WhisperCal settings`);
+				if (!await validateLlmCli(llmCli)) {
+					 
+					new Notice(`LLM CLI '${llmCli}' not found — check the CLI command in WhisperCore settings`);
 					return;
 				}
 
@@ -1857,10 +1894,12 @@ export default class WhisperCalPlugin extends Plugin {
 
 				const result = await spawnLlmPrompt({
 					...opts.spawnOpts(vaultPath),
+					llmCli,
+					llmExtraFlags,
 					pluginDir: this.manifest.dir!,
 				});
 
-				if (this.settings.llmDebugMode) {
+				if (llmConfig.debugMode) {
 					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					new Notice("LLM debug session opened in Terminal");
 					this.clearProgressStatus(statusNotePath);
@@ -1873,7 +1912,7 @@ export default class WhisperCalPlugin extends Plugin {
 						exitCode: result.exitCode,
 						stderr: result.stderr,
 						stdout: result.stdout,
-						cli: this.settings.llmCli,
+						cli: llmCli,
 						model: opts.cardModel,
 					});
 				}
@@ -1891,7 +1930,7 @@ export default class WhisperCalPlugin extends Plugin {
 					label: `${label} (unexpected error)`,
 					exitCode: -1,
 					stderr: e instanceof Error ? (e.stack || e.message) : String(e),
-					cli: this.settings.llmCli,
+					cli: llmCli,
 					model: opts.cardModel,
 				});
 			} finally {

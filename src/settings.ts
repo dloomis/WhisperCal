@@ -37,19 +37,16 @@ export interface WhisperCalSettings {
 	rosterMaxEnriched: number;
 	speakerTagClipSeconds: number;
 	llmEnabled: boolean;
-	anthropicApiKey: string;
-	llmCli: string;
-	llmExtraFlags: string;
+	// LLM CLI command, shared flags, and the Anthropic API key moved to
+	// WhisperCore in the C4 cutover — read via getLlmConfig(), not stored here.
 	speakerTagModel: string;
 	summarizerModel: string;
 	researchModel: string;
 	speakerTagFlags: string;
 	summarizerFlags: string;
 	researchFlags: string;
-	llmTimeoutMinutes: number;
-	llmMaxConcurrent: number;
-	llmDebugMode: boolean;
-	llmDebugLogging: boolean;
+	// LLM runtime plumbing (timeout, concurrency cap, debug mode, debug logging)
+	// moved to WhisperCore — read via getLlmConfig(), no longer stored here.
 	/**
 	 * "Automatic mode" switch. Despite the name (kept so existing installs keep
 	 * their value), this now gates the whole automatic workflow: background
@@ -127,19 +124,12 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	rosterMaxEnriched: 20,
 	speakerTagClipSeconds: 5,
 	llmEnabled: false,
-	anthropicApiKey: "",
-	llmCli: "claude",
-	llmExtraFlags: "--dangerously-skip-permissions",
 	speakerTagModel: "",
 	summarizerModel: "",
 	researchModel: "",
 	speakerTagFlags: "",
 	summarizerFlags: "",
 	researchFlags: "",
-	llmTimeoutMinutes: 10,
-	llmMaxConcurrent: 2,
-	llmDebugMode: false,
-	llmDebugLogging: false,
 	autoSummarizeAfterTagging: false,
 	autoTagLookbackHours: 48,
 	showAllDayEvents: false,
@@ -472,28 +462,18 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	/** Calendar tab — provider + credentials, display options, refresh/cache. */
 	private renderCalendarTab(containerEl: HTMLElement): void {
-		new Setting(containerEl)
-			.setName("Calendar provider")
-			.setDesc("Which calendar service to connect to")
-			.addDropdown(dropdown => {
-				dropdown.addOption("microsoft", "Microsoft 365");
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
-				dropdown.addOption("google", "Google Calendar");
-				dropdown.setValue(this.plugin.settings.calendarProvider);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.calendarProvider = value as CalendarProviderType;
-					await this.plugin.saveSettings();
-					this.display(); // Re-render to swap auth sections
-				});
-			});
-
+		// Provider section: the "Managed in WhisperCore" banner, then a single
+		// subsection with everything WhisperCal uses for calendar provider
+		// functionality — the provider choice plus the values it pulls from Core.
 		// Provider credentials (tenant/clientId/cloud, Google id/secret) and the
-		// OAuth token live in WhisperCore now (DESIGN §8.4). WhisperCal shows a
-		// connection status block that delegates sign-in/out through the API and
-		// points at Core's settings tab for configuration.
+		// OAuth token live in WhisperCore (DESIGN §8.4); sign in/out still delegates
+		// through the API so routine auth never leaves WhisperCal.
+		new Setting(containerEl).setName("Provider").setHeading();
 		this.renderConnectionStatus(containerEl);
 
-		// General calendar settings (apply to both providers)
+		// General calendar settings (apply to both providers).
+		new Setting(containerEl).setName("General").setHeading();
+
 		new Setting(containerEl)
 			.setName("Timezone")
 			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
@@ -1012,88 +992,48 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		});
 		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
 
-		// ── CLI & runtime: shared invocation settings that apply to every prompt ──
-		this.addSubHeading(containerEl, "CLI & runtime");
+		// ── Shared LLM engine — owned by WhisperCore ──
+		// The CLI command, shared flags, API key, prompt directory, timeout,
+		// concurrency cap, and debug toggles all live in WhisperCore now (read via
+		// getLlmConfig), so the family shares one source of truth. WhisperCal shows
+		// them read-only here with a jump to Core to change them; only the product
+		// controls above (enable + automatic mode) stay editable in WhisperCal.
+		this.renderCoreLlmMirror(containerEl);
+		/* eslint-enable obsidianmd/ui/sentence-case */
+	}
 
-		// CLI command has a "fall back to claude on empty" rule — keep direct.
-		new Setting(containerEl)
-			.setName("CLI command")
-			.setDesc("Command used to invoke the LLM (default: claude)")
-			.addText(text => text
-				.setPlaceholder("claude")
-				.setValue(this.plugin.settings.llmCli)
-				.onChange((value) => {
-					this.plugin.settings.llmCli = value.trim() || "claude";
-					this.debouncedSave();
-				}));
+	/**
+	 * Read-only mirror of the shared LLM engine settings that WhisperCore owns
+	 * (getLlmConfig), with a single jump to Core's settings tab to change them.
+	 * Snapshot at display time — reopen the tab to pick up edits made in Core.
+	 * Collapses to the install gate when Core is absent (DESIGN §8.4).
+	 */
+	private renderCoreLlmMirror(containerEl: HTMLElement): void {
+		this.addSubHeading(containerEl, "LLM engine (WhisperCore)");
 
-		this.addTextSetting({
-			container: containerEl,
-			name: "Additional flags (all prompts)",
-			desc: "Extra CLI flags appended to every LLM command. " +
-				"⚠️ The default --dangerously-skip-permissions is required for " +
-				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization. Trust boundary: with this flag the CLI can read " +
-				"and write files with no confirmation, and prompts include third-party " +
-				"content (transcribed audio, attendee names, invite subjects) that could " +
-				"contain injection attempts. Only run against meetings and an LLM you trust. " +
-				"Use the per-prompt flags below for task-specific options.",
-			placeholder: "--dangerously-skip-permissions",
-			get: () => this.plugin.settings.llmExtraFlags,
-			set: v => { this.plugin.settings.llmExtraFlags = v; },
-		});
+		const api = getWhisperCoreApi(this.app);
+		if (!api) {
+			containerEl.createDiv({
+				cls: "whisper-cal-settings-warning",
 
-		new Setting(containerEl)
-			.setName("Anthropic API key")
-			.setDesc("Used to populate model dropdowns. Not sent to the CLI — the CLI uses its own auth.")
-			.addText(text => {
-				text.inputEl.type = "password";
-				text.setPlaceholder("sk-ant-...")
-					.setValue(this.plugin.settings.anthropicApiKey)
-					.onChange((value) => {
-						this.plugin.settings.anthropicApiKey = value.trim();
-						this.debouncedSave();
-						void this.refreshModels();
-					});
+				text: "WhisperCore required — install and enable the WhisperCore plugin to configure the shared LLM engine.",
 			});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "LLM timeout (minutes)",
-			desc: "Kill the LLM process if it runs longer than this (0 = no timeout). Transcript post-processing reads and rewrites the whole transcript, so give it headroom.",
-			min: 0,
-			get: () => this.plugin.settings.llmTimeoutMinutes,
-			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Max concurrent LLM processes",
-			desc: "Maximum number of LLM processes that can run simultaneously",
-			get: () => this.plugin.settings.llmMaxConcurrent,
-			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
-		});
-
-		this.addSubHeading(containerEl, "Troubleshooting");
-
-		if (Platform.isMacOS || Platform.isWin) {
-			this.addToggleSetting({
-				container: containerEl,
-				name: "Debug mode",
-				desc: "Open LLM commands in a terminal window instead of running in the background",
-				get: () => this.plugin.settings.llmDebugMode,
-				set: v => { this.plugin.settings.llmDebugMode = v; },
-			});
+			return;
 		}
 
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Debug logging",
-			desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I / Ctrl+Shift+I). Off by default to avoid leaking meeting content.",
-			get: () => this.plugin.settings.llmDebugLogging,
-			set: v => { this.plugin.settings.llmDebugLogging = v; },
-		});
-		/* eslint-enable obsidianmd/ui/sentence-case */
+		// Same "Managed in WhisperCore" card as the calendar section: banner + the
+		// read-only values Core vends, in one shaded box.
+		const llm = api.getLlmConfig();
+		this.renderCoreManagedCard(containerEl, [
+			["Prompt directory", llm.promptDir || "Not set"],
+			["CLI command", llm.cli || "claude (default)"],
+			["Shared flags", llm.extraFlags || "None"],
+			["Anthropic API key", llm.anthropicApiKey ? "Set" : "Not set"],
+			["LLM timeout", llm.timeoutMinutes > 0 ? `${llm.timeoutMinutes} min` : "No timeout"],
+			["Max concurrent processes", String(llm.maxConcurrent)],
+			["Debug mode", llm.debugMode ? "On" : "Off"],
+			["Debug logging", llm.debugLogging ? "On" : "Off"],
+		]);
 	}
 
 	/**
@@ -1186,7 +1126,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
 		try {
-			const apiKey = this.plugin.settings.anthropicApiKey || globalThis.process?.env?.["ANTHROPIC_API_KEY"];
+			// Key comes from WhisperCore now (C4); env var stays as a fallback.
+			const coreKey = getWhisperCoreApi(this.app)?.getLlmConfig().anthropicApiKey ?? null;
+			const apiKey = coreKey || globalThis.process?.env?.["ANTHROPIC_API_KEY"];
 			if (!apiKey) return [];
 
 			const response = await requestUrl({
@@ -1210,11 +1152,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Connection status block (DESIGN §8.4). Renders the calendar-provider
-	 * connection (with a Sign in / Sign out button delegating through the
-	 * WhisperCore API — routine auth never leaves WhisperCal) and the LLM key
-	 * status, plus a shared jump to Core's settings tab. Collapses to the install
-	 * gate when Core is absent. Re-renders on every auth-state change.
+	 * Provider section body (DESIGN §8.4): the shared "Managed in WhisperCore"
+	 * banner, then one subsection with everything WhisperCal uses for calendar
+	 * provider functionality — the provider choice, the connection state (with a
+	 * Sign in / Sign out button delegating through the API, so routine auth never
+	 * leaves WhisperCal), and the read-only values it pulls from Core (Microsoft
+	 * cloud instance + Graph endpoint). Collapses to the install gate when Core is
+	 * absent. Re-renders on every auth-state change.
 	 */
 	private renderConnectionStatus(containerEl: HTMLElement): void {
 		const block = containerEl.createDiv({cls: "whisper-cal-core-status"});
@@ -1231,55 +1175,78 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			}
 
 			const provider = this.plugin.settings.calendarProvider;
-			 
 			const providerLabel = provider === "microsoft" ? "Microsoft 365" : "Google Calendar";
 			const info = api.getConnectionInfo(provider);
 
-			const calRow = new Setting(block).setName(`${providerLabel} calendar`);
+			// Everything WhisperCal uses for calendar provider functionality, read from
+			// Core, as a read-only key:value list inside the "Managed in WhisperCore"
+			// card. The provider itself is not selectable here — it is managed in
+			// WhisperCore. Sign-in is not offered here either; connect from the sidebar
+			// calendar banner or in WhisperCore (§8.2).
+			let statusText: string;
 			if (!info.configured) {
-				const cfgHint = provider === "microsoft"
-					? "Configure tenant and client id in WhisperCore settings"
-					 
-					: "Configure client id and secret in WhisperCore settings";
-				calRow.setDesc(cfgHint);
+				statusText = provider === "microsoft"
+					? "Not configured — set tenant and client id in WhisperCore"
+					: "Not configured — set client id and secret in WhisperCore";
 			} else if (info.state === "signed-in") {
-				const cloudSuffix = info.cloudInstance ? ` (${info.cloudInstance})` : "";
-				calRow.setDesc(`Signed in${cloudSuffix}`);
-				calRow.addButton(b => b
-					.setButtonText("Sign out")
-					.onClick(() => { void this.plugin.auth.signOut(); }));
+				statusText = "Signed in";
 			} else if (info.state === "signing-in") {
-				calRow.setDesc(info.message ?? "Signing in…");
-				calRow.addButton(b => b
-					.setButtonText("Cancel")
-					.onClick(() => { this.plugin.auth.cancelSignIn(); }));
+				statusText = info.message ?? "Signing in…";
+			} else if (info.state === "error") {
+				statusText = info.message ?? "Sign-in error";
 			} else {
-				calRow.setDesc(info.state === "error" ? (info.message ?? "Sign-in error") : "Signed out");
-				calRow.addButton(b => b
-					.setButtonText("Sign in")
-					.setCta()
-					.onClick(() => { void this.plugin.auth.startSignIn(); }));
+				statusText = "Signed out";
 			}
 
-			const llm = api.getLlmConfig();
-			new Setting(block)
-				.setName("LLM")
-				.setDesc(llm.anthropicApiKey
-					 
-					? "API key set in WhisperCore"
-					 
-					: "API key not set in WhisperCore");
-
-			new Setting(block).addButton(b => b
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
-				.setButtonText("Open WhisperCore settings")
-				.onClick(() => this.openCoreSettings()));
+			const pairs: Array<[string, string]> = [
+				["Calendar provider", providerLabel],
+				["Status", statusText],
+			];
+			if (provider === "microsoft") {
+				pairs.push(["Cloud instance", info.cloudInstance || "—"]);
+				pairs.push(["Graph endpoint", info.graphBaseUrl || "—"]);
+			}
+			this.renderCoreManagedCard(block, pairs);
 		};
 
 		render();
 		// Re-render on any auth transition (driven by main's whispercore:auth-changed
 		// and whispercore:ready bridges through onAuthStateChange).
 		this.authUnsubscribe = this.plugin.onAuthStateChange(() => render());
+	}
+
+	/**
+	 * The "Managed in WhisperCore" block: the banner header (name/desc + Open button)
+	 * and the read-only key:value list of Core-owned values, rendered as ONE native
+	 * Obsidian `.setting-item` so the theme styles it exactly like every other
+	 * settings section (no custom shaded box that reads a different shade). The list
+	 * wraps full-width below the header row via CSS. Rendered identically across every
+	 * Core-owned section and mirrored in WhisperOrg. Assumes Core is present (callers
+	 * gate on getWhisperCoreApi and show the install note when it is not).
+	 */
+	private renderCoreManagedCard(containerEl: HTMLElement, pairs: Array<[string, string]>): void {
+		const setting = new Setting(containerEl)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+			.setName("Managed in WhisperCore")
+			.setDesc("These settings are configured in WhisperCore and shared across the Whisper plugins. Open WhisperCore to view or change them.")
+			.addButton(b => b
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+				.setButtonText("Open WhisperCore settings")
+				.setCta()
+				.onClick(() => this.openCoreSettings()));
+		setting.settingEl.addClass("whisper-cal-managed-item");
+		this.renderKeyValueList(setting.settingEl, pairs);
+	}
+
+	/** Render a compact, read-only key:value list — used for the values WhisperCal
+	 *  pulls from WhisperCore for the selected calendar provider. */
+	private renderKeyValueList(containerEl: HTMLElement, pairs: Array<[string, string]>): void {
+		const list = containerEl.createDiv({cls: "whisper-cal-kv-list"});
+		for (const [key, value] of pairs) {
+			const row = list.createDiv({cls: "whisper-cal-kv-row"});
+			row.createSpan({cls: "whisper-cal-kv-key", text: key});
+			row.createSpan({cls: "whisper-cal-kv-value", text: value});
+		}
 	}
 
 	/** Open WhisperCore's settings tab directly. `app.setting` is community-standard

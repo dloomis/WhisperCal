@@ -22,8 +22,11 @@ export interface AutoSpeakerTaggerDeps {
 	app: App;
 	getSettings: () => WhisperCalSettings;
 	jobs: JobTracker;
-	/** True when another LLM process can start (activeLlmCount < llmMaxConcurrent). */
+	/** True when another LLM process can start (activeLlmCount < Core's maxConcurrent). */
 	canStartLlm: () => boolean;
+	/** LLM debug mode (opens a terminal) — owned by WhisperCore, read via
+	 *  getLlmConfig(). Auto-tagging is skipped while it's on. */
+	isLlmDebugMode: () => boolean;
 	/** Kick off a background speaker-tagging run (doTagSpeakers with auto=true).
 	 *  A returned promise lets the tagger un-mark the file on an unexpected crash. */
 	runAutoTag: (file: TFile, fm: Record<string, unknown>, notePath: string) => void | Promise<void>;
@@ -106,7 +109,7 @@ export class AutoSpeakerTagger {
 		};
 		if (!s.autoSummarizeAfterTagging) return skip("automatic mode off");
 		if (!s.llmEnabled) return skip("LLM features disabled");
-		if (s.llmDebugMode) return skip("LLM debug mode on");
+		if (this.deps.isLlmDebugMode()) return skip("LLM debug mode on");
 		if (!s.speakerTaggingPromptPath) return skip("no speaker tagging prompt");
 		if (file.extension !== "md" || !s.transcriptFolderPath || !file.path.startsWith(s.transcriptFolderPath + "/")) {
 			return skip("not a transcript file");

@@ -2,7 +2,9 @@
  * Vendored WhisperCore public-API types.
  *
  * VERBATIM hand-copy of the vendorable block from `../WhisperCore/src/api.ts`
- * (WhisperCore 0.1.0 — WHISPERCORE_API_VERSION 1). Copied 2026-07-11.
+ * (WhisperCore 0.1.0 — WHISPERCORE_API_VERSION 1). Copied 2026-07-12
+ * (LlmConfigDto extended with the migrated LLM-engine fields; version integer
+ * held at 1 pending the v1-additive-vs-v2 decision).
  *
  * The block is dependency-free by contract (WhisperCore DESIGN §3), so it
  * compiles standalone — no import, no npm link. Re-copy this whole block on
@@ -40,6 +42,11 @@ export interface LlmConfigDto {
 	cli: string;                   // e.g. "claude"
 	extraFlags: string;            // base flags shared by all consumers
 	anthropicApiKey: string | null; // null when unset (consumers fall back to env)
+	promptDir: string;             // shared vault folder holding LLM prompt files ("" when unset)
+	timeoutMinutes: number;        // kill an LLM process after this many minutes (0 = no timeout)
+	maxConcurrent: number;         // machine-wide cap on concurrent LLM processes
+	debugMode: boolean;            // open LLM commands in a terminal instead of running headless
+	debugLogging: boolean;         // log detailed LLM diagnostics to the developer console
 }
 
 /** One-time migration intake (DESIGN §8.3). Fills EMPTY Core slots only; never overwrites. */
