@@ -1,4 +1,4 @@
-import {ItemView, Notice, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
+import {ItemView, Menu, Notice, TFile, TFolder, WorkspaceLeaf, setIcon} from "obsidian";
 import {getMarkdownFilesRecursive} from "../utils/vault";
 import {VIEW_TYPE_CALENDAR, FM} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
@@ -10,6 +10,7 @@ import {NameInputModal} from "./NameInputModal";
 import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
 import {MergeConfirmModal} from "./MergeConfirmModal";
 import {computeSmartMergeName, mergeMeetings, resolveMergeParts} from "../services/MeetingMerger";
+import {importMeetingBundle} from "../services/MeetingImporter";
 import {NoteCreator} from "./NoteCreator";
 import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
@@ -166,6 +167,21 @@ export class CalendarView extends ItemView {
 		const settingsBtn = statusActions.createEl("button", {cls: "whisper-cal-status-action clickable-icon", attr: {"aria-label": "Open settings"}});
 		setIcon(settingsBtn, "settings");
 		this.registerDomEvent(settingsBtn, "click", () => { this.callbacks.onOpenSettings(); });
+
+		// ⋯ menu — the view-level counterpart to the card's ⋯: the home for
+		// actions that belong to the calendar rather than to any one meeting, so
+		// the status row never has to grow a button per action.
+		const moreBtn = statusActions.createEl("button", {cls: "whisper-cal-status-action clickable-icon", attr: {"aria-label": "More actions"}});
+		setIcon(moreBtn, "ellipsis");
+		this.registerDomEvent(moreBtn, "click", () => {
+			const menu = new Menu();
+			menu.addItem((item) => item
+				.setTitle("Import meeting bundle…")
+				.setIcon("folder-input")
+				.onClick(() => { void importMeetingBundle(this.app, this.settings); }));
+			const rect = moreBtn.getBoundingClientRect();
+			menu.showAtPosition({x: rect.left, y: rect.bottom + 4});
+		});
 
 		// Auth banner — shown when not signed in (persists above events)
 		this.authStatusEl = stickyHeader.createDiv({cls: "whisper-cal-auth-inline whisper-cal-hidden"});

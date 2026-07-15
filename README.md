@@ -116,6 +116,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The card's smart action button (and the matching ⋯ menu items) for speaker tagging and summarization open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting export** — Bundle a meeting's note, transcript, and source audio into a single `.zip` outside the vault (⋯ menu > Export meeting bundle), ready to email or hand to someone who doesn't use Obsidian.
+- **Meeting import** — Take a bundle someone sent you and file it into your own vault (calendar ⋯ menu > Import meeting bundle), so a meeting you never attended reads like one you recorded yourself.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
@@ -325,6 +326,18 @@ The everyday next step stays one click on the smart button; the menu keeps every
 - The transcript's **source audio** (`.m4a`), when present
 
 A system folder picker asks where to put the `.zip` (falling back to `~/Downloads` if the picker is unavailable). The archive is named after the meeting note and, once written, revealed in Finder/Explorer. Inside, the files sit in a single flat folder named for the meeting, so the wiki links between them still resolve by basename if the folder is extracted and opened as an Obsidian vault.
+
+### Importing a Meeting Bundle
+
+**Import meeting bundle…** — in the ⋯ menu in the calendar sidebar's header, next to Refresh and Settings — is the other end of export: it takes a bundle someone sent you and files it into your vault. It's meant for a meeting you weren't part of, so nothing has to exist locally beforehand.
+
+The files cross over **verbatim** — a bundle is written by another WhisperCal vault, so its frontmatter already has the right shape and its links already point at each other:
+
+- The **meeting note** goes to your note folder and the **transcript** and **audio** to your transcript folder, all under the names the sender used.
+- The meeting lands as an **ad-hoc meeting**, since it has no event on your calendar. Its card shows up on the meeting's date, and you can summarize, re-tag speakers, export, rename, or delete it like any other.
+- The one field rewritten is `calendar_provider`, which the calendar filters cards on — without it a bundle from a Google vault would import invisibly into a Microsoft 365 one.
+
+Nothing already in your vault is overwritten. If a name is taken — you already imported this bundle, say — the note, transcript, and audio all shift to a free suffix together (`… 2`), and the links between them are rewired to match.
 
 ### Hover-Expanding Cards
 

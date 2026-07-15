@@ -5,32 +5,7 @@ import {homedir} from "os";
 import {zip, type Zippable} from "fflate";
 import {FM} from "../constants";
 import {resolveWikiLink, resolveTranscriptAudio} from "../utils/vault";
-
-interface RemoteDialogModule {
-	dialog?: {
-		showOpenDialog(opts: {
-			title?: string;
-			buttonLabel?: string;
-			defaultPath?: string;
-			properties: string[];
-		}): Promise<{canceled: boolean; filePaths: string[]}>;
-	};
-}
-
-/**
- * Require a module through the window global so esbuild doesn't try to bundle
- * it. Needed only for `@electron/remote` (exposed by Obsidian's desktop
- * runtime but not in esbuild's external list); plain `electron` is external
- * and can be required directly.
- */
-function windowRequire(module: string): unknown {
-	const req = (window as unknown as {require?: (m: string) => unknown}).require;
-	try {
-		return req ? req(module) : undefined;
-	} catch {
-		return undefined;
-	}
-}
+import {remoteDialog} from "../utils/electron";
 
 /**
  * Ask for a destination folder via the system picker. Returns null when the
@@ -38,10 +13,10 @@ function windowRequire(module: string): unknown {
  * to ~/Downloads — announced via Notice so the write is never silent.
  */
 async function pickDestination(): Promise<string | null> {
-	const remote = windowRequire("@electron/remote") as RemoteDialogModule | undefined;
-	if (remote?.dialog) {
+	const dialog = remoteDialog();
+	if (dialog) {
 		try {
-			const result = await remote.dialog.showOpenDialog({
+			const result = await dialog.showOpenDialog({
 				title: "Choose export destination",
 				buttonLabel: "Export",
 				defaultPath: join(homedir(), "Downloads"),
