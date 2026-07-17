@@ -34,6 +34,17 @@ export function resolveRecordingApiBaseUrl(configuredUrl: string): string {
 	return "";
 }
 
+/**
+ * True when an error thrown out of the recording API means the service is not
+ * listening — i.e. Tome isn't running. Both apiRequest paths convert a refused
+ * connection to "Recording API is not reachable"; match that signal so callers
+ * can distinguish "Tome is down, tell the user to start it" from a genuine
+ * service-side failure (already recording, models loading, HTTP 4xx/5xx).
+ */
+export function isRecordingServiceUnreachableError(err: unknown): boolean {
+	return err instanceof Error && err.message.toLowerCase().includes("not reachable");
+}
+
 async function apiRequest<T>(method: "GET" | "POST", url: string, body?: unknown): Promise<T> {
 	let response;
 	try {
@@ -52,19 +63,45 @@ async function apiRequest<T>(method: "GET" | "POST", url: string, body?: unknown
 		throw new Error(`Recording API error: ${response.status} ${response.text}`);
 	}
 
-	return response.json as T;
+	// A 2xx with an unparseable body must not throw — every caller treats the
+	// body defensively (recordingStart degrades to unacknowledged, recordingStatus
+	// to "idle"), and a hard error here would abort flows the service accepted.
+	try {
+		return response.json as T;
+	} catch {
+		return {} as T;
+	}
 }
 
 export async function recordingHealth(baseUrl: string): Promise<{modelsReady: boolean; isRecording: boolean}> {
 	return apiRequest("GET", `${baseUrl}/health`);
 }
 
+export interface RecordingStartResult {
+	/**
+	 * True iff the service echoed back the sessionGuid we sent — the signal that
+	 * it will thread the guid through status/transcript/sidecar. An older service
+	 * returns bare `{"ok":true}`; callers then fall back to the legacy
+	 * filename-based linking flow for this session (SESSION_GUID_DESIGN.md).
+	 */
+	guidAcknowledged: boolean;
+	/** The service's internal session id, informational only — it is a
+	 *  second-granular timestamp and collidable; never use it as a correlation key. */
+	sessionId?: string;
+}
+
 export async function recordingStart(
 	baseUrl: string,
 	suggestedFilename: string,
-	meetingContext?: {subject: string; attendees: string[]},
-): Promise<void> {
-	await apiRequest("POST", `${baseUrl}/start`, {suggestedFilename, meetingContext});
+	meetingContext: {subject: string; attendees: string[]} | undefined,
+	sessionGuid: string,
+): Promise<RecordingStartResult> {
+	const raw = await apiRequest<unknown>("POST", `${baseUrl}/start`, {sessionGuid, suggestedFilename, meetingContext});
+	const obj = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+	return {
+		guidAcknowledged: obj["sessionGuid"] === sessionGuid,
+		sessionId: typeof obj["sessionId"] === "string" ? obj["sessionId"] : undefined,
+	};
 }
 
 export async function recordingStop(baseUrl: string): Promise<void> {
@@ -79,6 +116,62 @@ export async function recordingStatus(baseUrl: string): Promise<RecordingStatus>
 	const obj = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
 	const state = typeof obj["state"] === "string" ? obj["state"] as RecordingState : "idle";
 	return {state, subject: extractRecordingSubject(obj), startedAt: extractStartedAt(obj)};
+}
+
+export type SessionGuidState = "recording" | "transcribing" | "complete" | "failed" | "unknown";
+
+export interface SessionGuidStatus {
+	state: SessionGuidState;
+	/** FINAL transcript basename (incl. `.md`, after collision suffixes/renames). Present when complete. */
+	transcriptFilename?: string;
+	/** Epoch ms the capture began. Present while recording. */
+	startedAt?: number;
+	/** Failure detail from the service. Present when failed. */
+	error?: string;
+}
+
+/**
+ * Per-session status keyed by the correlation guid — `GET /sessions/by-guid/{guid}/status`
+ * (SESSION_GUID_DESIGN.md). Unlike the global /status, this stays unambiguous when a prior
+ * session is post-processing while a new one records. A 404 maps to state "unknown"
+ * (guid never seen, or evicted from the service's finished-session retention window);
+ * network errors still throw, like recordingStatus, so callers can tell the two apart.
+ */
+export async function recordingSessionStatus(baseUrl: string, sessionGuid: string): Promise<SessionGuidStatus> {
+	let response;
+	try {
+		response = await requestUrl({
+			url: `${baseUrl}/sessions/by-guid/${encodeURIComponent(sessionGuid)}/status`,
+			method: "GET",
+			throw: false,
+		});
+	} catch {
+		throw new Error("Recording API is not reachable");
+	}
+	if (response.status === 404) return {state: "unknown"};
+	if (response.status >= 400) {
+		throw new Error(`Recording API error: ${response.status} ${response.text}`);
+	}
+
+	let raw: unknown;
+	try {
+		raw = response.json;
+	} catch {
+		raw = {};
+	}
+	const obj = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+	const state = obj["state"];
+	// An unrecognized state (newer service) degrades to "unknown" so callers fall
+	// back to file-based matching quickly instead of polling a state they can't
+	// interpret until timeout.
+	const known: SessionGuidState[] = ["recording", "transcribing", "complete", "failed"];
+	const startedAtIso = typeof obj["startedAt"] === "string" ? Date.parse(obj["startedAt"]) : NaN;
+	return {
+		state: typeof state === "string" && (known as string[]).includes(state) ? state as SessionGuidState : "unknown",
+		transcriptFilename: typeof obj["transcriptFilename"] === "string" && obj["transcriptFilename"] ? obj["transcriptFilename"] : undefined,
+		startedAt: Number.isFinite(startedAtIso) ? startedAtIso : undefined,
+		error: typeof obj["error"] === "string" && obj["error"] ? obj["error"] : undefined,
+	};
 }
 
 /**

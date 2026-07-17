@@ -12,7 +12,7 @@ import {MergeConfirmModal} from "./MergeConfirmModal";
 import {computeSmartMergeName, mergeMeetings, resolveMergeParts} from "../services/MeetingMerger";
 import {importMeetingBundle} from "../services/MeetingImporter";
 import {NoteCreator} from "./NoteCreator";
-import {renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
+import {pruneCelebrations, renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
 import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
@@ -23,6 +23,7 @@ import {getWhisperCoreApi} from "../services/CoreBridge";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {resolveRecordingApiBaseUrl, recordingStatus} from "../services/RecordingApi";
+import {findNoteBySessionGuid} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 export interface CalendarViewCallbacks {
@@ -289,10 +290,18 @@ export class CalendarView extends ItemView {
 		this.unsubscribeAuth = null;
 		this.unsubscribeRecordings?.();
 		this.unsubscribeRecordings = null;
+		// Bump the generation counters so a fetch still in flight loses its gen
+		// check and returns instead of rendering into (now detached) DOM — which
+		// would also fire autoCreatePeopleNotes for a view the user has closed.
+		this.refreshGeneration++;
+		this.unlinkedGeneration++;
 		this.authStatusEl = null;
 		this.noteOpenPath = null;
 		this.unlinkedEl = null;
 		this.mergeBarEl = null;
+		// Every render path early-returns on a null contentContainer, so this is the
+		// backstop for anything that slips past the generation checks.
+		this.contentContainer = null;
 		this.mergeSelection.clear();
 		this.cards.clear();
 		this.pendingFmPaths.clear();
@@ -484,6 +493,7 @@ export class CalendarView extends ItemView {
 
 	private renderLoading(): void {
 		if (!this.contentContainer) return;
+		this.discardCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-loading",
@@ -493,11 +503,25 @@ export class CalendarView extends ItemView {
 
 	private renderError(message: string): void {
 		if (!this.contentContainer) return;
+		this.discardCards();
 		this.contentContainer.empty();
 		this.contentContainer.createDiv({
 			cls: "whisper-cal-error",
 			text: message,
 		});
+	}
+
+	/**
+	 * Drop references to cards whose DOM is about to be emptied, and reset the merge
+	 * selection they backed. Without this a recording tick or frontmatter change
+	 * re-renders cards that are no longer in the document, and the merge bar keeps
+	 * offering meetings that aren't on screen.
+	 */
+	private discardCards(): void {
+		this.cards.clear();
+		this.mergeSelection.clear();
+		this.contentContainer?.removeClass("whisper-cal-merge-active");
+		this.updateMergeBar();
 	}
 
 	/**
@@ -583,12 +607,8 @@ export class CalendarView extends ItemView {
 		}
 		this.cachedEvents = events;
 		this.contentContainer.empty();
-		this.cards.clear();
-
 		// Full re-render invalidates merge selection (cards are rebuilt)
-		this.mergeSelection.clear();
-		this.contentContainer.removeClass("whisper-cal-merge-active");
-		this.updateMergeBar();
+		this.discardCards();
 
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 
@@ -713,6 +733,10 @@ export class CalendarView extends ItemView {
 		this.noteOpenPath = null;
 		this.applyNoteOpenHighlight();
 
+		// The rail-celebration state is module-level and keyed by note path, so it
+		// would otherwise accumulate an entry for every note ever rendered.
+		this.pruneCelebrationState();
+
 		// Snapshot frontmatter so the changed handler can detect real changes
 		this.snapshotFrontmatter();
 
@@ -720,6 +744,19 @@ export class CalendarView extends ItemView {
 		// renderEvents caller needs the marker re-placed, so do it here rather
 		// than relying on each call site (or the next minute tick).
 		this.updateNowMarker();
+	}
+
+	/** Drop celebration state for every note path not currently on screen. Scans
+	 *  the DOM rather than `this.cards` so the unlinked section's cards — rendered
+	 *  on their own async cycle and not tracked there — keep theirs. */
+	private pruneCelebrationState(): void {
+		const live = new Set<string>();
+		for (const container of [this.contentContainer, this.unlinkedEl]) {
+			container?.querySelectorAll("[data-note-path]").forEach(el => {
+				if (el instanceof HTMLElement && el.dataset.notePath) live.add(el.dataset.notePath);
+			});
+		}
+		pruneCelebrations(live);
 	}
 
 	private getOrCreatePeopleMatchService(): PeopleMatchService | undefined {
@@ -744,6 +781,11 @@ export class CalendarView extends ItemView {
 			llmEnabled: this.settings.llmEnabled,
 			recordingApiBaseUrl: this.settings.recordingSource === "api"
 				? resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl) || undefined
+				: undefined,
+			// Live re-resolver for the auto-record Retry: reads the port file at
+			// attempt time so a Tome launched after this card rendered is picked up.
+			resolveRecordingApiBaseUrl: this.settings.recordingSource === "api"
+				? () => resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl) || undefined
 				: undefined,
 			automateMeeting: this.settings.recordingSource === "api" && this.settings.automateMeetingRecording,
 			peopleMatchService: this.getOrCreatePeopleMatchService(),
@@ -865,9 +907,12 @@ export class CalendarView extends ItemView {
 
 			const meetingEnd = coerceFmTime(fm["meeting_end"]);
 
+			// Read the wall-clock values back in the zone they were written in
+			// (the configured one) — system-local parsing shifts the event by the
+			// offset difference whenever the two zones disagree.
 			let startTime: Date;
 			if (meetingDate && meetingStart) {
-				const parsed = parseDateTime(meetingDate, meetingStart);
+				const parsed = parseDateTime(meetingDate, meetingStart, this.settings.timezone);
 				startTime = parsed ?? this.selectedDate;
 			} else {
 				startTime = this.selectedDate;
@@ -875,7 +920,7 @@ export class CalendarView extends ItemView {
 
 			let endTime = startTime;
 			if (meetingDate && meetingEnd) {
-				const parsed = parseDateTime(meetingDate, meetingEnd);
+				const parsed = parseDateTime(meetingDate, meetingEnd, this.settings.timezone);
 				if (parsed) endTime = parsed;
 			}
 
@@ -1045,7 +1090,7 @@ export class CalendarView extends ItemView {
 			if (path && !notePaths.includes(path)) notePaths.push(path);
 		}
 
-		const parts = resolveMergeParts(this.app, notePaths);
+		const parts = resolveMergeParts(this.app, notePaths, this.settings.timezone);
 		if (parts.length < 2) {
 			new Notice("Select at least two meetings with notes to merge");
 			return;
@@ -1146,6 +1191,15 @@ export class CalendarView extends ItemView {
 				if (this.autoLinkAttempted.has(rec.id)) continue;
 				this.autoLinkAttempted.add(rec.id);
 
+				// Definitive id match first (SESSION_GUID_DESIGN.md §8): the note was
+				// stamped with this session's guid at record-start, so if the link
+				// step never completed (crash, reload, service restart) the pairing
+				// needs no time-window or title agreement — the guid IS the affinity.
+				if (rec.sessionGuid && (await this.autoLinkBySessionGuid(rec, unlinkedProvider))) {
+					linked.add(rec.id);
+					continue;
+				}
+
 				const event = await this.findObviousMeeting(rec, unlinkedProvider);
 				if (!event) continue;
 
@@ -1179,6 +1233,41 @@ export class CalendarView extends ItemView {
 			this.autoLinkInFlight = false;
 		}
 		return linked;
+	}
+
+	/**
+	 * Link an unlinked transcript to the meeting note carrying the same session_guid.
+	 * Returns true when linked. The guid was stamped on the note at record-start and
+	 * on the transcript by the recording service, so equality is definitive — but the
+	 * note must still be unlinked (a re-record may have superseded the session).
+	 */
+	private async autoLinkBySessionGuid(
+		rec: UnlinkedRecording,
+		unlinkedProvider: UnlinkedRecordingProvider,
+	): Promise<boolean> {
+		if (!rec.sessionGuid) return false;
+		const note = findNoteBySessionGuid(this.app, rec.sessionGuid, this.settings.transcriptFolderPath);
+		if (!note) return false;
+		const fm = (this.app.metadataCache.getFileCache(note)?.frontmatter ?? {}) as Record<string, unknown>;
+		if (unlinkedProvider.isNoteLinked(fm)) return false;
+		// Meeting subject for transcript enrichment: the note basename minus the
+		// filename template's date prefix is the closest thing we have here.
+		const subject = note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
+		try {
+			const ok = await unlinkedProvider.linkToNote({
+				app: this.app,
+				recording: rec,
+				notePath: note.path,
+				subject,
+				timezone: this.settings.timezone,
+				transcriptFolderPath: this.settings.transcriptFolderPath,
+			});
+			if (ok) console.debug(`[WhisperCal] Auto-linked transcript "${rec.title}" → "${note.basename}" via session_guid`);
+			return ok;
+		} catch (e) {
+			console.warn(`[WhisperCal] session_guid auto-link failed for "${rec.title}":`, e);
+			return false;
+		}
 	}
 
 	/**
@@ -1314,7 +1403,7 @@ export class CalendarView extends ItemView {
 			const meetingDate = coerceFmDate(fm["meeting_date"]);
 			const meetingStart = coerceFmTime(fm["meeting_start"]);
 			const date = (meetingDate && meetingStart)
-				? parseDateTime(meetingDate, meetingStart)
+				? parseDateTime(meetingDate, meetingStart, this.settings.timezone)
 				: null;
 			const sortKey = date
 				? Math.abs(date.getTime() - recording.recordingStart.getTime())

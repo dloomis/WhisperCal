@@ -14,7 +14,8 @@ import {type CardStatusVariant, type CardUiState} from "../services/CardUiState"
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {ActiveRecordingNoticeModal} from "./ActiveRecordingNoticeModal";
-import {recordingStatus} from "../services/RecordingApi";
+import {RecordingUnavailableModal} from "./RecordingUnavailableModal";
+import {recordingStatus, isRecordingServiceUnreachableError} from "../services/RecordingApi";
 import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
 import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
@@ -85,6 +86,12 @@ export interface MeetingCardOpts {
 	onNoteRenamed?: () => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
+	/**
+	 * Re-resolve the current recording API base URL. Unlike the snapshot in
+	 * recordingApiBaseUrl (resolved once at card render), this reads the port file
+	 * live, so an auto-record Retry picks up a Tome that was launched after render.
+	 */
+	resolveRecordingApiBaseUrl?: () => string | undefined;
 	/**
 	 * Automate the meeting's recording lifecycle: auto-start capture when the
 	 * join link is clicked, and close the meeting app when the recording is
@@ -157,6 +164,23 @@ interface CelebrationState {
 const celebrations = new Map<string, CelebrationState>();
 const CELEBRATION_WINDOW_MS = 2500;
 const CELEBRATION_STAGGER_MS = 90;
+
+/**
+ * Forget celebration state for notes that are no longer on screen — one entry
+ * accrues per note path ever rendered, and nothing else ever removes them.
+ *
+ * Entries can't be evicted just because their animation windows have elapsed:
+ * `prevDone` is what makes the *next* stage flip detectable, and a card sits
+ * outside its window nearly all the time. Pruning by the live card set instead
+ * costs only that a card returned to (after a day change) won't celebrate a
+ * stage that completed while it was off screen — the same re-seed the first
+ * render of any card already does.
+ */
+export function pruneCelebrations(livePaths: Set<string>): void {
+	for (const path of celebrations.keys()) {
+		if (!livePaths.has(path)) celebrations.delete(path);
+	}
+}
 
 /**
  * Render one segment of the 4-bar status rail. Hovering the rail expands
@@ -317,19 +341,9 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 				const launched = await openMeetingUrl(joinUrl);
 				// Auto-record: once the meeting app is up, kick off capture so the
 				// user doesn't have to reach back to the card. Only when the launch
-				// succeeded and a recording API is configured; startCardApiRecording
-				// still confirms if the service is already mid-recording.
-				const baseUrl = opts.recordingApiBaseUrl;
-				if (launched && opts.automateMeeting && baseUrl) {
-					const noteFile = opts.noteCreator.findNote(event);
-					const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
-					const started = await startCardApiRecording(opts, notePath, baseUrl, false);
-					// Tag the session with the app we just opened so stopping the
-					// recording from WhisperCal can close it, disconnecting the user
-					// from the call (see the Stop handler). null when the provider has
-					// no identifiable desktop app — then there's nothing to close.
-					const app = started ? meetingAppForUrl(joinUrl) : null;
-					if (app) opts.cardUi.setRecordingLaunchedApp(notePath, app);
+				// succeeded and auto-record is on.
+				if (launched && opts.automateMeeting) {
+					attemptAutoRecord(opts, event, joinUrl);
 				}
 			})();
 		});
@@ -659,6 +673,64 @@ function clearCardRecordingUi(opts: MeetingCardOpts, notePath: string): void {
 }
 
 /**
+ * Start an API capture and surface any failure with a retry path. The single
+ * entry point shared by the manual Record button, the ⋯ menu's Re-record, and
+ * auto-record — they differ only in `resetFrontmatter` and the `onAttempt`
+ * bookkeeping. Resolves the base URL live because Tome's API port changes on each
+ * launch, so a snapshot from card render can point at a dead port. When the
+ * service is unreachable — no port file yet, or a refused connection — shows the
+ * prominent RecordingUnavailableModal whose Retry re-runs this same attempt (Tome
+ * launched in between is then picked up); other failures fall back to a Notice.
+ * `onAttempt(started)` runs after every attempt for caller-specific follow-up
+ * (tag the launched app, re-enable a button).
+ */
+function startCapture(
+	opts: MeetingCardOpts,
+	notePath: string,
+	resetFrontmatter: boolean,
+	onAttempt: (started: boolean) => void,
+): void {
+	const retry = () => startCapture(opts, notePath, resetFrontmatter, onAttempt);
+	const showUnreachable = () => new RecordingUnavailableModal(opts.app, retry).open();
+	const baseUrl = opts.resolveRecordingApiBaseUrl?.() || opts.recordingApiBaseUrl;
+	// No base URL means the port file is absent — Tome has never run this session.
+	if (!baseUrl) {
+		showUnreachable();
+		onAttempt(false);
+		return;
+	}
+	void (async () => {
+		let started = false;
+		try {
+			started = await startCardApiRecording(opts, notePath, baseUrl, resetFrontmatter);
+		} catch (err) {
+			if (isRecordingServiceUnreachableError(err)) showUnreachable();
+			else new Notice(err instanceof Error ? err.message : "Failed to start recording");
+		} finally {
+			onAttempt(started);
+		}
+	})();
+}
+
+/**
+ * Auto-record: start capture right after the meeting app launches. Fires without
+ * the user asking, so a failure must be surfaced (via startCapture's modal) or
+ * the user joins the call believing it's being captured when nothing started.
+ */
+function attemptAutoRecord(opts: MeetingCardOpts, event: CalendarEvent, joinUrl: string): void {
+	const noteFile = opts.noteCreator.findNote(event);
+	const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
+	startCapture(opts, notePath, false, started => {
+		// Tag the session with the app we just opened so stopping the recording
+		// from WhisperCal can close it, disconnecting the user from the call (see
+		// the Stop handler). null when the provider has no identifiable desktop
+		// app — then there's nothing to close.
+		const app = started ? meetingAppForUrl(joinUrl) : null;
+		if (app) opts.cardUi.setRecordingLaunchedApp(notePath, app);
+	});
+}
+
+/**
  * Start (or restart) an API recording for a card. Shared by the smart Record
  * button, the ⋯ menu's Re-record… item, and auto-record-on-launch. Confirms with
  * the user if the service is mid-recording, ensures the note exists, starts
@@ -760,17 +832,6 @@ function renderCardDynamic(
 
 	// Tear down the recording timer + status so a re-render can't resurrect them.
 	const clearRecordingUi = () => clearCardRecordingUi(opts, notePath);
-
-	// Start (or restart) an API recording. Shared by the smart Record button and
-	// the ⋯ menu's Re-record… item — they differ only in the pre-step the caller
-	// runs first (orphan check vs. nothing) and whether the existing transcript
-	// frontmatter is reset. startApiRecording's setRecording() fires a re-render
-	// that rebuilds this card into its Stop state, so there's no manual button
-	// bookkeeping here. Returns true if capture started.
-	const beginCapture = (resetFrontmatter: boolean): Promise<boolean> =>
-		recordingApiBaseUrl
-			? startCardApiRecording(opts, notePath, recordingApiBaseUrl, resetFrontmatter)
-			: Promise.resolve(false);
 
 	// Reusable LLM-step launchers — the smart button and ⋯ menu share these.
 	const runTagSpeakers = (tf: TFile) => {
@@ -896,11 +957,7 @@ function renderCardDynamic(
 							const tf2 = states.transcriptFile;
 							if (tf2) void app.workspace.openLinkText(tf2.path, "", false);
 						} else if (choice === "re-record") {
-							try {
-								await beginCapture(true);
-							} catch (err) {
-								new Notice(err instanceof Error ? err.message : "Failed to start recording");
-							}
+							startCapture(opts, notePath, true, () => {});
 						}
 					})();
 				}));
@@ -1168,10 +1225,17 @@ function renderCardDynamic(
 		// 2 — no transcript yet: Record (API) or Link recording (MacWhisper).
 		if (recordingApiBaseUrl) {
 			const recordBtn = renderSmartBtn(actions, "mic", "Record", {ariaLabel: "Record"});
+			// Start capture, disabling the button while it runs. A success re-renders
+			// the card (this button is gone); any non-start path re-enables it.
+			const runRecordCapture = () => {
+				recordBtn.disabled = true;
+				startCapture(opts, notePath, false, started => {
+					if (!started) recordBtn.disabled = false;
+				});
+			};
 			recordBtn.addEventListener("click", () => {
 				recordBtn.disabled = true;
 				void (async () => {
-					let started = false;
 					try {
 						// Detect an orphaned transcript file on disk that the note's
 						// frontmatter doesn't link to (e.g. a prior recording where the
@@ -1204,23 +1268,27 @@ function renderCardDynamic(
 									new Notice("Couldn't restore transcript link — see console");
 								}
 								void app.workspace.openLinkText(orphanedTranscript.path, "", false);
+								recordBtn.disabled = false;
 								return;
 							}
-							if (choice !== "re-record") return;
+							if (choice !== "re-record") {
+								recordBtn.disabled = false;
+								return;
+							}
 							// Defensive: clear any stale pipeline frontmatter that may
 							// have been partially written before the link step failed.
 							await removeFrontmatterKeys(app, notePath, [
 								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 							]);
 						}
-						started = await beginCapture(false);
 					} catch (err) {
+						// The orphan check / frontmatter reset failed — this is not a
+						// capture-start error, so no unreachable modal applies.
 						new Notice(err instanceof Error ? err.message : "Failed to start recording");
-					} finally {
-						// A successful start re-renders the card (this button is gone);
-						// on any non-start path, re-enable it.
-						if (!started) recordBtn.disabled = false;
+						recordBtn.disabled = false;
+						return;
 					}
+					runRecordCapture();
 				})();
 			});
 		} else {
