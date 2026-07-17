@@ -14,6 +14,12 @@ export interface RecordingStatus {
 	 * so the two stay in sync (both run on the same machine).
 	 */
 	startedAt?: number;
+	/**
+	 * Correlation guid of the live capture, when the service reports it
+	 * (SESSION_GUID_DESIGN.md) — lets callers tell WHOSE capture is live before
+	 * acting on the global state (e.g. skipping /stop for a foreign session).
+	 */
+	sessionGuid?: string;
 }
 
 /**
@@ -115,7 +121,7 @@ export async function recordingStatus(baseUrl: string): Promise<RecordingStatus>
 	// UI, so anything unrecognized degrades to a benign "idle" (callers proceed).
 	const obj = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
 	const state = typeof obj["state"] === "string" ? obj["state"] as RecordingState : "idle";
-	return {state, subject: extractRecordingSubject(obj), startedAt: extractStartedAt(obj)};
+	return {state, subject: extractRecordingSubject(obj), startedAt: extractStartedAt(obj), sessionGuid: extractSessionGuid(obj)};
 }
 
 export type SessionGuidState = "recording" | "transcribing" | "complete" | "failed" | "unknown";
@@ -194,6 +200,22 @@ function extractStartedAt(raw: Record<string, unknown>): number | undefined {
 	if (ts === undefined) return undefined;
 	// Normalize a seconds-epoch (~1.7e9) to milliseconds (~1.7e12).
 	return ts < 1e12 ? ts * 1000 : ts;
+}
+
+/**
+ * Pull the live capture's session guid out of a /status payload. The design puts
+ * it under `recording.sessionGuid`; also accept a top-level or currentRecording
+ * placement, mirroring the other extractors. Returns undefined when absent — an
+ * older service then simply gets no identity check.
+ */
+function extractSessionGuid(raw: Record<string, unknown>): string | undefined {
+	const str = (v: unknown): string | undefined =>
+		typeof v === "string" && v.trim() ? v.trim() : undefined;
+	const nested = (v: unknown): string | undefined => {
+		if (!v || typeof v !== "object") return undefined;
+		return str((v as Record<string, unknown>)["sessionGuid"]);
+	};
+	return str(raw["sessionGuid"]) ?? nested(raw["recording"]) ?? nested(raw["currentRecording"]);
 }
 
 /**

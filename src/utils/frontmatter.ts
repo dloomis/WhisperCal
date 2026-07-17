@@ -2,6 +2,23 @@ import type {App} from "obsidian";
 import {TFile, parseYaml} from "obsidian";
 
 /**
+ * Offset at which the note body starts: just past a leading YAML frontmatter block, or 0
+ * when there is none. The one definition of "where does frontmatter end", for the passes
+ * that rewrite body text and must not touch YAML.
+ *
+ * Requires the block to actually open the file — scanning for a bare `\n---` would treat a
+ * horizontal rule as a frontmatter close and hand back a "body" missing everything above
+ * it. A closing `---` on the final line yields an offset at end-of-content (empty body).
+ */
+export function bodyStartOffset(content: string): number {
+	if (!content.startsWith("---")) return 0;
+	const close = content.indexOf("\n---", 3);
+	if (close < 0) return 0;
+	const afterClose = content.indexOf("\n", close + 4);
+	return afterClose >= 0 ? afterClose + 1 : content.length;
+}
+
+/**
  * Per-file queue to serialize processFrontMatter calls.
  * Concurrent read-modify-write on the same file causes data loss
  * (e.g. transcript link overwritten by a pipeline_state mirror update).

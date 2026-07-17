@@ -103,6 +103,31 @@ function shellQuote(s: string): string {
 	return `'${escapeSq(s)}'`;
 }
 
+/** Login shells whose syntax isn't POSIX. The command lines built here use
+ *  heredocs, `$( )`, and POSIX quoting, so they can't run under these directly. */
+const NON_POSIX_SHELL_RE = /(?:^|\/)(?:fish|tcsh|csh)$/;
+
+/**
+ * Build the spawn argv for running a POSIX command line on macOS/Linux.
+ *
+ * The user's login shell is preferred because PATH is typically set in its rc
+ * file, and the CLI has to be findable. But a fish/tcsh login shell would choke
+ * on the POSIX syntax we generate, failing every LLM job with an opaque syntax
+ * error. fish can still supply PATH — exec a POSIX shell under it. tcsh/csh
+ * can't (`-l` doesn't combine with `-c` there), so fall back to zsh outright and
+ * accept whatever PATH the system provides.
+ */
+function posixShellArgs(cmd: string): {shell: string; args: string[]} {
+	const userShell = os.userInfo().shell || "/bin/zsh";
+	if (!NON_POSIX_SHELL_RE.test(userShell)) return {shell: userShell, args: ["-li", "-c", cmd]};
+	if (/(?:^|\/)fish$/.test(userShell)) {
+		// config.fish (which sets PATH) is read for login shells; single-quoted
+		// escaping concatenates the same way it does in POSIX, so shellQuote holds.
+		return {shell: userShell, args: ["-l", "-c", `exec /bin/zsh -c ${shellQuote(cmd)}`]};
+	}
+	return {shell: "/bin/zsh", args: ["-li", "-c", cmd]};
+}
+
 /** Quote a string as a PowerShell single-quoted literal ('' escapes '). */
 function psQuote(s: string): string {
 	return `'${s.replace(/'/g, "''")}'`;
@@ -179,10 +204,11 @@ export async function validateLlmCli(cliPath: string): Promise<boolean> {
 			child.on("close", (code) => resolve(code === 0));
 		});
 	}
-	const userShell = os.userInfo().shell || "/bin/zsh";
+	// Login shell so PATH set in .zshrc/.bashrc is available; posixShellArgs keeps
+	// `command -v` (a POSIX builtin tcsh doesn't have) running under a POSIX shell.
+	const {shell, args} = posixShellArgs(`command -v ${shellQuote(cliPath)}`);
 	return new Promise((resolve) => {
-		// Use interactive login shell so PATH set in .zshrc/.bashrc is available
-		const child = spawn(userShell, ["-li", "-c", `command -v ${shellQuote(cliPath)}`], {
+		const child = spawn(shell, args, {
 			stdio: ["ignore", "ignore", "ignore"],
 		});
 		child.on("error", () => resolve(false));
@@ -405,8 +431,8 @@ export function spawnLlmPrompt(opts: LlmInvokerOpts): Promise<{exitCode: number;
 				windowsHide: true,
 			});
 		} else {
-			const userShell = os.userInfo().shell || "/bin/zsh";
-			child = spawn(userShell, ["-li", "-c", cmd], {
+			const {shell, args} = posixShellArgs(cmd);
+			child = spawn(shell, args, {
 				cwd: vaultPath,
 				stdio: ["ignore", "pipe", "pipe"],
 				// Own process group so timeout/unload kills reach the CLI the

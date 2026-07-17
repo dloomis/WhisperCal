@@ -1,12 +1,22 @@
 import {App, MarkdownView, TFile, TFolder, WorkspaceLeaf, normalizePath} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {WhisperCalSettings} from "../settings";
-import {coerceFmTime, formatDate, formatTimeHHmm, parseDateTime} from "../utils/time";
+import {coerceFmDate, coerceFmTime, formatDate, formatTimeHHmm, parseDateTime} from "../utils/time";
 import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
 import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {FM} from "../constants";
+
+/**
+ * True for a `calendar_event_id` that actually identifies one event. Ad hoc
+ * notes store the literal "unscheduled" — a sentinel meaning "no calendar event
+ * backs this", shared by every ad hoc note — so it must never be used to match
+ * a note to an event.
+ */
+function isRealEventId(val: unknown): val is string {
+	return typeof val === "string" && val !== "" && val !== "unscheduled";
+}
 
 export class NoteCreator {
 	private app: App;
@@ -18,12 +28,20 @@ export class NoteCreator {
 	}
 
 	getNotePath(event: CalendarEvent, opts?: {filenameOverride?: string}): string {
-		const filename = opts?.filenameOverride
-			? sanitizeFilename(opts.filenameOverride)
-			: this.settings.noteFilenameTemplate
-				.replace("{{date}}", formatDate(event.startTime, this.settings.timezone))
-				.replace("{{time}}", formatTimeHHmm(event.startTime, this.settings.timezone))
-				.replace("{{subject}}", sanitizeFilename(event.subject));
+		// split/join, not String.replace: a string pattern substitutes only the first
+		// occurrence, so a template repeating a token ("{{date}} - {{subject}}
+		// ({{date}})") would leave the later ones unexpanded. (replaceAll needs a
+		// newer lib target than this project's.)
+		const fillToken = (s: string, token: string, value: string): string => s.split(token).join(value);
+		let filename: string;
+		if (opts?.filenameOverride) {
+			filename = sanitizeFilename(opts.filenameOverride);
+		} else {
+			filename = this.settings.noteFilenameTemplate;
+			filename = fillToken(filename, "{{date}}", formatDate(event.startTime, this.settings.timezone));
+			filename = fillToken(filename, "{{time}}", formatTimeHHmm(event.startTime, this.settings.timezone));
+			filename = fillToken(filename, "{{subject}}", sanitizeFilename(event.subject));
+		}
 		return normalizePath(`${this.settings.noteFolderPath}/${filename}.md`);
 	}
 
@@ -60,36 +78,67 @@ export class NoteCreator {
 		const startMatches = (fm: Record<string, unknown>): boolean => {
 			const fmTime = coerceFmTime(fm["meeting_start"]);
 			if (!fmTime) return true;
-			const fmDate = (fm["meeting_date"] as string) || date;
-			const parsed = parseDateTime(fmDate, fmTime);
+			// Normalize: unquoted `meeting_date` re-reads as a Date, and
+			// parseDateTime calls .match() on its argument — passing the raw value
+			// throws rather than returning null.
+			const fmDate = coerceFmDate(fm["meeting_date"]) || date;
+			// Frontmatter times are written in the configured zone (TemplateEngine),
+			// so they must be read back in it — parsing system-local mints a duplicate
+			// note whenever the configured zone differs from the system's.
+			const parsed = parseDateTime(fmDate, fmTime, this.settings.timezone);
 			if (!parsed) return true;
 			return formatTimeHHmm(parsed, this.settings.timezone) === eventHHmm;
 		};
 
+		// Notes whose calendar_event_id and date match but whose meeting_start has
+		// drifted from the event's — i.e. the meeting was rescheduled in Outlook
+		// after the note was made. See the fallback below the loop.
+		const rescheduled: TFile[] = [];
+
 		for (const child of files) {
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
+
+			// Unquoted `meeting_date: 2026-07-15` re-reads as a Date, not a string,
+			// so compare the normalized value — a raw === against the formatted key
+			// never matches for template-created notes.
+			const fmDate = coerceFmDate(fm["meeting_date"]);
 
 			// Match on calendar_event_id AND meeting_date AND meeting_start.
 			// MS Graph occasionally returns the same `id` for different
 			// occurrences of a recurring series, and a user may also have
 			// two distinct events with the same Graph id collapsed by Graph;
 			// the time qualifier disambiguates either case.
-			if (fm[FM.CALENDAR_EVENT_ID] === event.id
-				&& fm["meeting_date"] === date
-				&& startMatches(fm as Record<string, unknown>)) {
-				return child;
+			//
+			// Only for a real Graph id: ad hoc notes all carry the literal
+			// "unscheduled" sentinel, which identifies nothing. Matching on it
+			// would bind the shared unscheduled placeholder card to whichever ad
+			// hoc note happened to be the day's only one.
+			if (isRealEventId(fm[FM.CALENDAR_EVENT_ID])
+				&& fm[FM.CALENDAR_EVENT_ID] === event.id
+				&& fmDate === date) {
+				if (startMatches(fm as Record<string, unknown>)) return child;
+				rescheduled.push(child);
 			}
 
 			// Match on meeting_subject + meeting_date + meeting_start.
 			// Time qualifier prevents collapsing two real same-subject
 			// same-day meetings (e.g. two "ATLAS IL6 schedule" events).
 			if (fm["meeting_subject"] === event.subject
-				&& fm["meeting_date"] === date
+				&& fmDate === date
 				&& startMatches(fm as Record<string, unknown>)) {
 				return child;
 			}
 		}
+
+		// Rescheduled event: the Graph id is authoritative when exactly one note on
+		// this day claims it, so the time qualifier is pure false-negative there.
+		// Without this, moving a meeting in Outlook orphans its note and transcript
+		// — the event's card can't resolve the note, and findLocalNotes won't give
+		// the note its own card because its id is in the calendar set.
+		// Two candidates means the ambiguity the time qualifier exists for is real;
+		// leave those unmatched rather than guess.
+		if (rescheduled.length === 1) return rescheduled[0]!;
 
 		// Last resort: match notes whose basename contains the subject and
 		// whose frontmatter Date (or meeting_date) falls on the same day.
@@ -100,8 +149,8 @@ export class NoteCreator {
 			if (!child.basename.includes(subject)) continue;
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
-			const fmDate = (fm["meeting_date"] ?? fm["Date"] ?? "") as string;
-			if (typeof fmDate !== "string" || !fmDate.startsWith(date)) continue;
+			const fmDate = coerceFmDate(fm["meeting_date"] ?? fm["Date"]);
+			if (!fmDate || !fmDate.startsWith(date)) continue;
 			if (!startMatches(fm as Record<string, unknown>)) continue;
 			return child;
 		}

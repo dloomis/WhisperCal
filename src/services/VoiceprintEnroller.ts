@@ -20,6 +20,25 @@ import type {VoiceprintMatch} from "./VoiceprintMatcher";
  * See docs/voiceprints.md (Tome repo) for the producer side and the binding contract.
  */
 
+/**
+ * Path to a person's voiceprint library. Normally `<folder>/<sanitized name>.json`,
+ * but when nothing exists there and an older version wrote the library under the
+ * pre-hardening name, that legacy path wins — otherwise enroll would orphan the
+ * existing library and start a duplicate, and heal would probe a file that isn't
+ * there and leave the poisoned sample in place.
+ *
+ * Every reader and writer of a library must resolve through here, or they'll
+ * disagree about which file is the person's.
+ */
+function resolveLibraryPath(app: App, folder: string, name: string): string {
+	const path = `${folder}/${sanitizeFilename(name)}.json`;
+	if (app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFile) return path;
+	const legacy = legacyFilename(name);
+	if (!legacy) return path;
+	const legacyPath = `${folder}/${legacy}.json`;
+	return app.vault.getAbstractFileByPath(normalizePath(legacyPath)) instanceof TFile ? legacyPath : path;
+}
+
 /** Embedding-space identity. MUST match Tome's `VoiceprintSidecar.modelIdentity`.
  *  Embeddings from different models live in different spaces — never compare/merge them. */
 export const VOICEPRINT_MODEL = "speakerkit-1.0";
@@ -45,6 +64,9 @@ export interface VoiceprintSidecar {
 	dimension: number;
 	source: string;
 	includesYou: boolean;
+	/** Correlation guid of the recording session (SESSION_GUID_DESIGN.md).
+	 *  Written by Tome; not consumed here yet — carried for future tooling. */
+	sessionGuid?: string;
 	speakers: Record<string, SidecarSpeaker>;
 }
 
@@ -309,15 +331,7 @@ export async function enrollVoiceprints(
 	await ensureFolder(app, voiceprintFolderPath);
 
 	for (const [name, samples] of pending) {
-		let path = `${voiceprintFolderPath}/${sanitizeFilename(name)}.json`;
-		// If nothing exists at the current path but an older version wrote this
-		// person's library under the pre-strip name, keep appending to that file
-		// instead of orphaning it and starting a duplicate.
-		const legacy = legacyFilename(name);
-		if (legacy && !(app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFile)) {
-			const legacyPath = `${voiceprintFolderPath}/${legacy}.json`;
-			if (app.vault.getAbstractFileByPath(normalizePath(legacyPath)) instanceof TFile) path = legacyPath;
-		}
+		const path = resolveLibraryPath(app, voiceprintFolderPath, name);
 		try {
 			const existing = await loadLibrary(app, path);
 			const lib: VoiceprintLibrary = existing && existing.model === VOICEPRINT_MODEL
@@ -399,7 +413,7 @@ export async function healVoiceprints(
 }
 
 async function removeCulpritSample(app: App, folder: string, name: string, centroid: number[]): Promise<boolean> {
-	const path = `${folder}/${sanitizeFilename(name)}.json`;
+	const path = resolveLibraryPath(app, folder, name);
 	const lib = await loadLibrary(app, path);
 	if (!lib || lib.samples.length === 0) return false;
 

@@ -22,8 +22,8 @@ import type {AuthState} from "../services/CalendarAuth";
 import {getWhisperCoreApi} from "../services/CoreBridge";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
-import {resolveRecordingApiBaseUrl, recordingStatus} from "../services/RecordingApi";
-import {findNoteBySessionGuid} from "../services/ApiRecording";
+import {resolveRecordingApiBaseUrl, recordingStatus, recordingSessionStatus} from "../services/RecordingApi";
+import {findNoteBySessionGuid, runApiLinkTail} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
 
 export interface CalendarViewCallbacks {
@@ -457,11 +457,30 @@ export class CalendarView extends ItemView {
 			}
 		});
 		for (const notePath of stale) {
+			const info = cardUi.getRecording(notePath) ?? null;
+			// The global /status can't distinguish a leaked entry from a healthy
+			// session sitting in its watch loop's 2 s poll gap. Verify per-guid
+			// when the service supports it — a genuinely recording session keeps
+			// its entry; anything else is confirmed stale.
+			if (info?.guidAcknowledged) {
+				try {
+					const s = await recordingSessionStatus(baseUrl, info.sessionGuid);
+					if (s.state === "recording") continue;
+				} catch {
+					continue; // unreachable/erroring — leave it; the watch loop owns that case
+				}
+			}
 			cardUi.stopDurationTimer(notePath);
 			cardUi.deleteStartTime(notePath);
 			cardUi.deleteStatus(notePath);
 			cardUi.deleteRecording(notePath);
 			console.warn(`[WhisperCal] Reconciled stale recording lock for ${notePath} (Tome state=${state})`);
+			// Hand off to the link tail rather than dropping the entry silently:
+			// pruning can land inside the watch loop's poll gap after a stop from
+			// Tome's own UI, and the loop's re-entry guard would then never run the
+			// tail — the finished transcript would sit unlinked. The tail's own
+			// dedupe guard makes this a no-op when the watch loop got there first.
+			runApiLinkTail(this.app, notePath, info?.transcriptFolderPath ?? this.settings.transcriptFolderPath, info, baseUrl);
 		}
 	}
 
@@ -1250,9 +1269,15 @@ export class CalendarView extends ItemView {
 		if (!note) return false;
 		const fm = (this.app.metadataCache.getFileCache(note)?.frontmatter ?? {}) as Record<string, unknown>;
 		if (unlinkedProvider.isNoteLinked(fm)) return false;
-		// Meeting subject for transcript enrichment: the note basename minus the
-		// filename template's date prefix is the closest thing we have here.
-		const subject = note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
+		// Meeting context comes off the note's own frontmatter (NoteCreator wrote
+		// it at creation) so a guid-recovered transcript gets the same
+		// self-contained enrichment as one linked by the live tail. Subject falls
+		// back to the basename minus the filename template's date prefix.
+		// (Invitees need no passing: linkToNote reads the note's meeting_invitees.)
+		const str = (v: unknown): string | undefined =>
+			typeof v === "string" && v.trim() ? v.trim() : undefined;
+		const subject = str(fm["meeting_subject"])
+			?? note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
 		try {
 			const ok = await unlinkedProvider.linkToNote({
 				app: this.app,
@@ -1261,6 +1286,12 @@ export class CalendarView extends ItemView {
 				subject,
 				timezone: this.settings.timezone,
 				transcriptFolderPath: this.settings.transcriptFolderPath,
+				isRecurring: fm["is_recurring"] === true,
+				meetingDate: coerceFmDate(fm["meeting_date"]),
+				meetingStart: coerceFmTime(fm["meeting_start"]),
+				meetingEnd: coerceFmTime(fm["meeting_end"]),
+				organizer: str(fm["meeting_organizer"]),
+				location: str(fm["meeting_location"]),
 			});
 			if (ok) console.debug(`[WhisperCal] Auto-linked transcript "${rec.title}" → "${note.basename}" via session_guid`);
 			return ok;

@@ -92,9 +92,24 @@ export function insertErrorEntry(content: string, entry: string): string {
 		return `${content}${trailing}${sep}${ERRORS_HEADING}\n\n${entry}\n`;
 	}
 
+	// Find the next H1/H2 that actually ends the section. Earlier entries fence
+	// raw CLI output, which routinely contains #-prefixed lines; treating one of
+	// those as the boundary would splice the new entry into the middle of the old
+	// fenced block, breaking the fence and spilling the output into the note body.
 	let nextSectionIdx = lines.length;
+	let fence: string | null = null;
 	for (let i = headingIdx + 1; i < lines.length; i++) {
-		if (/^#{1,2} /.test(lines[i]!)) {
+		const line = lines[i]!;
+		const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
+		if (fenceMatch) {
+			const marker = fenceMatch[1]!;
+			// A closing fence must be at least as long as the one that opened it and
+			// use the same character; anything else is still inside the block.
+			if (fence === null) fence = marker;
+			else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+			continue;
+		}
+		if (fence === null && /^#{1,2} /.test(line)) {
 			nextSectionIdx = i;
 			break;
 		}

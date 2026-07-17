@@ -1,4 +1,5 @@
 import {App, Notice, TFile} from "obsidian";
+import {bodyStartOffset} from "../utils/frontmatter";
 
 interface Replacement {
 	search: string;
@@ -136,17 +137,13 @@ export async function applyWordReplacements(
 
 	let result: ReplacementResult = empty;
 	await app.vault.process(file, (content) => {
-		// Split frontmatter from body to avoid corrupting YAML
-		let frontmatter = "";
-		let body = content;
-		const fmEnd = content.indexOf("\n---", 1);
-		if (fmEnd >= 0) {
-			const bodyStart = content.indexOf("\n", fmEnd + 4);
-			if (bodyStart >= 0) {
-				frontmatter = content.slice(0, bodyStart);
-				body = content.slice(bodyStart);
-			}
-		}
+		// Split frontmatter from body to avoid corrupting YAML. bodyStartOffset
+		// requires the block to actually open the file — scanning for a bare "\n---"
+		// would mistake a horizontal rule for a frontmatter close and skip every
+		// replacement above it.
+		const bodyStart = bodyStartOffset(content);
+		const frontmatter = content.slice(0, bodyStart);
+		const body = content.slice(bodyStart);
 
 		result = runReplacements(body, replacements);
 		if (result.totalCount === 0) return content; // no changes

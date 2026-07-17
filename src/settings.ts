@@ -5,6 +5,7 @@ import {getWhisperCoreApi} from "./services/CoreBridge";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {addActivateOnKey} from "./utils/a11y";
 import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
+import type {PersistedApiRecording} from "./services/ApiRecording";
 import {FileSuggest} from "./ui/FileSuggest";
 import {FolderSuggest} from "./ui/FolderSuggest";
 import {FolderSelectModal} from "./ui/FolderSelectModal";
@@ -102,6 +103,14 @@ export interface WhisperCalSettings {
 	/** Set once the one-time WhisperCore credential/token hand-off has run
 	 *  (DESIGN §8.3). Internal migration flag, not user-facing. */
 	coreMigrationDone: boolean;
+	/**
+	 * In-flight API recording bookkeeping, keyed by session guid
+	 * (SESSION_GUID_DESIGN.md §7). Not a user setting — persisted here because
+	 * data.json is the plugin's only store — so an Obsidian restart mid-recording
+	 * can reconnect instead of orphaning the session. Never surfaced in the
+	 * settings UI.
+	 */
+	activeApiRecordings: PersistedApiRecording[];
 }
 
 export const DEFAULT_SETTINGS: WhisperCalSettings = {
@@ -150,6 +159,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	voiceprintAutoTagFloor: 0.80,
 	voiceprintAutoTagMinorMaxShare: 0.05,
 	coreMigrationDone: false,
+	activeApiRecordings: [],
 };
 
 class LlmConsentModal extends Modal {
@@ -1228,6 +1238,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		const setting = new Setting(containerEl)
 			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
 			.setName("Managed in WhisperCore")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
 			.setDesc("These settings are configured in WhisperCore and shared across the Whisper plugins. Open WhisperCore to view or change them.")
 			.addButton(b => b
 				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name

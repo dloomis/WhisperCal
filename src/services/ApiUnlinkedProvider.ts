@@ -157,10 +157,16 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			await this.renameSidecar(transcriptFile, sidecarPath, expectedBasename);
 		}
 
-		// 3. Link transcript on the meeting note side
+		// 3. Link transcript on the meeting note side. Mirror the transcript's
+		// session_guid onto the note (the note tracks its latest session) so the
+		// pair stays id-correlated even when the link was made manually.
+		const transcriptGuid = originalFm[FM.SESSION_GUID];
 		await batchUpdateFrontmatter(opts.app, opts.notePath, {
 			[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
 			[FM.PIPELINE_STATE]: "titled",
+			...(typeof transcriptGuid === "string" && transcriptGuid
+				? {[FM.SESSION_GUID]: transcriptGuid}
+				: {}),
 		});
 
 		return true;
@@ -283,6 +289,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			speakerCount = fm["attendees"].length;
 		}
 
+		const sessionGuid = fm[FM.SESSION_GUID];
 		return {
 			id: file.path,
 			title,
@@ -290,6 +297,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			durationSeconds,
 			speakerCount,
 			transcriptPath: file.path,
+			sessionGuid: typeof sessionGuid === "string" && sessionGuid ? sessionGuid : undefined,
 			providerData: {file} as ApiTranscriptData,
 		};
 	}

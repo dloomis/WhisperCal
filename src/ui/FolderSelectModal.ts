@@ -30,6 +30,7 @@ export class FolderSelectModal extends FuzzySuggestModal<string> {
 	onChooseItem(item: string): void {
 		this.picked = true;
 		this.resolvePick?.(item);
+		this.resolvePick = null;
 	}
 
 	pick(): Promise<string | null> {
@@ -41,6 +42,14 @@ export class FolderSelectModal extends FuzzySuggestModal<string> {
 
 	onClose(): void {
 		super.onClose();
-		if (!this.picked) this.resolvePick?.(null);
+		// selectSuggestion() calls close() — and so onClose() — *before* onChooseItem,
+		// so resolving the cancel inline here would beat the pick and always yield null.
+		// Defer a tick so a pick in flight wins (matches EventSuggestModal).
+		setTimeout(() => {
+			if (!this.picked) {
+				this.resolvePick?.(null);
+				this.resolvePick = null;
+			}
+		}, 0);
 	}
 }

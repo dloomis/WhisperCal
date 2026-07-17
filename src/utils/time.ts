@@ -317,13 +317,21 @@ export function coerceFmTime(val: unknown): string | undefined {
 }
 
 /** Coerce a YAML frontmatter date value to "YYYY-MM-DD" string.
- *  YAML may parse unquoted dates as Date objects. */
+ *  YAML may parse unquoted dates as Date objects.
+ *
+ *  Read back with UTC getters, not local ones: YAML builds a date-only value as
+ *  midnight *UTC*, so local getters roll it to the previous day everywhere west
+ *  of Greenwich (`2026-07-15` → "2026-07-14" in America/New_York). Callers
+ *  compare the result against a formatDate() day key, so that silently lost the
+ *  match. The zone the day is *displayed* in is not this function's business —
+ *  it returns the calendar date exactly as authored. */
 export function coerceFmDate(val: unknown): string | undefined {
 	if (val == null) return undefined;
 	if (val instanceof Date) {
-		const y = val.getFullYear();
-		const m = String(val.getMonth() + 1).padStart(2, "0");
-		const d = String(val.getDate()).padStart(2, "0");
+		if (isNaN(val.getTime())) return undefined;
+		const y = val.getUTCFullYear();
+		const m = String(val.getUTCMonth() + 1).padStart(2, "0");
+		const d = String(val.getUTCDate()).padStart(2, "0");
 		return `${y}-${m}-${d}`;
 	}
 	if (typeof val === "string") return val;

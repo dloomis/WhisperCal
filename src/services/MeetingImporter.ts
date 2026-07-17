@@ -223,7 +223,6 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 		new Notice("Couldn't find a free name for this bundle — is it already imported?");
 		return;
 	}
-	const renamed = base !== oldBase;
 
 	const written: string[] = [];
 	try {
@@ -232,9 +231,14 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 
 		// findLocalNotes skips notes whose provider isn't ours, so a bundle from a
 		// Google vault would otherwise import invisibly into a Graph one.
+		//
+		// The transcript link is rewritten on every import, not just a renamed one:
+		// the sender's link is whatever their vault wrote, which may carry a folder
+		// path that doesn't exist here (merged notes link by full path). Restating it
+		// as a bare basename resolves wherever our transcript folder happens to be.
 		const noteFm = editFrontmatter(note.rawFm, {
 			calendar_provider: settings.calendarProvider,
-			...(renamed && transcript
+			...(transcript
 				? {[FM.TRANSCRIPT]: `"[[${yamlEscape(reprefix(transcript.basename, base))}]]"`}
 				: {}),
 		});
@@ -247,12 +251,14 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 		}
 
 		if (transcript && targets.transcript) {
-			const transcriptFm = renamed
-				? editFrontmatter(transcript.rawFm, {
-					[FM.MEETING_NOTE]: `"[[${yamlEscape(base)}]]"`,
-					...(audio ? {recording: `"[[${yamlEscape(reprefix(audio.name, base))}]]"`} : {}),
-				})
-				: transcript.rawFm;
+			// Restated on every import for the same reason as the note's transcript
+			// link above. On a non-renamed import these resolve to exactly the values
+			// the bundle already carried, so this only ever narrows a sender-vault
+			// path back to a basename.
+			const transcriptFm = editFrontmatter(transcript.rawFm, {
+				[FM.MEETING_NOTE]: `"[[${yamlEscape(base)}]]"`,
+				...(audio ? {recording: `"[[${yamlEscape(reprefix(audio.name, base))}]]"`} : {}),
+			});
 			// Written last, and only once the note is in place under its final name:
 			// the pipeline_state mirror fires on any change under the transcript folder
 			// and resolves meeting_note by basename, so a transcript landing first
@@ -262,6 +268,20 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 		}
 	} catch (err) {
 		console.error("[WhisperCal] Import failed:", err);
+		// A bundle is all-or-nothing: a partial import leaves a note whose transcript
+		// link points at a file that never arrived (and possibly an orphaned .m4a).
+		// Best-effort roll back what already landed before reporting the failure.
+		for (const path of written.reverse()) {
+			const file = app.vault.getAbstractFileByPath(path);
+			if (!file) continue;
+			try {
+				// trashFile, not delete: respects the user's deletion preference, and a
+				// rollback of their own bundle should stay recoverable.
+				await app.fileManager.trashFile(file);
+			} catch (cleanupErr) {
+				console.warn(`[WhisperCal] Import rollback: couldn't remove ${path}`, cleanupErr);
+			}
+		}
 		new Notice(err instanceof Error ? `Import failed: ${err.message}` : "Import failed");
 		return;
 	}

@@ -2,6 +2,7 @@ import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import type {FrontmatterSpeaker} from "./SpeakerTagParser";
+import {transcriptStartOffset} from "../utils/transcript";
 import {FM} from "../constants";
 
 /**
@@ -95,13 +96,13 @@ export async function applySpeakerTags(
 
 	if (replacements.length > 0) {
 		await app.vault.process(fileCheck, (content) => {
-			// Split into frontmatter and body to avoid corrupting YAML values
-			const fmEnd = content.indexOf("\n---", 1);
-			if (fmEnd === -1) return content;
-			const bodyStart = content.indexOf("\n", fmEnd + 4);
-			if (bodyStart === -1) return content;
-			const head = content.slice(0, bodyStart);
-			let body = content.slice(bodyStart);
+			// Rewrite only from the transcript heading down. The pipe-format
+			// replacement ("John |") is a bare substring match, so running it over the
+			// whole file would also rewrite YAML values, markdown table cells, and any
+			// summary prose above the transcript that happens to contain the name.
+			const start = transcriptStartOffset(content);
+			const head = content.slice(0, start);
+			let body = content.slice(start);
 			for (const {from, to} of replacements) {
 				// Replace **Original** → **Confirmed**
 				body = body.split(`**${from}**`).join(`**${to}**`);

@@ -14,8 +14,12 @@ function stripWikilink(text: string | undefined): string {
 /**
  * Build a meeting subtitle line from frontmatter fields.
  * Format: "9:00 AM – 10:00 AM · 1h · John Smith"
+ *
+ * `timezone` is the configured zone the frontmatter times were written in; the
+ * duration is computed by parsing them back in that same zone (parsing a
+ * DST-transition meeting system-local would misreport its length by an hour).
  */
-export function buildMeetingSubtitle(fm: Record<string, unknown>): string {
+export function buildMeetingSubtitle(fm: Record<string, unknown>, timezone?: string): string {
 	const meetingDate = fm["meeting_date"] as string | undefined;
 	const meetingStart = fm["meeting_start"] as string | undefined;
 	const meetingEnd = fm["meeting_end"] as string | undefined;
@@ -34,8 +38,8 @@ export function buildMeetingSubtitle(fm: Record<string, unknown>): string {
 
 	// Duration (computed from parsed times)
 	if (meetingDate && meetingStart && meetingEnd) {
-		const start = parseDateTime(meetingDate, meetingStart);
-		const end = parseDateTime(meetingDate, meetingEnd);
+		const start = parseDateTime(meetingDate, meetingStart, timezone);
+		const end = parseDateTime(meetingDate, meetingEnd, timezone);
 		if (start && end && end.getTime() > start.getTime()) {
 			const durationSec = Math.round((end.getTime() - start.getTime()) / 1000);
 			const durText = formatRecordingDuration(durationSec);

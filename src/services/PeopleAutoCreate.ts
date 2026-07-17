@@ -1,4 +1,4 @@
-import {App, TFile, TFolder} from "obsidian";
+import {App, TFile, TFolder, normalizePath} from "obsidian";
 import type {CalendarEvent} from "../types";
 import {PeopleMatchService} from "./PeopleMatchService";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
@@ -127,7 +127,10 @@ export async function autoCreatePeopleNotes(
 		if (lastName && existingLastNames.has(lastName.toLowerCase())) continue;
 
 		const filename = sanitizeFilename(parsed) + ".md";
-		const path = `${peopleFolderPath}/${filename}`;
+		// normalizePath collapses the double slash a folder setting with a trailing
+		// slash would produce — otherwise the existence check below misses and
+		// vault.create throws, aborting the remaining organizers.
+		const path = normalizePath(`${peopleFolderPath}/${filename}`);
 
 		// File may already exist under this path even if the index didn't match
 		if (app.vault.getAbstractFileByPath(path)) continue;
@@ -135,9 +138,14 @@ export async function autoCreatePeopleNotes(
 		const variables = buildPeopleVariableMap(parsed, org.email);
 		let content = applyTemplate(template, variables);
 		content += `\n\n> [!info] Auto-created\n> Organizer of **${org.meetingSubject}**\n`;
-		await app.vault.create(path, content);
-		created++;
-		console.debug(`[WhisperCal] Auto-created People note: ${path}`);
+		try {
+			await app.vault.create(path, content);
+			created++;
+			console.debug(`[WhisperCal] Auto-created People note: ${path}`);
+		} catch (e) {
+			// One unwritable name must not abort the organizers after it.
+			console.warn(`[WhisperCal] failed to auto-create People note "${parsed}"`, e);
+		}
 	}
 
 	if (created > 0) {
@@ -202,7 +210,7 @@ export async function createPeopleNotesForNames(
 		const lastName = parsed.split(/\s+/).pop();
 		if (lastName && existingLastNames.has(lastName.toLowerCase())) continue;
 
-		const path = `${peopleFolderPath}/${sanitizeFilename(parsed)}.md`;
+		const path = normalizePath(`${peopleFolderPath}/${sanitizeFilename(parsed)}.md`);
 		if (app.vault.getAbstractFileByPath(path)) continue;
 
 		try {

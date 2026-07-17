@@ -34,12 +34,18 @@ import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvid
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {appendLlmErrorSection} from "./utils/llmErrorLog";
-import {getLinkedTranscriptFile, stopApiRecordingWatchers, resetApiRecordingWatchers} from "./services/ApiRecording";
+import {getLinkedTranscriptFile, stopApiRecordingWatchers, resetApiRecordingWatchers, registerApiRecordingPersistence, reconcileApiRecordings} from "./services/ApiRecording";
+import type {PersistedApiRecording} from "./services/ApiRecording";
+import {resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
 import {createPeopleNotesForNames} from "./services/PeopleAutoCreate";
 import {AutoSpeakerTagger} from "./services/AutoSpeakerTagger";
+
+/** LLM credential/config keys that moved to WhisperCore. Only safe to drop from
+ *  WhisperCal's data.json once the C3 hand-off has imported them into Core. */
+const LEGACY_LLM_KEYS = ["anthropicApiKey", "llmCli", "llmExtraFlags"];
 
 /** Derive a short display name from an LLM model ID.
  *  Claude IDs in every shape: "claude-opus-4-6" → "Opus 4.6", "claude-sonnet-5" →
@@ -132,10 +138,30 @@ export default class WhisperCalPlugin extends Plugin {
 	private activeProviderType: CalendarProviderType = "microsoft";
 	private unlinkedProvider!: UnlinkedRecordingProvider;
 	private autoTagger!: AutoSpeakerTagger;
+	private coreHandoffInFlight = false;
 
 	async onload() {
 		await this.loadSettings();
 		resetApiRecordingWatchers();
+		// In-flight recording bookkeeping (SESSION_GUID_DESIGN.md §7): the
+		// ApiRecording module records start/link/failure transitions here so a
+		// restart mid-recording can reconcile below instead of orphaning the
+		// session. Registered before any recording flow can run.
+		registerApiRecordingPersistence({
+			add: (entry: PersistedApiRecording) => {
+				this.settings.activeApiRecordings = [
+					...this.settings.activeApiRecordings.filter(e => e.sessionGuid !== entry.sessionGuid),
+					entry,
+				];
+				void this.persistData();
+			},
+			remove: (sessionGuid: string) => {
+				const next = this.settings.activeApiRecordings.filter(e => e.sessionGuid !== sessionGuid);
+				if (next.length === this.settings.activeApiRecordings.length) return;
+				this.settings.activeApiRecordings = next;
+				void this.persistData();
+			},
+		});
 
 		// Background auto-tagging of newly linked transcripts (automatic mode).
 		// Constructed before onLayoutReady so the callback can't race a layout
@@ -155,6 +181,9 @@ export default class WhisperCalPlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			void installBundledPrompts(this.app);
 			this.autoTagger.start();
+			// Reconnect to recordings that were in flight when Obsidian last closed
+			// (layout-ready so note/transcript lookups see the full vault index).
+			void this.reconcileActiveApiRecordings();
 		});
 
 		this.activeProviderType = this.settings.calendarProvider;
@@ -409,6 +438,24 @@ export default class WhisperCalPlugin extends Plugin {
 		this.addSettingTab(new WhisperCalSettingTab(this.app, this));
 	}
 
+	/**
+	 * Reconcile in-flight API recordings persisted before the last shutdown:
+	 * re-attach the watch to a still-live capture, resume linking for sessions
+	 * that finished while Obsidian was closed, drop what can't be resolved.
+	 */
+	private async reconcileActiveApiRecordings(): Promise<void> {
+		const entries = [...this.settings.activeApiRecordings];
+		if (entries.length === 0) return;
+		const baseUrl = resolveRecordingApiBaseUrl(this.settings.recordingApiBaseUrl);
+		await reconcileApiRecordings({
+			app: this.app,
+			entries,
+			baseUrl,
+			cardUi: this.cardUi,
+			timezone: this.settings.timezone,
+		});
+	}
+
 	onunload(): void {
 		// Stop the auto-tag queue first so parked sleeps resolve and no new
 		// LLM jobs start during teardown.
@@ -416,14 +463,22 @@ export default class WhisperCalPlugin extends Plugin {
 		// Stop the fire-and-forget recording watch/link poll loops — they would
 		// otherwise keep polling the service and writing vault files after unload.
 		stopApiRecordingWatchers();
+		// Detach the recording bookkeeping from this (dying) plugin instance so a
+		// straggling async flow can't write through to a stale settings object.
+		registerApiRecordingPersistence(null);
 		this.auth.cancelSignIn();
 		// Stop UI timers and clear job/card state up front so handlers that fire
 		// during teardown don't see stale entries.
 		this.cardUi.clear();
 		this.jobs.clear();
+		// Toolbar actions and editor banners aren't lifecycle-managed by Obsidian:
+		// without this, every visited markdown view keeps a dead icon wired to this
+		// (now unloaded) plugin instance.
+		this.removeInjectedViewElements();
 		// Kick the cache flush as fire-and-forget — Obsidian's onunload is sync,
 		// but the SQLite-backed flush is async; missing this leaves a partial write.
-		void this.cachedProvider?.flush();
+		void this.cachedProvider?.flush().catch(e =>
+			console.warn("[WhisperCal] cache flush on unload failed", e));
 		// Kill any running LLM processes; force-kill stragglers after a grace period.
 		for (const proc of activeProcesses) {
 			killProcessTree(proc, "SIGTERM");
@@ -434,6 +489,18 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 			activeProcesses.clear();
 		}, 2000);
+	}
+
+	/** Strip the DOM this plugin injected into markdown views (word-replacement
+	 *  toolbar action, LLM progress banners). Obsidian doesn't unwind these. */
+	private removeInjectedViewElements(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView)) continue;
+			view.containerEl
+				.querySelectorAll(".whisper-cal-word-replace-action, .whisper-cal-llm-banner")
+				.forEach(el => el.remove());
+		}
 	}
 
 	/**
@@ -518,11 +585,13 @@ export default class WhisperCalPlugin extends Plugin {
 			if (!this.settings.researchModel) this.settings.researchModel = old;
 		}
 		// LLM CLI command, shared flags, and Anthropic API key moved to WhisperCore
-		// (C4). They were migrated into Core by the C3 hand-off; drop any leftover
-		// copies here so WhisperCal's data.json stops carrying them (getLlmConfig()
-		// is the single source of truth now).
-		for (const k of ["anthropicApiKey", "llmCli", "llmExtraFlags"]) {
-			delete (this.settings as unknown as Record<string, unknown>)[k];
+		// (C4). Drop leftover copies only once the C3 hand-off has actually run —
+		// until then they are the sole surviving source for the migration, and any
+		// persistData() before Core is installed would erase them for good.
+		if (this.settings.coreMigrationDone) {
+			for (const k of LEGACY_LLM_KEYS) {
+				delete (this.settings as unknown as Record<string, unknown>)[k];
+			}
 		}
 		// Migrate legacy autoRecordOnLaunch → automateMeetingRecording (the toggle
 		// now also closes the meeting app when recording is stopped from WhisperCal).
@@ -626,7 +695,13 @@ export default class WhisperCalPlugin extends Plugin {
 
 	private notifyAuthStateListeners(state: AuthState): void {
 		for (const listener of this.authStateListeners) {
-			listener(state);
+			// One listener that throws must not starve the rest — the sidebar banner
+			// and the settings status block both hang off this chain.
+			try {
+				listener(state);
+			} catch (e) {
+				console.error("[WhisperCal] auth-state listener failed", e);
+			}
 		}
 	}
 
@@ -639,17 +714,35 @@ export default class WhisperCalPlugin extends Plugin {
 	 * (DESIGN §8.3). Runs when Core is present+ready and WhisperCal's data.json
 	 * still carries legacy keys. Core fills empty slots only (never overwrites),
 	 * so a signed-in Core keeps its own tokens and WhisperCal's stale copy is
-	 * skipped. After a successful import WhisperCal deletes the moved AUTH keys
-	 * and token caches from its own data.json (LLM keys stay put until C4, which
-	 * switches WhisperCal to read them from Core). Idempotent via
+	 * skipped. After a successful import WhisperCal deletes the moved AUTH keys,
+	 * token caches, and LLM keys from its own data.json — deleting them any earlier
+	 * would destroy the only copy while Core is still absent. Idempotent via
 	 * `coreMigrationDone`; if Core is absent, this is a no-op that retries on a
 	 * later load / whispercore:ready.
+	 *
+	 * The onload call and the whispercore:ready handler can both reach this while
+	 * the first is still awaiting loadData, so an in-flight guard backs up the
+	 * `coreMigrationDone` check — two concurrent imports would race on data.json.
 	 */
 	private async runCoreHandoff(): Promise<void> {
-		if (this.settings.coreMigrationDone) return;
+		if (this.settings.coreMigrationDone || this.coreHandoffInFlight) return;
 		const api = getWhisperCoreApi(this.app);
 		if (!api) return; // Core absent/not-ready — retry later
 
+		this.coreHandoffInFlight = true;
+		try {
+			await this.doCoreHandoff(api);
+		} catch (e) {
+			// importConfig throws only "not ready" (a race with disable); a persistData
+			// disk error lands here too. Leave coreMigrationDone false so a later load
+			// retries rather than surfacing an unhandled rejection from the voided call.
+			console.warn("[WhisperCal] WhisperCore hand-off deferred:", e instanceof Error ? e.message : String(e));
+		} finally {
+			this.coreHandoffInFlight = false;
+		}
+	}
+
+	private async doCoreHandoff(api: NonNullable<ReturnType<typeof getWhisperCoreApi>>): Promise<void> {
 		const raw = await this.loadData() as Record<string, unknown> | null;
 		if (!raw) return;
 
@@ -695,23 +788,19 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 
-		try {
-			const result = await api.importConfig(bundle);
-			// Remove the moved AUTH config + token caches from WhisperCal's own
-			// data.json (tokens are obsolete whether adopted or skipped). LLM keys
-			// (anthropicApiKey/llmCli/llmExtraFlags) are migrated into the bundle but
-			// intentionally retained here until C4 repoints WhisperCal at getLlmConfig().
-			const AUTH_KEYS = ["tenantId", "clientId", "cloudInstance", "googleClientId", "googleClientSecret",
-				"microsoftTokenCache", "googleTokenCache", "tokenCache"];
-			for (const k of AUTH_KEYS) delete (this.settings as unknown as Record<string, unknown>)[k];
-			this.settings.coreMigrationDone = true;
-			await this.persistData();
-			console.debug(`[WhisperCal] WhisperCore hand-off complete — adopted: [${result.adopted.join(", ")}], skipped: [${result.skipped.join(", ")}]`);
-		} catch (e) {
-			// importConfig only throws "not ready" (a race with disable). Leave
-			// coreMigrationDone false so a later load retries.
-			console.warn("[WhisperCal] WhisperCore hand-off deferred:", e instanceof Error ? e.message : String(e));
+		const result = await api.importConfig(bundle);
+		// Remove the moved AUTH config + token caches from WhisperCal's own
+		// data.json (tokens are obsolete whether adopted or skipped). The LLM keys
+		// go in the same pass — they are only safe to drop once Core has them, and
+		// WhisperCal now reads them back through getLlmConfig().
+		const AUTH_KEYS = ["tenantId", "clientId", "cloudInstance", "googleClientId", "googleClientSecret",
+			"microsoftTokenCache", "googleTokenCache", "tokenCache"];
+		for (const k of [...AUTH_KEYS, ...LEGACY_LLM_KEYS]) {
+			delete (this.settings as unknown as Record<string, unknown>)[k];
 		}
+		this.settings.coreMigrationDone = true;
+		await this.persistData();
+		console.debug(`[WhisperCal] WhisperCore hand-off complete — adopted: [${result.adopted.join(", ")}], skipped: [${result.skipped.join(", ")}]`);
 	}
 
 	private resolveTagSpeakersContext(
@@ -1162,7 +1251,7 @@ export default class WhisperCalPlugin extends Plugin {
 					? (this.app.metadataCache.getFileCache(meetingFile)?.frontmatter ?? {})
 					: {};
 				const title = (meetingFm["meeting_subject"] as string) || transcriptFile.basename;
-				const subtitle = buildMeetingSubtitle(meetingFm);
+				const subtitle = buildMeetingSubtitle(meetingFm, this.settings.timezone);
 				// Resolve the recording so the modal can offer click-to-play per timestamp.
 				// Tome usually writes `recording: [[...m4a]]` to the transcript frontmatter,
 				// but that field is sometimes absent (e.g. "Call"-source sessions); the helper
@@ -1673,7 +1762,7 @@ export default class WhisperCalPlugin extends Plugin {
 			// default modal even when a meeting series note exists. Wait for the cache.
 			const fm = await this.readFrontmatterAwaitingCache(noteFile);
 			const title = (fm["meeting_subject"] as string) || noteFile.basename;
-			const subtitle = buildMeetingSubtitle(fm);
+			const subtitle = buildMeetingSubtitle(fm, this.settings.timezone);
 
 			// For a recurring meeting, auto-create its series note (frontmatter +
 			// "## Research instructions" section) when one doesn't exist yet, so

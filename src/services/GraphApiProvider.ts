@@ -162,8 +162,10 @@ export class GraphApiProvider implements CalendarProvider {
 				}
 			}
 		} catch (e) {
+			// Back to null (not an empty map) so the next fetchEvents retries — a
+			// single transient failure shouldn't drop category colors until reload.
 			console.debug("[WhisperCal] Failed to fetch master categories:", e);
-			this.categoryColors = new Map();
+			this.categoryColors = null;
 		}
 	}
 
@@ -178,8 +180,12 @@ export class GraphApiProvider implements CalendarProvider {
 			const data = response.json as { mail?: string; userPrincipalName?: string };
 			this.userEmail = (data.mail ?? data.userPrincipalName ?? "").toLowerCase();
 		} catch (e) {
+			// Back to null so the next fetchEvents retries. Latching "" here would
+			// break self-identification for the rest of the session: every event reads
+			// as not-organizer, and PeopleAutoCreate would mint a People note for the
+			// user themself.
 			console.debug("[WhisperCal] Failed to fetch user email:", e);
-			this.userEmail = "";
+			this.userEmail = null;
 		}
 	}
 }

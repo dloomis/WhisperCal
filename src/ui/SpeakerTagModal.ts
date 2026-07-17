@@ -139,7 +139,10 @@ export class SpeakerTagModal extends Modal {
 		if (!this.audioEl) return;
 		const duration = this.clipSeconds > 0 ? this.clipSeconds : DEFAULT_CLIP_SECONDS;
 		this.stopAt = start + duration;
-		this.seekingForSnippet = true;
+		// Assigning currentTime the value it already holds fires no "seeked", which
+		// would leave the flag latched: the user's next scrubber drag would then read
+		// as a snippet seek and playback would stop dead at this stale stopAt.
+		this.seekingForSnippet = Math.abs(this.audioEl.currentTime - start) >= 0.01;
 		this.audioEl.currentTime = start;
 		void this.audioEl.play();
 	}

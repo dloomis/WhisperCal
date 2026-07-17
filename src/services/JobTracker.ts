@@ -28,11 +28,6 @@ export class JobTracker {
 		return this.jobs[kind].has(key);
 	}
 
-	/** Total active jobs across all kinds (used by concurrency caps). */
-	get activeCount(): number {
-		return this.jobs.summarize.size + this.jobs.speakerTag.size + this.jobs.research.size;
-	}
-
 	/** Drop all tracked jobs. Does not kill underlying processes — caller handles that. */
 	clear(): void {
 		for (const k of Object.keys(this.jobs) as JobKind[]) {

@@ -4,6 +4,8 @@
  * the post-processing deletion guard) so their notions can't drift.
  */
 
+import {bodyStartOffset} from "./frontmatter";
+
 /** A speaker-label occurrence in a transcript body. */
 export interface SpeakerLabelMatch {
 	/** Label text inside the leading `**…**`, trimmed (e.g. "Speaker 2", "You"). */
@@ -13,25 +15,25 @@ export interface SpeakerLabelMatch {
 }
 
 /**
+ * Offset at which the transcript's spoken lines start: the `## Transcript` /
+ * `## Full Transcript` heading when present, else the start of the body. Callers that
+ * rewrite speaker labels slice from here so they can't touch a summary or table above it.
+ */
+export function transcriptStartOffset(content: string): number {
+	const start = bodyStartOffset(content);
+	// TranscriptWriter emits "## Full Transcript"; Tome/other formats use "## Transcript".
+	const heading = content.slice(start).search(/^##\s+(?:Full\s+)?Transcript\b/m);
+	return heading >= 0 ? start + heading : start;
+}
+
+/**
  * Extract a transcript's body: the text after any leading YAML frontmatter, narrowed to the
  * transcript section (`## Transcript` or `## Full Transcript`) when that heading is present.
  * The single source of truth for "what is the transcript body" across the speaker-tagging
  * parsers and the deletion guard.
  */
 export function transcriptBody(content: string): string {
-	let body = content;
-	// Strip a leading YAML frontmatter block (--- … ---).
-	if (body.startsWith("---")) {
-		const close = body.indexOf("\n---", 3);
-		if (close >= 0) {
-			const afterClose = body.indexOf("\n", close + 4);
-			body = afterClose >= 0 ? body.slice(afterClose + 1) : "";
-		}
-	}
-	// Narrow to the transcript section when a heading marks it (TranscriptWriter emits
-	// "## Full Transcript"; Tome/other formats use "## Transcript").
-	const heading = body.search(/^##\s+(?:Full\s+)?Transcript\b/m);
-	return heading >= 0 ? body.slice(heading) : body;
+	return content.slice(transcriptStartOffset(content));
 }
 
 /**

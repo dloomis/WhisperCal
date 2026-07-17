@@ -18,7 +18,7 @@ import {RecordingUnavailableModal} from "./RecordingUnavailableModal";
 import {recordingStatus, isRecordingServiceUnreachableError} from "../services/RecordingApi";
 import {removeFrontmatterKeys, isSingleSourceTranscript} from "../utils/frontmatter";
 import type {PeopleMatchService} from "../services/PeopleMatchService";
-import {startApiRecording, stopApiRecording, watchApiRecording} from "../services/ApiRecording";
+import {startApiRecording, stopApiRecording, watchApiRecording, hasLinkedTranscript} from "../services/ApiRecording";
 import {LlmInstructionsModal} from "./LlmInstructionsModal";
 import {hasCachedProposals, countCachedProposals} from "../services/SpeakerTagParser";
 import {exportMeetingBundle} from "../services/MeetingExporter";
@@ -720,6 +720,15 @@ function startCapture(
 function attemptAutoRecord(opts: MeetingCardOpts, event: CalendarEvent, joinUrl: string): void {
 	const noteFile = opts.noteCreator.findNote(event);
 	const notePath = noteFile ? noteFile.path : opts.noteCreator.getNotePath(event);
+	// Rejoining a meeting WhisperCal is already capturing (Teams dropped, link
+	// re-clicked): the state auto-record wants — a running recording — already
+	// holds, so don't start another or prompt about the "busy" mic.
+	if (opts.cardUi.hasRecording(notePath)) return;
+	// A meeting whose transcript is already linked was captured once. Every
+	// manual path gates re-recording behind an explicit confirm; auto-record
+	// must not silently replace the transcript, so it stands down entirely —
+	// the user rejoining wants the meeting app open, not a second transcript.
+	if (hasLinkedTranscript(opts.app, notePath)) return;
 	startCapture(opts, notePath, false, started => {
 		// Tag the session with the app we just opened so stopping the recording
 		// from WhisperCal can close it, disconnecting the user from the call (see
@@ -1210,9 +1219,14 @@ function renderCardDynamic(
 			// call instead ended app-side, the watch loop clears the state without
 			// closing — so this fires only for stops initiated from WhisperCal.
 			const launchedApp = cardUi.getRecording(notePath)?.launchedApp;
-			if (recordingApiBaseUrl) {
-				void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: recordingApiBaseUrl, cardUi, onStatus: onStatusForCard(notePath, opts)});
-			}
+			// Re-resolve the base URL live: Tome's API port changes on each launch,
+			// so the render-time snapshot can point at a dead port after a mid-
+			// recording relaunch. Even with no resolvable URL, still run
+			// stopApiRecording — its API calls tolerate an unreachable service and
+			// its link tail can recover the transcript from disk by guid — so the
+			// click always clears the recording state instead of silently no-oping.
+			const stopBaseUrl = opts.resolveRecordingApiBaseUrl?.() || recordingApiBaseUrl || "";
+			void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: stopBaseUrl, cardUi, onStatus: onStatusForCard(notePath, opts)});
 			clearRecordingUi();
 			if (launchedApp) {
 				void closeMeetingApp(launchedApp);

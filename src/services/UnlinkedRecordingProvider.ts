@@ -14,6 +14,12 @@ export interface UnlinkedRecording {
 	speakerCount: number;
 	/** Vault path to the transcript file, when one already exists (e.g. API transcripts). */
 	transcriptPath?: string;
+	/**
+	 * Correlation guid stamped by the recording service (SESSION_GUID_DESIGN.md).
+	 * When a meeting note carries the same session_guid, the pairing is definitive
+	 * — auto-link may skip time/title heuristics entirely.
+	 */
+	sessionGuid?: string;
 	/** Opaque provider-specific payload. Providers cast this back in linkToNote(). */
 	providerData: unknown;
 }

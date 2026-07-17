@@ -1,5 +1,6 @@
 import type {App} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventAttendee, EventCategory} from "../types";
+import {addDaysInTimezone} from "../utils/time";
 
 /** Serialized form of CalendarEvent with ISO date strings instead of Date objects. */
 interface SerializedCalendarEvent {
@@ -208,9 +209,11 @@ export class CachedCalendarProvider implements CalendarProvider {
 	private async prefetchFutureDays(timezone: string): Promise<void> {
 		if (this.cacheFutureDays <= 0) return;
 
-		const today = new Date();
 		for (let i = 1; i <= this.cacheFutureDays; i++) {
-			const futureDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+			// Day arithmetic must happen in the configured zone: system-local midnight
+			// renders as the *previous* day when that zone is west of the system's, so
+			// the window would slide back one and never reach the last configured day.
+			const futureDate = addDaysInTimezone(new Date(), timezone, i);
 			const key = this.toDateKey(futureDate, timezone);
 
 			// Skip if already cached recently (within 1 hour)

@@ -136,8 +136,11 @@ export class GoogleCalendarProvider implements CalendarProvider {
 			const data = response.json as {email?: string};
 			this.userEmail = (data.email ?? "").toLowerCase();
 		} catch (e) {
+			// Leave userEmail null so the next fetchEvents retries. Latching "" here
+			// would permanently break self-identification for the session: every event
+			// reads as not-organizer, and PeopleAutoCreate would mint a People note
+			// for the user themself.
 			console.debug("[WhisperCal] Failed to fetch Google user email:", e);
-			this.userEmail = "";
 		}
 	}
 }
@@ -146,6 +149,8 @@ function parseGoogleEvent(event: GoogleCalendarEvent, userEmail: string): Calend
 	const attendees = (event.attendees ?? []).map(a => ({
 		name: a.displayName ?? "",
 		email: a.email ?? "",
+		// Per-attendee RSVP drives the card's accepted/tentative/declined counts.
+		responseStatus: mapResponseStatus(a.responseStatus),
 	}));
 
 	const isAllDay = !!event.start.date && !event.start.dateTime;
