@@ -1,4 +1,4 @@
-import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, normalizePath, requestUrl} from "obsidian";
+import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, normalizePath} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {CalendarProviderType} from "./types";
 import {getWhisperCoreApi} from "./services/CoreBridge";
@@ -1135,30 +1135,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
-		try {
-			// Key comes from WhisperCore now (C4); env var stays as a fallback.
-			const coreKey = getWhisperCoreApi(this.app)?.getLlmConfig().anthropicApiKey ?? null;
-			const apiKey = coreKey || globalThis.process?.env?.["ANTHROPIC_API_KEY"];
-			if (!apiKey) return [];
-
-			const response = await requestUrl({
-				url: "https://api.anthropic.com/v1/models?limit=100",
-				method: "GET",
-				headers: {
-					"x-api-key": apiKey,
-					"anthropic-version": "2023-06-01",
-				},
-			});
-
-			interface ModelEntry { id: string; display_name?: string }
-			const data = response.json as {data?: ModelEntry[]};
-			return (data.data ?? [])
-				.filter(m => m.id.startsWith("claude-"))
-				.map(m => ({id: m.id, display_name: m.display_name ?? m.id}))
-				.sort((a, b) => a.display_name.localeCompare(b.display_name));
-		} catch {
-			return [];
-		}
+		// C4 close: model listing is Core's single implementation — key resolution
+		// (explicit setting, else ANTHROPIC_API_KEY env) happens in Core. Optional-
+		// chained because listModels is a v1-additive member (absent on older Cores).
+		// Failure of any kind keeps today's UX: dropdowns offer "Default" only.
+		const result = await getWhisperCoreApi(this.app)?.listModels?.();
+		return result?.ok ? result.models : [];
 	}
 
 	/**

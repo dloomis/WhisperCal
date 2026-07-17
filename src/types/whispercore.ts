@@ -2,9 +2,10 @@
  * Vendored WhisperCore public-API types.
  *
  * VERBATIM hand-copy of the vendorable block from `../WhisperCore/src/api.ts`
- * (WhisperCore 0.1.0 — WHISPERCORE_API_VERSION 1). Copied 2026-07-12
- * (LlmConfigDto extended with the migrated LLM-engine fields; version integer
- * held at 1 pending the v1-additive-vs-v2 decision).
+ * (WhisperCore 0.1.0 — WHISPERCORE_API_VERSION 1). Copied 2026-07-17
+ * (listModels() + model DTOs added under Core's additive-on-v1 rule; version
+ * integer stays 1 — additive members are optional-chained by consumers whose
+ * copy predates them).
  *
  * The block is dependency-free by contract (WhisperCore DESIGN §3), so it
  * compiles standalone — no import, no npm link. Re-copy this whole block on
@@ -49,6 +50,23 @@ export interface LlmConfigDto {
 	debugLogging: boolean;         // log detailed LLM diagnostics to the developer console
 }
 
+/** A Claude model as returned by the Anthropic `/v1/models` listing. */
+export interface LlmModelDto {
+	id: string;                    // e.g. "claude-sonnet-5"
+	display_name: string;          // e.g. "Claude Sonnet 5" (falls back to the id)
+}
+
+/**
+ * Outcome of `listModels()`. Failure is a value, not a rejection (reads never
+ * throw): `no-key` (no explicit key and no env fallback), `not-ready` (called
+ * before onload finished), `auth` (key rejected), `http` (bad status), `parse`
+ * (2xx but unreadable body — captive portal / proxy HTML), `network`
+ * (transport/timeout). `message` is user-presentable.
+ */
+export type LlmModelListDto =
+	| {ok: true; models: LlmModelDto[]}
+	| {ok: false; kind: "no-key" | "not-ready" | "auth" | "http" | "parse" | "network"; message: string};
+
 /** One-time migration intake (DESIGN §8.3). Fills EMPTY Core slots only; never overwrites. */
 export interface CoreImportBundle {
 	microsoft?: { tenantId?: string; clientId?: string; cloudInstance?: string;
@@ -86,6 +104,11 @@ export interface WhisperCoreApi {
 
 	// ── LLM (reads — never throw) ──
 	getLlmConfig(): LlmConfigDto;
+	/** List the account's Claude models using Core's Anthropic key (explicit
+	 *  setting, else `ANTHROPIC_API_KEY` env). Never rejects — failure comes back
+	 *  as `{ok: false}`. Added 2026-07-17 (v1-additive): optional-chain on copies
+	 *  vendored earlier. */
+	listModels(): Promise<LlmModelListDto>;
 
 	// ── Migration (write — DESIGN §8.3; deprecated from birth, removed in v2) ──
 	importConfig(bundle: CoreImportBundle): Promise<CoreImportResult>;

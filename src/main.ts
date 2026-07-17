@@ -4,7 +4,7 @@ import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./sett
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording} from "./services/LinkRecording";
-import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr} from "./services/LlmInvoker";
+import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
@@ -170,7 +170,7 @@ export default class WhisperCalPlugin extends Plugin {
 			app: this.app,
 			getSettings: () => this.settings,
 			jobs: this.jobs,
-			canStartLlm: () => this.activeLlmCount < this.coreLlm().maxConcurrent,
+			canStartLlm: () => activeLlmCount() < this.coreLlm().maxConcurrent,
 			isLlmDebugMode: () => this.coreLlm().debugMode,
 			runAutoTag: (file, fm, notePath) =>
 				this.doTagSpeakers(file, fm, notePath, undefined, {auto: true}),
@@ -829,8 +829,8 @@ export default class WhisperCalPlugin extends Plugin {
 	// Queue for serializing speaker tag modal presentations
 	private speakerTagModalQueue: Promise<void> = Promise.resolve();
 
-	/** Count of currently running LLM processes (speaker tagging + summarization). */
-	private activeLlmCount = 0;
+	// The LLM concurrency counter lives in LlmTransport (C5): the slot claim/release
+	// helpers imported above are the single machine-wide count for this plugin.
 
 	private async doTagSpeakers(
 		transcriptFile: TFile,
@@ -898,12 +898,12 @@ export default class WhisperCalPlugin extends Plugin {
 		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath && !singleSourceNoHint;
 		let slotClaimed = false;
 		if (runLlm) {
-			if (this.activeLlmCount >= this.coreLlm().maxConcurrent) {
+			if (activeLlmCount() >= this.coreLlm().maxConcurrent) {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				if (!auto) new Notice("LLM concurrency limit reached — try again when a running job finishes");
 				return;
 			}
-			this.activeLlmCount++;
+			claimLlmSlot();
 			slotClaimed = true;
 		}
 
@@ -958,7 +958,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// runLlm means the LLM-free path already handled the run (and returned); without
 		// preBody means the read failed. Either way, release the claimed slot and stop.
 		if (!runLlm || preBody === undefined) {
-			if (slotClaimed) this.activeLlmCount--;
+			if (slotClaimed) releaseLlmSlot();
 			if (!auto) new Notice("Could not read the transcript for post-processing");
 			return;
 		}
@@ -989,7 +989,7 @@ export default class WhisperCalPlugin extends Plugin {
 				if (roster) peopleRoster = roster;
 			}
 		} catch (e) {
-			if (slotClaimed) this.activeLlmCount--;
+			if (slotClaimed) releaseLlmSlot();
 			console.error("[WhisperCal] Failed to build people roster for speaker tagging:", e);
 			if (!auto) new Notice("Speaker tagging failed while building the people roster — see console");
 			return;
@@ -1900,7 +1900,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Release a caller-claimed slot when we bail before the async run (whose finally
 		// owns the matching decrement) takes over.
-		const releaseClaim = () => { if (preClaimed) this.activeLlmCount--; };
+		const releaseClaim = () => { if (preClaimed) releaseLlmSlot(); };
 
 		if (!this.settings.llmEnabled) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -1926,7 +1926,7 @@ export default class WhisperCalPlugin extends Plugin {
 			releaseClaim();
 			return;
 		}
-		if (!preClaimed && this.activeLlmCount >= llmConfig.maxConcurrent) {
+		if (!preClaimed && activeLlmCount() >= llmConfig.maxConcurrent) {
 			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			new Notice("LLM concurrency limit reached — try again when a running job finishes");
 			return;
@@ -1935,7 +1935,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Register job synchronously before any async work. The slot was claimed either by
 		// the caller (preClaimed) or here; the run's finally block does the single decrement.
 		this.jobs.add(jobKind, filePath);
-		if (!preClaimed) this.activeLlmCount++;
+		if (!preClaimed) claimLlmSlot();
 
 		// Set in-progress card status. The same path is used for routing
 		// LLM error logs — for speaker tagging that's the parent meeting note,
@@ -2024,7 +2024,7 @@ export default class WhisperCalPlugin extends Plugin {
 				});
 			} finally {
 				this.jobs.remove(jobKind, filePath);
-				this.activeLlmCount--;
+				releaseLlmSlot();
 				this.clearProgressStatus(statusNotePath);
 				this.refreshCalendarCards(filePath);
 				opts.onCleanup?.();
