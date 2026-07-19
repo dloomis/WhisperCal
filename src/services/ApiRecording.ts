@@ -620,14 +620,27 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			// meeting's transcript and then cross-wire its frontmatter — so we scan
 			// the folder only once, after the window expires, and only for a file
 			// whose basename matches this recording's suggestedFilename.
+			// A file already at the expected path from BEFORE this session stopped
+			// (e.g. the prior transcript of a re-recorded note) is not ours — require
+			// creation after beforeStop, like findNewestFile does.
 			for (let i = 0; i < 15 && !transcriptFile; i++) {
 				await sleep(1000);
 				if (watchersStopped) return;
 				const byPath = app.vault.getAbstractFileByPath(expectedPath);
-				if (byPath instanceof TFile) transcriptFile = byPath;
+				if (byPath instanceof TFile && byPath.stat.ctime > beforeStop) transcriptFile = byPath;
 			}
 			if (!transcriptFile) {
 				transcriptFile = findNewestFile(app, transcriptFolderPath, beforeStop, namePrefix);
+			}
+			// Same guid safety net as rung 1: a candidate stamped with a DIFFERENT
+			// session guid belongs to another recording — don't adopt it. An
+			// unstamped file is still accepted (legacy guid-unaware service).
+			if (transcriptFile && sessionGuid) {
+				const fileGuid = await readTranscriptSessionGuid(app, transcriptFile);
+				if (fileGuid !== undefined && fileGuid !== sessionGuid) {
+					console.warn(`[WhisperCal] ${transcriptFile.path} carries ${FM.SESSION_GUID} ${fileGuid}, expected ${sessionGuid} — not adopting`);
+					transcriptFile = null;
+				}
 			}
 		}
 

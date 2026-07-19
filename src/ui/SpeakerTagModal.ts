@@ -1,4 +1,5 @@
-import {Modal, App, TFolder, TFile, Notice, setIcon} from "obsidian";
+import {Modal, App, TFolder, TFile, Notice, setIcon, normalizePath} from "obsidian";
+import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
 import {addActivateOnKey} from "../utils/a11y";
@@ -62,6 +63,8 @@ interface ExcerptBlock {
 export class SpeakerTagModal extends Modal {
 	private resolve: ((value: SpeakerTagDecision[] | null) => void) | null = null;
 	private submitted = false;
+	/** Hides the currently-open autocomplete dropdown, if any (see Escape handling). */
+	private dropdownDismisser: (() => void) | null = null;
 	private mappings: ProposedSpeakerMapping[];
 	private meetingTitle: string;
 	private meetingSubtitle: string;
@@ -218,6 +221,19 @@ export class SpeakerTagModal extends Modal {
 		// Prevent backdrop click and window blur from closing the modal
 		this.containerEl.querySelector(".modal-bg")
 			?.addEventListener("click", (e) => e.stopImmediatePropagation());
+
+		// Escape with an autocomplete dropdown open dismisses the dropdown, not the
+		// modal — the modal's default Escape-to-close would discard all typed names.
+		// (The input's own keydown handler also stops propagation; this scope
+		// override covers the path where the keymap scope sees the key first.)
+		this.scope.register([], "Escape", () => {
+			if (this.dropdownDismisser) {
+				this.dropdownDismisser();
+				return false;
+			}
+			this.close();
+			return false;
+		});
 
 		renderModalHeader(contentEl, this.meetingTitle, this.meetingSubtitle);
 
@@ -386,7 +402,22 @@ export class SpeakerTagModal extends Modal {
 		const dropdown = wrapper.createDiv({cls: "whisper-cal-autocomplete-dropdown whisper-cal-hidden"});
 		let selectedIdx = -1;
 
-		const showDropdown = (visible: boolean) => dropdown.toggleClass("whisper-cal-hidden", !visible);
+		// Track the open dropdown at modal level so the Escape scope override can
+		// dismiss it instead of closing the whole modal (which would discard every
+		// typed name).
+		const hideDropdown = (): void => {
+			dropdown.addClass("whisper-cal-hidden");
+			selectedIdx = -1;
+			if (this.dropdownDismisser === hideDropdown) this.dropdownDismisser = null;
+		};
+		const showDropdown = (visible: boolean): void => {
+			if (!visible) {
+				hideDropdown();
+				return;
+			}
+			dropdown.removeClass("whisper-cal-hidden");
+			this.dropdownDismisser = hideDropdown;
+		};
 		const isDropdownVisible = () => !dropdown.hasClass("whisper-cal-hidden");
 
 		const updateDropdown = (): void => {
@@ -484,8 +515,11 @@ export class SpeakerTagModal extends Modal {
 				e.stopImmediatePropagation();
 				items[selectedIdx]!.dispatchEvent(new MouseEvent("mousedown", {bubbles: true}));
 			} else if (e.key === "Escape") {
+				// This Escape belongs to the dropdown — keep it away from the modal's
+				// own Escape-to-close keymap handler.
+				e.preventDefault();
+				e.stopPropagation();
 				showDropdown(false);
-				selectedIdx = -1;
 			}
 		});
 
@@ -520,7 +554,9 @@ export class SpeakerTagModal extends Modal {
 	private async createPersonNote(name: string, input: HTMLInputElement): Promise<void> {
 		if (!this.peopleFolderPath || !name) return;
 
-		const notePath = `${this.peopleFolderPath}/${name}.md`;
+		// The name is LLM-proposed/user-typed — sanitize before it becomes a path
+		// segment, and escape before it lands inside quoted YAML.
+		const notePath = normalizePath(`${this.peopleFolderPath}/${sanitizeFilename(name)}.md`);
 		const existing = this.app.vault.getAbstractFileByPath(notePath);
 		if (existing instanceof TFile) {
 			new Notice(`Note already exists: ${name}`);
@@ -529,7 +565,7 @@ export class SpeakerTagModal extends Modal {
 
 		try {
 			await ensureFolder(this.app, this.peopleFolderPath);
-			await this.app.vault.create(notePath, `---\nfull_name: "${name}"\n---\n`);
+			await this.app.vault.create(notePath, `---\nfull_name: "${yamlEscape(name)}"\n---\n`);
 			// Refresh people list
 			this.people = this.buildPeopleList();
 			input.value = name;

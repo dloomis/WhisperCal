@@ -35,6 +35,9 @@ export interface WhisperCalSettings {
 	summarizerPromptPath: string;
 	researchPromptPath: string;
 	microphoneUser: string;
+	/** One-shot marker: the OS-account probe that pre-fills microphoneUser has
+	 *  run. Lets a deliberately-cleared field STAY empty across restarts. */
+	micUserProbed: boolean;
 	rosterMaxEnriched: number;
 	speakerTagClipSeconds: number;
 	llmEnabled: boolean;
@@ -130,6 +133,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	summarizerPromptPath: "Prompts/Meeting Transcript Summarizer Prompt.md",
 	researchPromptPath: "Prompts/Meeting Research Prompt.md",
 	microphoneUser: "",
+	micUserProbed: false,
 	rosterMaxEnriched: 20,
 	speakerTagClipSeconds: 5,
 	llmEnabled: false,
@@ -947,7 +951,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				let handling = false;
 				toggle.setValue(this.plugin.settings.llmEnabled);
 				toggle.onChange(async (value) => {
-					if (handling) return;
+					if (handling) {
+						// A click while the consent modal is pending already flipped the
+						// DOM — snap it back to the stored setting so they can't desync.
+						// (Guarded so the nested onChange from setValue can't recurse.)
+						if (toggle.getValue() !== this.plugin.settings.llmEnabled) {
+							toggle.setValue(this.plugin.settings.llmEnabled);
+						}
+						return;
+					}
 					handling = true;
 					try {
 						if (value) {
@@ -1107,12 +1119,21 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	/** Populate all registered model dropdowns from the API. */
 	private async refreshModels(): Promise<void> {
 		const models = await this.fetchAnthropicModels();
+		// A failed fetch returns [] — leave the seeded ["Default", current] options
+		// alone rather than repopulate, which would drop the configured model from
+		// its own dropdown and silently overwrite the setting on any interaction.
+		if (models.length === 0) return;
 		for (const {sel, key} of this.modelSelects) {
 			const current = this.plugin.settings[key];
 			sel.replaceChildren();
 			sel.add(new Option("Default", ""));
 			for (const m of models) {
 				sel.add(new Option(m.display_name, m.id));
+			}
+			// The configured model must always be selectable, even when the fetch
+			// didn't list it (deprecated id, different key scope).
+			if (current && !models.some(m => m.id === current)) {
+				sel.add(new Option(current, current));
 			}
 			sel.value = current;
 		}

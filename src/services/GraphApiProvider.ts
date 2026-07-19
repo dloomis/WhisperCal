@@ -1,6 +1,6 @@
 import {htmlToMarkdown, requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory, ResponseStatus} from "../types";
-import {getDayStartUTC, getDayEndUTC} from "../utils/time";
+import {getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
 import type {CalendarAuth} from "./CalendarAuth";
 
 // Graph API response shapes (Microsoft-specific)
@@ -135,9 +135,15 @@ export class GraphApiProvider implements CalendarProvider {
 			}
 		}
 
-		const userEmail = this.userEmail ?? "";
+		// If the /me lookup still hasn't succeeded, fail the fetch rather than
+		// parse (and cache) every event with isOrganizer:false — the cached
+		// provider falls back to its cache and retries live later.
+		if (this.userEmail === null) {
+			throw new Error("Could not determine user email — deferring event fetch");
+		}
+		const userEmail = this.userEmail;
 		const colorMap = this.categoryColors ?? new Map<string, string>();
-		return allEvents.map(e => parseGraphEvent(e, userEmail, colorMap));
+		return allEvents.map(e => parseGraphEvent(e, userEmail, colorMap, timezone));
 	}
 
 	getUserEmail(): string {
@@ -190,7 +196,7 @@ export class GraphApiProvider implements CalendarProvider {
 	}
 }
 
-function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<string, string>): CalendarEvent {
+function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<string, string>, timezone: string): CalendarEvent {
 	const attendees = event.attendees?.map(a => ({
 		name: a.emailAddress.name ?? "",
 		email: a.emailAddress.address ?? "",
@@ -203,11 +209,12 @@ function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<str
 
 	// Graph returns times in UTC (no Prefer: outlook.timezone header is sent),
 	// so timed events parse with a Z suffix. All-day events, though, are dates,
-	// not instants — UTC midnight renders as the previous evening anywhere west
-	// of UTC, so parse just the date portion as local midnight instead.
+	// not instants — parse the date portion as midnight in the CONFIGURED zone
+	// (not system-local): downstream formatters use the configured zone, and a
+	// system/configured mismatch would shift the event onto the previous day.
 	const isAllDay = event.isAllDay ?? false;
 	const parseGraphDate = (s: string): Date =>
-		isAllDay ? new Date(s.slice(0, 10) + "T00:00:00") : new Date(s + "Z");
+		isAllDay ? midnightFromDateKey(s.slice(0, 10), timezone) : new Date(s + "Z");
 
 	return {
 		id: event.id,

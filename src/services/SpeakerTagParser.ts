@@ -110,7 +110,10 @@ function extractJsonSpeakers(
 	stdout: string,
 	speakers: FrontmatterSpeaker[],
 ): ParseResult | null {
-	const jsonStart = stdout.indexOf("```json");
+	// LAST ```json fence, not the first: a model may emit a draft/quoted json
+	// block before the final answer, and the prompt requires the final block to
+	// end the message.
+	const jsonStart = stdout.lastIndexOf("```json");
 	if (jsonStart === -1) return null;
 	const bodyStart = stdout.indexOf("\n", jsonStart);
 	if (bodyStart === -1) return null;
@@ -147,11 +150,17 @@ function extractJsonSpeakers(
 
 	const llmMap = new Map<number, ProposedSpeakerMapping>();
 	for (const entry of parsed.speakers) {
+		// Validate the shape entry-by-entry — a malformed entry (missing/non-string
+		// original_name, non-numeric index) must degrade like other bad output, not
+		// throw out of the parser and skip every fallback path.
+		if (typeof entry?.index !== "number") continue;
+		const originalName = typeof entry.original_name === "string" ? entry.original_name : "";
+		if (!originalName) continue;
 		const speaker = speakers[entry.index];
 		const proposed = cleanProposedName(entry.proposed_name);
 		llmMap.set(entry.index, {
 			index: entry.index,
-			originalName: entry.original_name,
+			originalName,
 			proposedName: proposed,
 			source: proposed ? "llm" : "",
 			confidence: cleanConfidence(entry.confidence),
@@ -159,6 +168,15 @@ function extractJsonSpeakers(
 			speakerId: speaker?.id ?? "",
 			lineCount: speaker?.line_count ?? 0,
 		});
+	}
+	if (llmMap.size === 0) {
+		if (speakers.length === 0) {
+			return {mappings: [], warning: "LLM JSON speakers were malformed — no speakers found in transcript"};
+		}
+		return {
+			mappings: buildFallbackMappings(speakers),
+			warning: "LLM JSON speakers were malformed — showing speakers without AI suggestions",
+		};
 	}
 	return {mappings: mergeWithFrontmatter(speakers, llmMap)};
 }

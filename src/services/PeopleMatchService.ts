@@ -172,26 +172,33 @@ export class PeopleMatchService {
 
 		const files = getMarkdownFilesRecursive(folder);
 
+		// Collect every note first, then index in priority passes: identity keys
+		// (basename, full_name) for ALL notes before any nickname variant from ANY
+		// note. Interleaving them per-note was order-dependent — note A's nickname
+		// variant could claim note B's own basename ("Mike Johnson"), routing B's
+		// canonicalName (and voiceprint library) to A. Frontmatter-less notes are
+		// included as basename-only entries for the same reason.
+		const entries: {basename: string; nickname: string; fullName: string; info: PersonInfo}[] = [];
 		for (const file of files) {
 			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-			if (!fm) continue;
 
 			const notePath = file.path.replace(/\.md$/, "");
-			const rawType: unknown = fm["personnel_type"];
-			const personnelType = typeof rawType === "string" ? rawType : "";
-			const fullName: unknown = fm["full_name"];
-			const nickname: unknown = fm["nickname"];
-			const rawRole: unknown = fm["role_title"];
-			const rawOrg: unknown = fm["organization"] ?? fm["company"];
+			const rawType: unknown = fm?.["personnel_type"];
+			const fullName: unknown = fm?.["full_name"];
+			const nickname: unknown = fm?.["nickname"];
+			const rawRole: unknown = fm?.["role_title"];
+			const rawOrg: unknown = fm?.["organization"] ?? fm?.["company"];
 			const info: PersonInfo = {
 				notePath,
-				personnelType,
+				personnelType: typeof rawType === "string" ? rawType : "",
 				fullName: typeof fullName === "string" ? fullName : "",
 				nickname: typeof nickname === "string" ? nickname : "",
 				roleTitle: typeof rawRole === "string" ? rawRole : "",
 				organization: typeof rawOrg === "string" ? rawOrg : "",
 			};
+			entries.push({basename: file.basename.toLowerCase(), nickname: info.nickname, fullName: info.fullName, info});
 
+			if (!fm) continue;
 			for (const field of EMAIL_FIELDS) {
 				const value: unknown = fm[field];
 				if (typeof value === "string" && value) {
@@ -202,32 +209,28 @@ export class PeopleMatchService {
 					if (variant) pendingEmailVariants.push({key: variant, info});
 				}
 			}
-
-			if (typeof fullName === "string" && fullName) {
-				byName.set(fullName.toLowerCase(), info);
-			}
-
-			// Index note basename (e.g. "Alex Lillian") as a name variant
-			const basename = file.basename.toLowerCase();
-			if (!byName.has(basename)) {
-				byName.set(basename, info);
-			}
-
-			// Index nickname + last name if available
-			if (typeof nickname === "string" && nickname && typeof fullName === "string" && fullName) {
-				const lastWord = fullName.trim().split(/\s+/).pop();
-				if (lastWord) {
-					const nickLast = `${nickname} ${lastWord}`.toLowerCase();
-					if (!byName.has(nickLast)) {
-						byName.set(nickLast, info);
-					}
-				}
-			}
 		}
 
-		// Lowest-priority name variants: an email-derived "first last" only fills a name key
-		// that no note already claims via basename/full_name/nickname. Applied after the main
-		// loop so strong variants from every note are present first.
+		// Pass 1: every note's own basename, then full_name.
+		for (const e of entries) {
+			if (!byName.has(e.basename)) byName.set(e.basename, e.info);
+		}
+		for (const e of entries) {
+			const key = e.fullName.toLowerCase();
+			if (key && !byName.has(key)) byName.set(key, e.info);
+		}
+
+		// Pass 2: nickname + last name variants — only into keys no note owns.
+		for (const e of entries) {
+			if (!e.nickname || !e.fullName) continue;
+			const lastWord = e.fullName.trim().split(/\s+/).pop();
+			if (!lastWord) continue;
+			const nickLast = `${e.nickname} ${lastWord}`.toLowerCase();
+			if (!byName.has(nickLast)) byName.set(nickLast, e.info);
+		}
+
+		// Pass 3 (lowest priority): an email-derived "first last" only fills a name key
+		// that no note already claims via basename/full_name/nickname.
 		for (const {key, info} of pendingEmailVariants) {
 			if (!byName.has(key)) byName.set(key, info);
 		}

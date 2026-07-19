@@ -1,6 +1,6 @@
 import {requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory} from "../types";
-import {getDayStartUTC, getDayEndUTC} from "../utils/time";
+import {getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
 import type {CalendarAuth} from "./CalendarAuth";
 
 const CALENDAR_BASE = "https://www.googleapis.com/calendar/v3";
@@ -119,7 +119,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
 		} while (pageToken);
 
 		const email = this.userEmail ?? "";
-		return allEvents.map(e => parseGoogleEvent(e, email));
+		return allEvents.map(e => parseGoogleEvent(e, email, timezone));
 	}
 
 	getUserEmail(): string {
@@ -145,7 +145,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
 	}
 }
 
-function parseGoogleEvent(event: GoogleCalendarEvent, userEmail: string): CalendarEvent {
+function parseGoogleEvent(event: GoogleCalendarEvent, userEmail: string, timezone: string): CalendarEvent {
 	const attendees = (event.attendees ?? []).map(a => ({
 		name: a.displayName ?? "",
 		email: a.email ?? "",
@@ -155,12 +155,14 @@ function parseGoogleEvent(event: GoogleCalendarEvent, userEmail: string): Calend
 
 	const isAllDay = !!event.start.date && !event.start.dateTime;
 
-	// Parse start/end — all-day events use date, timed events use dateTime
+	// Parse start/end — all-day events use date, timed events use dateTime.
+	// All-day dates parse as midnight in the CONFIGURED zone (not system-local)
+	// so downstream configured-zone formatters don't shift them a day.
 	const startTime = isAllDay
-		? new Date(event.start.date + "T00:00:00")
+		? midnightFromDateKey((event.start.date ?? "").slice(0, 10), timezone)
 		: new Date(event.start.dateTime!);
 	const endTime = isAllDay
-		? new Date(event.end.date + "T00:00:00")
+		? midnightFromDateKey((event.end.date ?? "").slice(0, 10), timezone)
 		: new Date(event.end.dateTime!);
 
 	// Find self in attendees for response status

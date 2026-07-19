@@ -3,7 +3,7 @@ import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
-import {linkRecording} from "./services/LinkRecording";
+import {linkRecording, stopLinkRecordingWatchers, resetLinkRecordingWatchers} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
@@ -16,7 +16,7 @@ import {resolveSeriesPrep, ensureSeriesNote} from "./services/SeriesPrep";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
 import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
-import {parseDateTime, setTimeFormat} from "./utils/time";
+import {coerceFmDate, coerceFmTime, parseDateTime, setTimeFormat} from "./utils/time";
 import {updateFrontmatter, readFmString, restoreFrontmatterFields, isSingleSourceTranscript} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
@@ -143,6 +143,7 @@ export default class WhisperCalPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		resetApiRecordingWatchers();
+		resetLinkRecordingWatchers();
 		// In-flight recording bookkeeping (SESSION_GUID_DESIGN.md §7): the
 		// ApiRecording module records start/link/failure transitions here so a
 		// restart mid-recording can reconcile below instead of orphaning the
@@ -463,6 +464,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Stop the fire-and-forget recording watch/link poll loops — they would
 		// otherwise keep polling the service and writing vault files after unload.
 		stopApiRecordingWatchers();
+		stopLinkRecordingWatchers();
 		// Detach the recording bookkeeping from this (dying) plugin instance so a
 		// straggling async flow can't write through to a stale settings object.
 		registerApiRecordingPersistence(null);
@@ -614,31 +616,39 @@ export default class WhisperCalPlugin extends Plugin {
 		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
 			this.settings.recordingSource = "api";
 		}
-		// Auto-populate microphoneUser from the OS account on first install
-		if (!this.settings.microphoneUser) {
-			const execFullName = (cmd: string, args: string[], timeoutMs: number): Promise<string> =>
-				new Promise<string>((resolve) => {
-					try {
-						execFile(cmd, args, {encoding: "utf-8", timeout: timeoutMs}, (err, stdout) => {
-							resolve(err ? "" : stdout.trim());
-						});
-					} catch {
-						resolve("");
+		// Auto-populate microphoneUser from the OS account — ONE probe ever, gated
+		// on a persisted marker (a deliberately-cleared field must stay empty), and
+		// fire-and-forget so a slow domain PowerShell lookup can't block onload.
+		if (!this.settings.micUserProbed) {
+			this.settings.micUserProbed = true;
+			void (async () => {
+				const execFullName = (cmd: string, args: string[], timeoutMs: number): Promise<string> =>
+					new Promise<string>((resolve) => {
+						try {
+							execFile(cmd, args, {encoding: "utf-8", timeout: timeoutMs}, (err, stdout) => {
+								resolve(err ? "" : stdout.trim());
+							});
+						} catch {
+							resolve("");
+						}
+					});
+				let fullName = "";
+				if (!this.settings.microphoneUser) {
+					if (Platform.isMacOS) {
+						fullName = await execFullName("id", ["-F"], 3000);
+					} else if (Platform.isWin) {
+						// .NET UserPrincipal.DisplayName resolves both local and domain
+						// accounts; domain lookups can be slow, so allow a longer timeout.
+						fullName = await execFullName("powershell.exe", ["-NoProfile", "-Command",
+							"Add-Type -AssemblyName System.DirectoryServices.AccountManagement; [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName"], 5000);
 					}
-				});
-			let fullName = "";
-			if (Platform.isMacOS) {
-				fullName = await execFullName("id", ["-F"], 3000);
-			} else if (Platform.isWin) {
-				// .NET UserPrincipal.DisplayName resolves both local and domain
-				// accounts; domain lookups can be slow, so allow a longer timeout.
-				fullName = await execFullName("powershell.exe", ["-NoProfile", "-Command",
-					"Add-Type -AssemblyName System.DirectoryServices.AccountManagement; [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName"], 5000);
-			}
-			if (fullName) {
-				this.settings.microphoneUser = fullName;
+				}
+				if (fullName && !this.settings.microphoneUser) {
+					this.settings.microphoneUser = fullName;
+				}
+				// Persist the marker even when the probe found nothing.
 				await this.persistData();
-			}
+			})();
 		}
 		setTimeFormat(this.settings.timeFormat);
 		setDebugLogging(this.coreLlm().debugLogging);
@@ -1007,8 +1017,7 @@ export default class WhisperCalPlugin extends Plugin {
 			cardNotePath: notePath,
 			onRegister: () => this.updateBanners(transcriptPath),
 			onCleanup: () => this.updateBanners(transcriptPath),
-			spawnOpts: (vaultPath) => {
-				const llm = this.coreLlm();
+			spawnOpts: (vaultPath, llm) => {
 				return {
 					targetPath: transcriptPath,
 					targetLabel: "Transcript",
@@ -1244,7 +1253,10 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Queue the modal so parallel completions are presented one at a time.
 		// Wrap in try/catch so one failure doesn't break the chain for subsequent modals.
-		this.speakerTagModalQueue = this.speakerTagModalQueue.then(async () => {
+		// Return the queued run (not just enqueue it): callers' guards — e.g.
+		// reviewingSpeakers — must stay held until the review actually settles,
+		// not just until it's enqueued.
+		const run = this.speakerTagModalQueue.then(async () => {
 			try {
 				const meetingFile = this.app.vault.getAbstractFileByPath(notePath);
 				const meetingFm = meetingFile instanceof TFile
@@ -1287,7 +1299,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// silently discarding the whole by-ear review. transcriptFile.path tracks
 				// renames.
 				const currentPath = transcriptFile.path;
-				await applySpeakerTags(this.app, currentPath, decisions);
+				await applySpeakerTags(this.app, currentPath, decisions, this.settings.peopleFolderPath);
 
 				// Enroll acoustic voiceprints for the confirmed speakers when Tome wrote a
 				// sidecar next to this transcript. Best-effort — never blocks tagging.
@@ -1356,7 +1368,7 @@ export default class WhisperCalPlugin extends Plugin {
 				// Self-heal: if you overrode a voiceprint match, drop the culprit sample from
 				// the wrongly-matched person's library so it stops causing false matches.
 				try {
-					const healed = await healVoiceprints(this.app, this.settings.voiceprintFolderPath, currentPath, decisions, vpProposals);
+					const healed = await healVoiceprints(this.app, this.settings.voiceprintFolderPath, this.settings.peopleFolderPath, currentPath, decisions, vpProposals);
 					if (healed > 0) new Notice(`Corrected ${healed} voiceprint${healed === 1 ? "" : "s"}`);
 				} catch (e) {
 					console.warn("[WhisperCal] voiceprint heal failed", e);
@@ -1390,6 +1402,8 @@ export default class WhisperCalPlugin extends Plugin {
 				clearProgressStatus();
 			}
 		});
+		this.speakerTagModalQueue = run;
+		return run;
 	}
 
 	/**
@@ -1511,7 +1525,7 @@ export default class WhisperCalPlugin extends Plugin {
 			// spawn and here would strand the captured transcriptPath string (see the
 			// modal apply path). transcriptFile.path tracks renames.
 			const currentPath = transcriptFile.path;
-			await applySpeakerTags(this.app, currentPath, decisions);
+			await applySpeakerTags(this.app, currentPath, decisions, this.settings.peopleFolderPath);
 
 			// Word replacements run after tagging so stub→name substitutions can expose new
 			// matches — parity with the modal apply path. No enroll/heal here (see method doc).
@@ -1651,8 +1665,7 @@ export default class WhisperCalPlugin extends Plugin {
 			cardModel: this.settings.summarizerModel || undefined,
 			onRegister: () => this.updateBanners(notePath),
 			onCleanup: () => this.updateBanners(notePath),
-			spawnOpts: (vaultPath) => {
-				const llm = this.coreLlm();
+			spawnOpts: (vaultPath, llm) => {
 				return {
 					targetPath: notePath,
 					targetLabel: "Meeting note",
@@ -1831,8 +1844,7 @@ export default class WhisperCalPlugin extends Plugin {
 				cardModel: this.settings.researchModel || undefined,
 				onRegister: () => this.updateBanners(notePath),
 				onCleanup: () => this.updateBanners(notePath),
-				spawnOpts: (vaultPath) => {
-					const llm = this.coreLlm();
+				spawnOpts: (vaultPath, llm) => {
 					return {
 						targetPath: notePath,
 						targetLabel: "Meeting note",
@@ -1879,7 +1891,10 @@ export default class WhisperCalPlugin extends Plugin {
 		filePath: string;
 		label: string;
 		promptPath?: string;
-		spawnOpts: (vaultPath: string) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir" | "llmCli" | "llmExtraFlags">;
+		/** `llm` is the gate's Core-config snapshot — use it (not a fresh coreLlm())
+		 *  so spawn behavior and the post-run debugMode branch can't disagree when
+		 *  the user toggles debug mid-validation. */
+		spawnOpts: (vaultPath: string, llm: LlmConfigDto) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir" | "llmCli" | "llmExtraFlags">;
 		onSuccess: (result: {exitCode: number; stdout: string; stderr: string}) => void | Promise<void>;
 		onRegister?: () => void;
 		onCleanup?: () => void;
@@ -1982,7 +1997,7 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 
 				const result = await spawnLlmPrompt({
-					...opts.spawnOpts(vaultPath),
+					...opts.spawnOpts(vaultPath, llmConfig),
 					llmCli,
 					llmExtraFlags,
 					pluginDir: this.manifest.dir!,
@@ -2137,14 +2152,11 @@ export default class WhisperCalPlugin extends Plugin {
 		// the note is typically created at recording time.
 		let meetingStart: Date | null = null;
 
-		const rawDate = fm["meeting_date"];
-		const timeStr = fm["meeting_start"] as string | undefined;
-		if (rawDate && timeStr) {
-			// meeting_date may be a YAML Date object in notes created before the
-			// template was fixed to quote this value. Keep both branches for compat.
-			const dateStr = rawDate instanceof Date
-				? rawDate.toISOString().slice(0, 10)
-				: rawDate as string;
+		// Coerce legacy unquoted YAML values (Date object / sexagesimal number)
+		// back to strings before parsing.
+		const dateStr = coerceFmDate(fm["meeting_date"]);
+		const timeStr = coerceFmTime(fm["meeting_start"]);
+		if (dateStr && timeStr) {
 			// Parse the frontmatter wall time in the configured zone — matching it
 			// against recording timestamps in system-local time gave a traveling
 			// user hours of offset and a spurious "No matching recording found".

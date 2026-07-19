@@ -15,7 +15,7 @@ import {NoteCreator} from "./NoteCreator";
 import {pruneCelebrations, renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
-import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
+import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, formatTimeForFrontmatter, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
 import {addActivateOnKey} from "../utils/a11y";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/CalendarAuth";
@@ -1034,7 +1034,7 @@ export class CalendarView extends ItemView {
 
 		// Only navigate for actual meeting notes
 		const fm = this.app.metadataCache.getFileCache(activeFile)?.frontmatter;
-		const meetingDate = fm?.["meeting_date"] as string | undefined;
+		const meetingDate = coerceFmDate(fm?.["meeting_date"]);
 		if (!meetingDate || !activeFile.path.startsWith(this.settings.noteFolderPath + "/")) {
 			this.updateNoteOpenHighlight();
 			return;
@@ -1235,8 +1235,8 @@ export class CalendarView extends ItemView {
 						attendees: event.attendees,
 						isRecurring: event.isRecurring,
 						meetingDate: formatDate(event.startTime, this.settings.timezone),
-						meetingStart: formatTime(event.startTime, this.settings.timezone),
-						meetingEnd: formatTime(event.endTime, this.settings.timezone),
+						meetingStart: formatTimeForFrontmatter(event.startTime, this.settings.timezone),
+						meetingEnd: formatTimeForFrontmatter(event.endTime, this.settings.timezone),
 						organizer: event.organizerName,
 						location: event.location,
 					});
@@ -1505,9 +1505,17 @@ export class CalendarView extends ItemView {
 					location: typeof noteFm?.["meeting_location"] === "string" ? noteFm["meeting_location"] : undefined,
 				});
 			} else if (choice.type === "event") {
-				// Link to existing calendar event
-				await this.noteCreator.createNote(choice.event);
-				const notePath = this.noteCreator.getNotePath(choice.event);
+				// Link to existing calendar event. Resolve via findNote first — the
+				// candidate filter above matched by frontmatter, so the note may live
+				// at a non-canonical path (renamed); createNote would mint a duplicate.
+				const existingNote = this.noteCreator.findNote(choice.event);
+				let notePath: string;
+				if (existingNote) {
+					notePath = existingNote.path;
+				} else {
+					await this.noteCreator.createNote(choice.event);
+					notePath = this.noteCreator.getNotePath(choice.event);
+				}
 				await unlinkedProvider.linkToNote({
 					app: this.app,
 					recording,
@@ -1518,8 +1526,8 @@ export class CalendarView extends ItemView {
 					attendees: choice.event.attendees,
 					isRecurring: choice.event.isRecurring,
 					meetingDate: formatDate(choice.event.startTime, this.settings.timezone),
-					meetingStart: formatTime(choice.event.startTime, this.settings.timezone),
-					meetingEnd: formatTime(choice.event.endTime, this.settings.timezone),
+					meetingStart: formatTimeForFrontmatter(choice.event.startTime, this.settings.timezone),
+					meetingEnd: formatTimeForFrontmatter(choice.event.endTime, this.settings.timezone),
 					organizer: choice.event.organizerName,
 					location: choice.event.location,
 				});

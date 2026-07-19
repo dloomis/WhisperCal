@@ -299,6 +299,9 @@ export async function findRecentSessions(
  */
 export async function hasTranscriptLines(sessionId: string): Promise<boolean> {
 	if (!isValidHexId(sessionId)) return false;
+	// SQLite's hex() emits uppercase; a lowercase id (hand-edited frontmatter)
+	// would silently match zero rows.
+	sessionId = sessionId.toUpperCase();
 	const sql = `SELECT COUNT(*) as cnt FROM transcriptline WHERE hex(sessionId) = '${sessionId}' LIMIT 1;`;
 	const raw = await query(sql);
 	const rows = parseRows<{cnt: number}>(raw);
@@ -311,6 +314,8 @@ export async function hasTranscriptLines(sessionId: string): Promise<boolean> {
  */
 export async function getTranscript(sessionId: string): Promise<TranscriptData> {
 	if (!isValidHexId(sessionId)) return {lines: [], metadata: null, speakers: []};
+	// SQLite's hex() emits uppercase — normalize like hasTranscriptLines does.
+	sessionId = sessionId.toUpperCase();
 
 	// 1. Transcript lines with speaker names and start timestamps
 	//    tl.start is already in milliseconds; speakerID has capital D

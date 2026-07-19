@@ -3,6 +3,7 @@ import {TFile} from "obsidian";
 import type {SpeakerTagDecision} from "../ui/SpeakerTagModal";
 import type {FrontmatterSpeaker} from "./SpeakerTagParser";
 import {transcriptStartOffset} from "../utils/transcript";
+import {PeopleMatchService} from "./PeopleMatchService";
 import {FM} from "../constants";
 
 /**
@@ -16,11 +17,18 @@ export async function applySpeakerTags(
 	app: App,
 	transcriptPath: string,
 	decisions: SpeakerTagDecision[],
+	peopleFolderPath = "",
 ): Promise<void> {
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (!(file instanceof TFile)) {
 		throw new Error(`Transcript file not found: ${transcriptPath}`);
 	}
+
+	// Canonicalize typed names to the People-note basename so confirmed_speakers
+	// wikilinks resolve (enrollment canonicalizes the same way — "Mike Johnson"
+	// typed for note "Michael Johnson" must not produce a dangling link).
+	const peopleSvc = peopleFolderPath ? new PeopleMatchService(app, peopleFolderPath) : null;
+	const canonLink = (name: string): string => peopleSvc?.canonicalName(name) ?? name;
 
 	// Build lookups from decisions. Match by speaker id (precise) and fall back to the
 	// original/diarizer name — the embeddings-first path keys decisions off the body label,
@@ -64,11 +72,16 @@ export async function applySpeakerTags(
 			}
 		}
 
-		// Build confirmed_speakers list
+		// Build confirmed_speakers list — canonicalized and deduped (a split
+		// diarizer cluster confirmed twice to one person is one entry).
 		const confirmed: string[] = [];
+		const confirmedSeen = new Set<string>();
 		for (const d of decisions) {
 			if (d.confirmedName) {
-				confirmed.push(`[[${d.confirmedName}]]`);
+				const link = `[[${canonLink(d.confirmedName)}]]`;
+				if (confirmedSeen.has(link)) continue;
+				confirmedSeen.add(link);
+				confirmed.push(link);
 			}
 		}
 		if (confirmed.length > 0) {
@@ -103,11 +116,18 @@ export async function applySpeakerTags(
 			const start = transcriptStartOffset(content);
 			const head = content.slice(0, start);
 			let body = content.slice(start);
-			for (const {from, to} of replacements) {
-				// Replace **Original** → **Confirmed**
-				body = body.split(`**${from}**`).join(`**${to}**`);
-				// Replace "Original |" → "Confirmed |" (pipe-delimited format)
-				body = body.split(`${from} |`).join(`${to} |`);
+			// Two-pass replace via collision-proof sentinels: on re-tag reviews one
+			// decision's confirmedName can equal another's originalName (swap/chain),
+			// so direct sequential replacement would re-rewrite just-replaced labels.
+			for (let i = 0; i < replacements.length; i++) {
+				const {from} = replacements[i] as {from: string; to: string};
+				body = body.split(`**${from}**`).join(`\0WCSPK${i}B\0`);
+				body = body.split(`${from} |`).join(`\0WCSPK${i}P\0`);
+			}
+			for (let i = 0; i < replacements.length; i++) {
+				const {to} = replacements[i] as {from: string; to: string};
+				body = body.split(`\0WCSPK${i}B\0`).join(`**${to}**`);
+				body = body.split(`\0WCSPK${i}P\0`).join(`${to} |`);
 			}
 			return head + body;
 		});

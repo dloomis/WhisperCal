@@ -101,9 +101,25 @@ export class CachedCalendarProvider implements CalendarProvider {
 		const todayKey = this.toDateKey(new Date(), timezone);
 		const isPast = dateKey < todayKey;
 
-		// Past day with cache — serve from cache, never re-fetch
+		// Past day with cache — serve from cache. Exception: an entry fetched
+		// BEFORE that day ended (a future-day prefetch the user never revisited
+		// until after the day passed) may miss later additions/cancellations —
+		// re-fetch it once live, falling back to the stale entry offline.
 		const pastEntry = isPast ? this.cache.days[dateKey] : undefined;
 		if (pastEntry) {
+			const dayEnd = addDaysInTimezone(date, timezone, 1).getTime();
+			if (pastEntry.fetchedAt < dayEnd) {
+				try {
+					if (await this.upstream.isAvailable()) {
+						const events = await this.upstream.fetchEvents(date, timezone);
+						this.cacheDay(dateKey, events);
+						this.lastStatus = {source: "live", fetchedAt: Date.now(), connected: true};
+						return events;
+					}
+				} catch (e) {
+					console.debug("[WhisperCal] Re-fetch of prefetched past day failed — serving cache:", e);
+				}
+			}
 			this.lastStatus = {source: "cache", fetchedAt: pastEntry.fetchedAt, connected: false};
 			return this.deserializeEvents(pastEntry.events);
 		}

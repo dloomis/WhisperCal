@@ -14,6 +14,13 @@ import {FM} from "../constants";
  *  gutter activity badge; `msg` itself becomes the badge tooltip. */
 export type OnStatus = (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant, badge?: string) => void;
 
+/** Plugin-unload stop signal for the fire-and-forget transcription-wait loop —
+ *  same module-level pattern as stopApiRecordingWatchers. Without it the poll
+ *  keeps spawning sqlite3 and can create vault files after the plugin unloads. */
+let linkWatchersStopped = false;
+export function stopLinkRecordingWatchers(): void { linkWatchersStopped = true; }
+export function resetLinkRecordingWatchers(): void { linkWatchersStopped = false; }
+
 /**
  * Internal helper — performs the actual recording→note link: sets MacWhisper
  * title, writes session ID to frontmatter, and creates transcript file.
@@ -53,6 +60,7 @@ async function performLink(opts: {
 				onStatus?.("Waiting for transcription\u2026", undefined, undefined, undefined, "Waiting");
 				for (let i = 0; i < TRANSCRIPTION_MAX_ATTEMPTS && !ready; i++) {
 					await sleep(TRANSCRIPTION_POLL_INTERVAL_MS);
+					if (linkWatchersStopped) return;
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {
@@ -60,6 +68,7 @@ async function performLink(opts: {
 					return;
 				}
 			}
+			if (linkWatchersStopped) return;
 
 			onStatus?.("Creating transcript\u2026", undefined, undefined, undefined, "Transcribing");
 			const transcriptPath = await createTranscriptFile({

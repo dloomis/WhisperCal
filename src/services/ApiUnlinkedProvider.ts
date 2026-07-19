@@ -148,23 +148,46 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			const audioFile = resolveTranscriptAudio(this.app, freshFile, originalFm);
 			const sidecarPath = await this.resolveSidecarPath(freshFile, originalFm);
 
-			await this.app.fileManager.renameFile(freshFile, expectedPath);
-			const renamed = this.app.vault.getAbstractFileByPath(expectedPath);
-			if (renamed instanceof TFile) transcriptFile = renamed;
+			// Pick a collision-free target — an older "{note} - Transcript.md" may
+			// already exist (e.g. left behind by a re-record).
+			let targetBasename = expectedBasename;
+			let targetPath = expectedPath;
+			for (let i = 1; this.app.vault.getAbstractFileByPath(targetPath); i++) {
+				targetBasename = `${expectedBasename} (${i})`;
+				targetPath = normalizePath(`${opts.transcriptFolderPath}/${targetBasename}.md`);
+			}
 
-			// Best-effort: a missing or unrenameable companion never fails the link.
-			await this.renameAudio(audioFile, expectedBasename);
-			await this.renameSidecar(transcriptFile, sidecarPath, expectedBasename);
+			// The rename is cosmetic — enrichment already happened, so failing the
+			// whole link here would strand the transcript (invisible to findUnlinked
+			// via its meeting_note backlink) with the note still unlinked. Proceed
+			// under the original basename instead.
+			try {
+				await retryRename(() => this.app.fileManager.renameFile(freshFile, targetPath));
+				const renamed = this.app.vault.getAbstractFileByPath(targetPath);
+				if (renamed instanceof TFile) transcriptFile = renamed;
+
+				// Best-effort: a missing or unrenameable companion never fails the link.
+				await this.renameAudio(audioFile, targetBasename);
+				await this.renameSidecar(transcriptFile, sidecarPath, targetBasename);
+			} catch (err) {
+				console.error(`[WhisperCal] Failed to rename ${freshFile.path} -> ${targetPath} (linking under original name):`, err);
+			}
 		}
 
 		// 3. Link transcript on the meeting note side. Mirror the transcript's
 		// session_guid onto the note (the note tracks its latest session) so the
-		// pair stays id-correlated even when the link was made manually.
+		// pair stays id-correlated even when the link was made manually — UNLESS
+		// the note's current guid belongs to an in-flight session (recording or
+		// still in its link tail): overwriting it would make that live session
+		// declare itself superseded when it finishes.
 		const transcriptGuid = originalFm[FM.SESSION_GUID];
+		const noteGuid: unknown = noteFm?.[FM.SESSION_GUID];
+		const noteGuidInFlight = typeof noteGuid === "string" && noteGuid !== transcriptGuid
+			&& this.settings.activeApiRecordings.some(e => e.sessionGuid === noteGuid);
 		await batchUpdateFrontmatter(opts.app, opts.notePath, {
 			[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
 			[FM.PIPELINE_STATE]: "titled",
-			...(typeof transcriptGuid === "string" && transcriptGuid
+			...(typeof transcriptGuid === "string" && transcriptGuid && !noteGuidInFlight
 				? {[FM.SESSION_GUID]: transcriptGuid}
 				: {}),
 		});

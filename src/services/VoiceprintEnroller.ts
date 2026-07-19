@@ -390,6 +390,7 @@ export async function enrollVoiceprints(
 export async function healVoiceprints(
 	app: App,
 	voiceprintFolderPath: string,
+	peopleFolderPath: string,
 	transcriptPath: string,
 	decisions: SpeakerTagDecision[],
 	proposals: Map<string, VoiceprintMatch>,
@@ -398,6 +399,12 @@ export async function healVoiceprints(
 	const sidecar = await loadSidecar(app, transcriptPath);
 	if (!sidecar) return 0;
 
+	// Canonicalize the typed name through the same People-note path enroll uses:
+	// confirming a proposal under a variant spelling ("Dave Smith" for library
+	// "David Smith") is an ACCEPTED match, not a correction — healing it would
+	// delete the sample enroll just added.
+	const peopleSvc = new PeopleMatchService(app, peopleFolderPath);
+
 	let healed = 0;
 	for (const d of decisions) {
 		const proposed = proposals.get(d.originalName)?.name;
@@ -405,6 +412,7 @@ export async function healVoiceprints(
 		const confirmed = d.confirmedName?.trim();
 		if (!confirmed) continue;                           // cleared/skipped — not a "wrong match" signal
 		if (confirmed === proposed) continue;               // match accepted — nothing to heal
+		if ((peopleSvc.canonicalName(confirmed) ?? confirmed) === proposed) continue; // same person under a variant — accepted
 		const sp = sidecar.speakers[d.diarizerLabel || d.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if (await removeCulpritSample(app, voiceprintFolderPath, proposed, sp.embedding)) healed++;

@@ -129,6 +129,21 @@ export function formatTime(date: Date, timezone: string): string {
 }
 
 /**
+ * Format a time for frontmatter writes. Pinned to a fixed Latin-digit locale —
+ * the system locale can emit digits/dayPeriods ("٩:٠٠", "午前9:00") that
+ * parseDateTime can never read back. Use formatTime only for display.
+ */
+export function formatTimeForFrontmatter(date: Date, timezone: string): string {
+	const hour12 = resolveHour12();
+	return new Intl.DateTimeFormat(hour12 ? "en-US" : "en-GB", {
+		timeZone: timezone,
+		hour: "numeric",
+		minute: "2-digit",
+		hour12,
+	}).format(date);
+}
+
+/**
  * Format a Date as 4-digit 24-hour time (e.g. "1730") in the given timezone.
  * Designed for filenames: collation-friendly, no separator characters.
  */

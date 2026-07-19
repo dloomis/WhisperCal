@@ -1,8 +1,9 @@
 import {App, Notice, TFile} from "obsidian";
 import type {CalendarEvent} from "../types";
 import type {PeopleMatchResult} from "./PeopleMatchService";
-import {formatDate, formatTime} from "../utils/time";
+import {formatDate, formatTimeForFrontmatter} from "../utils/time";
 import {parseDisplayName} from "../utils/nameParser";
+import {yamlEscape} from "../utils/sanitize";
 
 /**
  * Build a map of all template variables from a CalendarEvent.
@@ -15,8 +16,10 @@ export function buildVariableMap(
 	noteCreated?: Date,
 ): Record<string, string> {
 	const date = formatDate(event.startTime, timezone);
-	const startTime = formatTime(event.startTime, timezone);
-	const endTime = formatTime(event.endTime, timezone);
+	// Frontmatter-bound (meeting_start/meeting_end come from these variables) —
+	// pinned locale so parseDateTime can read the values back.
+	const startTime = formatTimeForFrontmatter(event.startTime, timezone);
+	const endTime = formatTimeForFrontmatter(event.endTime, timezone);
 	const location = event.location || "N/A";
 
 	// Build a lookup from matched people notes (email → note filename)
@@ -43,11 +46,13 @@ export function buildVariableMap(
 		: resolveName(event.organizerName, event.organizerEmail);
 	const organizer = `[[${organizerResolved}]]`;
 
-	// Attendees — every attendee becomes a [[wiki link]]
+	// Attendees — every attendee becomes a [[wiki link]]. The YAML-bound forms
+	// (attendees, invitees) escape the name: an unescaped quote in a resolved
+	// name would corrupt the whole frontmatter block.
 	const resolvedNames = event.attendees.map(a => resolveName(a.name, a.email));
-	const attendees = resolvedNames.map(n => `"[[${n}]]"`).join(", ");
+	const attendees = resolvedNames.map(n => `"[[${yamlEscape(n)}]]"`).join(", ");
 	const attendeeList = resolvedNames.map(n => `- [[${n}]]`).join("\n");
-	const invitees = resolvedNames.map(n => `  - "[[${n}]]"`).join("\n");
+	const invitees = resolvedNames.map(n => `  - "[[${yamlEscape(n)}]]"`).join("\n");
 
 	return {
 		eventId: event.id,

@@ -1,8 +1,8 @@
 import type {App} from "obsidian";
-import {TFile, normalizePath} from "obsidian";
+import {TFile, Notice, normalizePath} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
-import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
+import {batchUpdateFrontmatter} from "../utils/frontmatter";
 import {ensureFolder} from "../utils/vault";
 import {yamlEscape} from "../utils/sanitize";
 import {coerceFmDate, coerceFmTime, formatDateTimeWithOffset} from "../utils/time";
@@ -203,11 +203,24 @@ export async function createTranscriptFile(opts: {
 		const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 		const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
 
+		const existingFm = app.metadataCache.getFileCache(existingTranscript)?.frontmatter;
+
+		// The existing file must belong to THIS session. Re-linking a note to a
+		// different MacWhisper session would otherwise silently adopt the old
+		// session's content — the note claims session B while showing session A's
+		// text, and Speakers/Summary run on the wrong transcript.
+		const existingSessionId: unknown = existingFm?.[FM.MACWHISPER_SESSION_ID];
+		if (typeof existingSessionId === "string" && existingSessionId
+			&& existingSessionId.toUpperCase() !== sessionId.toUpperCase()) {
+			new Notice(`A transcript for a different recording already exists: ${transcriptBasename}`);
+			console.warn(`[WhisperCal] ${transcriptPath} carries session ${existingSessionId}, expected ${sessionId} — not adopting`);
+			return null;
+		}
+
 		// Heal an existing transcript that's missing the backlink. Previously
 		// we silently skipped this, which left transcripts orphaned in the
 		// meeting_note → note direction even though the note → transcript
 		// link got written.
-		const existingFm = app.metadataCache.getFileCache(existingTranscript)?.frontmatter;
 		if (!existingFm?.[FM.MEETING_NOTE]) {
 			if (!noteBasename) {
 				console.error(`[WhisperCal] Cannot repair missing meeting_note on ${transcriptPath}: empty noteBasename from "${notePath}"`);
@@ -219,7 +232,13 @@ export async function createTranscriptFile(opts: {
 			}
 		}
 
-		await updateFrontmatter(app, notePath, FM.TRANSCRIPT, `[[${transcriptBasename}]]`);
+		// Mirror pipeline_state too (the fresh-create path below sets it) — the
+		// heal path previously left the note stuck in its pre-link state.
+		const existingState: unknown = existingFm?.[FM.PIPELINE_STATE];
+		await batchUpdateFrontmatter(app, notePath, {
+			[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,
+			[FM.PIPELINE_STATE]: typeof existingState === "string" && existingState ? existingState : "titled",
+		});
 		return transcriptPath;
 	}
 

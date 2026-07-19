@@ -1,4 +1,4 @@
-import {parseDateTime, formatRecordingDuration} from "../utils/time";
+import {coerceFmDate, coerceFmTime, parseDateTime, formatRecordingDuration} from "../utils/time";
 
 /**
  * Strip wikilink brackets: "[[John Smith]]" → "John Smith".
@@ -20,9 +20,9 @@ function stripWikilink(text: string | undefined): string {
  * DST-transition meeting system-local would misreport its length by an hour).
  */
 export function buildMeetingSubtitle(fm: Record<string, unknown>, timezone?: string): string {
-	const meetingDate = fm["meeting_date"] as string | undefined;
-	const meetingStart = fm["meeting_start"] as string | undefined;
-	const meetingEnd = fm["meeting_end"] as string | undefined;
+	const meetingDate = coerceFmDate(fm["meeting_date"]);
+	const meetingStart = coerceFmTime(fm["meeting_start"]);
+	const meetingEnd = coerceFmTime(fm["meeting_end"]);
 	const organizer = stripWikilink(fm["meeting_organizer"] as string | undefined);
 
 	const parts: string[] = [];

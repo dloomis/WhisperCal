@@ -555,7 +555,10 @@ export function renderMeetingCard(
 	const card = container.createDiv({cls: "whisper-cal-card"});
 	card.dataset.eventId = event.id;
 	card.dataset.notePath = noteCreator.getNotePath(event);
-	if (!event.isAllDay) {
+	// The synthetic "unscheduled" placeholder gets no time stamps: its start/end
+	// are just the instant the view rendered, and the now-marker would treat it
+	// as a real (always-past) meeting — showing the end-of-day card on empty days.
+	if (!event.isAllDay && event.id !== "unscheduled") {
 		card.dataset.startTime = String(event.startTime.getTime());
 		card.dataset.endTime = String(event.endTime.getTime());
 	}
@@ -627,13 +630,18 @@ export function renderMeetingCard(
 	return card;
 }
 
-/** Build an onStatus callback that writes to the shared CardUiState and triggers a card re-render. */
+/** Build an onStatus callback that writes to the shared CardUiState and triggers a card re-render.
+ *  Accepts a path getter so long-lived flows (the post-capture transcription tail) file statuses
+ *  under the note's CURRENT path — a mid-tail rename would otherwise strand them under the old key
+ *  while the re-rendered card reads the new one. */
 function onStatusForCard(
-	notePath: string,
+	notePathOrGetter: string | (() => string),
 	opts: MeetingCardOpts,
 ): (msg: string | null, icon?: string, autoClearMs?: number, variant?: CardStatusVariant, badge?: string) => void {
 	const {cardUi} = opts;
+	const getPath = typeof notePathOrGetter === "function" ? notePathOrGetter : () => notePathOrGetter;
 	return (msg, icon, autoClearMs, variant, badge) => {
+		const notePath = getPath();
 		if (msg) {
 			// Dedupe: polling flows re-issue the same status every tick (e.g.
 			// "Transcribing…" every 3s from waitAndLink). An unchanged status must
@@ -765,10 +773,14 @@ async function startCardApiRecording(
 			FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
 		]);
 	}
+	// Resolve the live TFile so status writes during the (potentially hours-long)
+	// transcription tail follow a rename — TFile.path auto-updates.
+	const liveNoteFile = app.vault.getAbstractFileByPath(notePath);
+	const livePath = () => (liveNoteFile instanceof TFile ? liveNoteFile.path : notePath);
 	watchApiRecording({
 		app, notePath, transcriptFolderPath, baseUrl, cardUi,
 		onStopped: () => clearCardRecordingUi(opts, notePath),
-		onStatus: onStatusForCard(notePath, opts),
+		onStatus: onStatusForCard(livePath, opts),
 	});
 	return true;
 }
