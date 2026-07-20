@@ -723,7 +723,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		this.addNumberSetting({
 			container: macwhisperSettings,
 			name: "Recording match window (minutes)",
-			desc: "How close a recording start must be to the scheduled meeting time to be suggested for linking",
+			desc: "How close a recording start must be to the scheduled meeting time to be matched automatically (manual linking offers the whole day)",
 			placeholder: "10",
 			get: () => this.plugin.settings.recordingWindowMinutes,
 			set: v => { this.plugin.settings.recordingWindowMinutes = v; },

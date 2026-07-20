@@ -1453,13 +1453,15 @@ export class CalendarView extends ItemView {
 			const recordingDate = recording.recordingStart;
 			const events = await this.provider.fetchEvents(recordingDate, this.settings.timezone);
 
-			// Filter to timed events within the recording match window
-			const windowMs = this.settings.recordingWindowMinutes * 60 * 1000;
-			const candidates = events.filter(e => {
-				if (e.isAllDay) return false;
-				const diff = Math.abs(e.startTime.getTime() - recordingDate.getTime());
-				return diff <= windowMs;
-			});
+			// Manual link: the user has already decided this recording belongs to a
+			// meeting, so offer every timed event that day sorted by proximity to the
+			// recording start. The recordingWindowMinutes cutoff applies to automatic
+			// matching only.
+			const candidates = events
+				.filter(e => !e.isAllDay)
+				.sort((a, b) =>
+					Math.abs(a.startTime.getTime() - recordingDate.getTime())
+					- Math.abs(b.startTime.getTime() - recordingDate.getTime()));
 
 			const unlinkedProvider = this.callbacks.getUnlinkedProvider();
 
