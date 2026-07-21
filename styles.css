@@ -18,7 +18,9 @@
 	padding: 8px 12px 4px;
 	margin: 0 -12px;
 	border-bottom: 1px solid var(--background-modifier-border);
-	margin-bottom: 12px;
+	/* 8px matches .whisper-cal-card's margin-bottom so header→first-card
+	   spacing equals card→card spacing */
+	margin-bottom: 8px;
 }
 
 .whisper-cal-header {
@@ -48,6 +50,51 @@
 	font-weight: var(--font-semibold);
 	color: var(--text-normal);
 	margin: 0;
+}
+
+/* Date text is the date-picker trigger — reads as a link */
+.whisper-cal-date-wrap {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+}
+
+.whisper-cal-date-wrap .whisper-cal-date {
+	flex: unset;
+	cursor: pointer;
+}
+
+.whisper-cal-date-clickable:hover {
+	color: var(--interactive-accent);
+	text-decoration: underline;
+}
+
+/* Invisible native <input type="date"> overlaying the date text: it must be
+   rendered (not display:none) so showPicker() can anchor its popup here,
+   but it must never intercept clicks, paint anything, or take up layout
+   space. !important is required: Obsidian's app.css sets
+   `input[type='date'] { position: relative; ... }`, which outranks a single
+   class selector and would put the input back in flow (adding a blank band
+   under the date). */
+.whisper-cal-date-picker-input {
+	position: absolute !important;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	opacity: 0 !important;
+	pointer-events: none;
+	border: none;
+	padding: 0;
+	margin: 0;
+}
+
+/* Chromium themes the picker popup from the input's color-scheme —
+   follow the active Obsidian theme, not the OS */
+.theme-dark .whisper-cal-date-picker-input {
+	color-scheme: dark;
+}
+.theme-light .whisper-cal-date-picker-input {
+	color-scheme: light;
 }
 
 .whisper-cal-today-btn {
@@ -1013,7 +1060,10 @@
 	justify-content: center;
 	gap: 6px;
 	padding: 4px 0;
-	margin-bottom: 4px;
+	/* No margin: row padding (4px) + sticky-header bottom padding (4px) = 8px
+	   inside-bottom whitespace, mirroring the 8px inside-top padding and the
+	   8px card rhythm */
+	margin-bottom: 0;
 }
 
 .whisper-cal-status {

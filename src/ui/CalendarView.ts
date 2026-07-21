@@ -72,6 +72,7 @@ export class CalendarView extends ItemView {
 	private cardRefreshTimer: number | null = null;
 	private fmSnapshot = new Map<string, string>();
 	private dateEl: HTMLElement | null = null;
+	private datePickerInput: HTMLInputElement | null = null;
 	private todayBtn: HTMLElement | null = null;
 	private statusEl: HTMLElement | null = null;
 	private noteOpenPath: string | null = null;
@@ -140,9 +141,24 @@ export class CalendarView extends ItemView {
 		setIcon(prevBtn, "chevron-left");
 		this.registerDomEvent(prevBtn, "click", () => this.navigateDay(-1));
 
-		this.dateEl = nav.createDiv({
-			cls: "whisper-cal-date",
+		// Date label doubles as the date-picker trigger: an invisible native
+		// <input type="date"> overlays it so showPicker() anchors the popup here.
+		const dateWrap = nav.createDiv({cls: "whisper-cal-date-wrap"});
+		this.dateEl = dateWrap.createDiv({
+			cls: "whisper-cal-date whisper-cal-date-clickable",
 			text: formatDisplayDate(this.selectedDate, this.settings.timezone),
+			attr: {"aria-label": "Pick a date", role: "button", tabindex: "0"},
+		});
+		this.datePickerInput = dateWrap.createEl("input", {
+			cls: "whisper-cal-date-picker-input",
+			attr: {type: "date", "aria-hidden": "true", tabindex: "-1"},
+		});
+		this.registerDomEvent(this.dateEl, "click", () => this.openDatePicker());
+		addActivateOnKey(this.dateEl);
+		this.registerDomEvent(this.datePickerInput, "change", () => {
+			const value = this.datePickerInput?.value;
+			if (!value) return; // user cleared the field — keep current day
+			this.navigateToDate(midnightFromDateKey(value, this.settings.timezone));
 		});
 
 		const nextBtn = nav.createEl("button", {cls: "whisper-cal-nav-btn clickable-icon", attr: {"aria-label": "Next day"}});
@@ -1674,8 +1690,24 @@ export class CalendarView extends ItemView {
 	}
 
 	private navigateToToday(): void {
-		this.selectedDate = new Date();
-		this.lastRefreshTime = 0;
+		this.navigateToDate(new Date());
+	}
+
+	private openDatePicker(): void {
+		const input = this.datePickerInput;
+		if (!input) return;
+		// Open on the currently viewed day, not whatever was last picked
+		input.value = formatDate(this.selectedDate, this.settings.timezone);
+		try {
+			input.showPicker();
+		} catch {
+			// NotAllowedError etc. — showPicker needs a user gesture; nothing to do
+		}
+	}
+
+	private navigateToDate(date: Date): void {
+		this.selectedDate = date;
+		this.lastRefreshTime = 0; // reset debounce
 		this.updateHeader();
 		void this.refresh();
 	}
