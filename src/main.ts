@@ -41,7 +41,7 @@ import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
 import {createPeopleNotesForNames} from "./services/PeopleAutoCreate";
-import {AutoSpeakerTagger} from "./services/AutoSpeakerTagger";
+import {AutoSpeakerTagger, LLM_SLOT_POLL_MS, LLM_SLOT_MAX_WAIT_MS} from "./services/AutoSpeakerTagger";
 
 /** LLM credential/config keys that moved to WhisperCore. Only safe to drop from
  *  WhisperCal's data.json once the C3 hand-off has imported them into Core. */
@@ -175,6 +175,13 @@ export default class WhisperCalPlugin extends Plugin {
 			isLlmDebugMode: () => this.coreLlm().debugMode,
 			runAutoTag: (file, fm, notePath) =>
 				this.doTagSpeakers(file, fm, notePath, undefined, {auto: true}),
+			onSlotWait: (notePath, retryAt) => this.showLlmWaitStatus(notePath, retryAt),
+			onSlotWaitEnd: (notePath, reason) => {
+				this.clearLlmWaitStatus(notePath);
+				if (reason === "dropped") {
+					this.setCardStatus(notePath, "LLM limit still reached after 30 minutes — tag speakers from the card when a job finishes", "alert-circle", 10000, "warning", "Skipped");
+				}
+			},
 			registerEvent: (ref) => this.registerEvent(ref),
 		});
 
@@ -458,9 +465,15 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		// Flag first: a parked slot wait that wakes after this point exits
+		// without claiming a slot or spawning a job.
+		this.unloading = true;
 		// Stop the auto-tag queue first so parked sleeps resolve and no new
 		// LLM jobs start during teardown.
 		this.autoTagger.stop();
+		// Sweep any countdown tickers the tagger's stop didn't own (summarize waits).
+		for (const ticker of this.llmWaitTickers.values()) clearInterval(ticker);
+		this.llmWaitTickers.clear();
 		// Stop the fire-and-forget recording watch/link poll loops — they would
 		// otherwise keep polling the service and writing vault files after unload.
 		stopApiRecordingWatchers();
@@ -841,6 +854,89 @@ export default class WhisperCalPlugin extends Plugin {
 
 	// The LLM concurrency counter lives in LlmTransport (C5): the slot claim/release
 	// helpers imported above are the single machine-wide count for this plugin.
+
+	/** Badge label for the slot-wait countdown. Doubles as the marker
+	 *  clearLlmWaitStatus uses to recognize — and only remove — its own status. */
+	private static readonly LLM_WAIT_BADGE = "LLM limit";
+
+	/** Per-note 1s tickers driving the slot-wait countdown badge. */
+	private readonly llmWaitTickers = new Map<string, ReturnType<typeof setInterval>>();
+
+	/** Set at the top of onunload so a parked slot wait can't wake up, claim a
+	 *  slot, and spawn a job into a dying plugin instance. */
+	private unloading = false;
+
+	/**
+	 * Show the "LLM limit / retry Ns" badge in the card gutter while an automatic
+	 * job waits for a free LLM slot, ticking the countdown once a second (same
+	 * cadence as the recording-duration timers).
+	 */
+	private showLlmWaitStatus(notePath: string, retryAt: number): void {
+		const render = () => {
+			const secs = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+			this.cardUi.setStatus(notePath, {
+				message: `LLM concurrency limit reached — retrying in ${secs}s`,
+				icon: "hourglass",
+				variant: "warning",
+				badge: {label: WhisperCalPlugin.LLM_WAIT_BADGE, model: `retry ${secs}s`},
+			});
+			this.refreshCalendarCards(notePath);
+		};
+		this.stopLlmWaitTicker(notePath);
+		render();
+		this.llmWaitTickers.set(notePath, setInterval(render, 1000));
+	}
+
+	private stopLlmWaitTicker(notePath: string): void {
+		const ticker = this.llmWaitTickers.get(notePath);
+		if (ticker != null) {
+			clearInterval(ticker);
+			this.llmWaitTickers.delete(notePath);
+		}
+	}
+
+	/** Stop the countdown and remove the wait badge — but only when the card is
+	 *  still showing it; a status set by whoever ended the wait is left alone. */
+	private clearLlmWaitStatus(notePath: string): void {
+		this.stopLlmWaitTicker(notePath);
+		if (this.cardUi.getStatus(notePath)?.badge?.label === WhisperCalPlugin.LLM_WAIT_BADGE) {
+			this.cardUi.deleteStatus(notePath);
+			this.refreshCalendarCards(notePath);
+		}
+	}
+
+	/**
+	 * Automatic-mode slot wait: poll for a free LLM slot every 30s — showing the
+	 * countdown badge on the card — until one frees, `stillWanted` goes false, or
+	 * the max wait elapses. Resolves true with a slot ALREADY CLAIMED: the
+	 * availability check and claimLlmSlot() run in one synchronous block, so a
+	 * concurrent waiter or a manual pill click can't take the same last slot.
+	 * The caller must hand the claim to runLlmJob (preClaimed) — whose finally
+	 * releases it — or release it itself on every other path. Resolves false
+	 * (nothing claimed, badge cleared) on cancel/timeout.
+	 */
+	private async waitForLlmSlot(notePath: string, stillWanted: () => boolean): Promise<boolean> {
+		const deadline = Date.now() + LLM_SLOT_MAX_WAIT_MS;
+		for (;;) {
+			if (this.unloading || !stillWanted()) {
+				this.clearLlmWaitStatus(notePath);
+				return false;
+			}
+			if (activeLlmCount() < this.coreLlm().maxConcurrent) {
+				claimLlmSlot();
+				this.clearLlmWaitStatus(notePath);
+				return true;
+			}
+			if (Date.now() >= deadline) {
+				this.stopLlmWaitTicker(notePath);
+				this.setCardStatus(notePath, "LLM limit still reached after 30 minutes — summarize from the card when a job finishes", "alert-circle", 10000, "warning", "Skipped");
+				return false;
+			}
+			const retryAt = Math.min(Date.now() + LLM_SLOT_POLL_MS, deadline);
+			this.showLlmWaitStatus(notePath, retryAt);
+			await new Promise<void>(resolve => setTimeout(resolve, retryAt - Date.now()));
+		}
+	}
 
 	private async doTagSpeakers(
 		transcriptFile: TFile,
@@ -1391,7 +1487,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 				// Auto-summarize if enabled
 				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
-					void this.doSummarize(notePath, true);
+					void this.doSummarize(notePath, true, undefined, {auto: true});
 				}
 
 				this.refreshCalendarCards(transcriptPath);
@@ -1549,7 +1645,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 			// Auto-summarize if enabled, same as the modal apply path.
 			if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
-				void this.doSummarize(notePath, true);
+				void this.doSummarize(notePath, true, undefined, {auto: true});
 			}
 
 			this.refreshCalendarCards(currentPath);
@@ -1616,7 +1712,7 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.doSummarize(notePath, true, customInstructions);
 	}
 
-	private async doSummarize(notePath: string, skipPipelineCheck = false, customInstructions?: string): Promise<void> {
+	private async doSummarize(notePath: string, skipPipelineCheck = false, customInstructions?: string, opts?: {auto?: boolean}): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
@@ -1655,11 +1751,31 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		}
 
+		// Automatic mode: when every LLM slot is busy (several transcripts finishing
+		// tagging back-to-back), wait for one to free instead of dropping the run —
+		// runLlmJob's limit check would otherwise silently end the automatic
+		// pipeline here, and nothing would ever retry. The wait re-checks that the
+		// run is still wanted (note exists, not summarized meanwhile, no manual
+		// summarize started) and resolves with the slot pre-claimed, handed straight
+		// to runLlmJob with no await in between so it can't be raced away.
+		let preClaimed = false;
+		if (opts?.auto) {
+			preClaimed = await this.waitForLlmSlot(notePath, () => {
+				if (this.jobs.has("summarize", notePath)) return false;
+				const f = this.app.vault.getAbstractFileByPath(notePath);
+				if (!(f instanceof TFile)) return false;
+				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+				return readFmString(fm ?? {}, FM.PIPELINE_STATE) !== "summarized";
+			});
+			if (!preClaimed) return;
+		}
+
 		this.runLlmJob({
 			jobKind: "summarize",
 			filePath: notePath,
 			label: "Summarizing",
 			promptPath: this.settings.summarizerPromptPath,
+			preClaimed,
 			cardIcon: "sparkles",
 			cardBadge: "Summarizing",
 			cardModel: this.settings.summarizerModel || undefined,

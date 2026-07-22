@@ -10,11 +10,13 @@ import {debug} from "../utils/debug";
 /** Delay between a transcript becoming eligible and the auto-tag run, so
  * linkToNote's rename and note-side frontmatter writes can finish first. */
 const SETTLE_MS = 10_000;
-/** How often to re-check for a free LLM slot while the queue head waits. */
-const SLOT_POLL_MS = 30_000;
+/** How often an automatic job re-checks for a free LLM slot while it waits.
+ * Exported so the auto-summarize slot wait in main.ts retries on the same
+ * cadence (and its countdown badge matches). */
+export const LLM_SLOT_POLL_MS = 30_000;
 /** Give up waiting for a slot after this long; the item is dropped without
  * being marked attempted, so a later frontmatter change re-arms it. */
-const MAX_SLOT_WAIT_MS = 30 * 60_000;
+export const LLM_SLOT_MAX_WAIT_MS = 30 * 60_000;
 /** Delay after layout-ready before the startup catch-up scan runs. */
 const CATCHUP_DELAY_MS = 10_000;
 
@@ -30,6 +32,14 @@ export interface AutoSpeakerTaggerDeps {
 	/** Kick off a background speaker-tagging run (doTagSpeakers with auto=true).
 	 *  A returned promise lets the tagger un-mark the file on an unexpected crash. */
 	runAutoTag: (file: TFile, fm: Record<string, unknown>, notePath: string) => void | Promise<void>;
+	/** The queue head is waiting for a free LLM slot: called once per poll with
+	 *  the epoch ms of the next re-check, so the meeting card can show a
+	 *  countdown badge. */
+	onSlotWait?: (notePath: string, retryAt: number) => void;
+	/** The slot wait ended — "acquired" (a slot freed and the run starts),
+	 *  "dropped" (gave up after the max wait), or "cancelled" (stop/new head).
+	 *  Clears the countdown badge; "dropped" may add its own skipped notice. */
+	onSlotWaitEnd?: (notePath: string, reason: "acquired" | "dropped" | "cancelled") => void;
 	/** plugin.registerEvent — ties listener lifetime to the plugin. */
 	registerEvent: (ref: EventRef) => void;
 }
@@ -56,6 +66,9 @@ export class AutoSpeakerTagger {
 	private catchupTimer: ReturnType<typeof setTimeout> | null = null;
 	private sleepTimer: ReturnType<typeof setTimeout> | null = null;
 	private sleepResolve: (() => void) | null = null;
+	/** Meeting-note path whose card is showing the slot-wait countdown, so the
+	 * badge can be cleared when the wait ends however it ends. */
+	private slotWaitNotePath: string | null = null;
 
 	constructor(private readonly deps: AutoSpeakerTaggerDeps) {}
 
@@ -94,6 +107,7 @@ export class AutoSpeakerTagger {
 			clearTimeout(this.catchupTimer);
 			this.catchupTimer = null;
 		}
+		this.endSlotWait("cancelled");
 		this.cancelSleep();
 	}
 
@@ -158,16 +172,19 @@ export class AutoSpeakerTagger {
 					continue;
 				}
 				if (!this.deps.canStartLlm()) {
-					if (Date.now() - head.eligibleAt > MAX_SLOT_WAIT_MS) {
+					if (Date.now() - head.eligibleAt > LLM_SLOT_MAX_WAIT_MS) {
 						// Drop without marking attempted so a later frontmatter
 						// change or the next startup scan re-arms it.
 						this.queue.shift();
+						this.endSlotWait("dropped");
 						debug("autoTag", `slot wait timed out — dropping ${head.file.path}`);
 						continue;
 					}
-					await this.sleep(SLOT_POLL_MS);
+					this.beginSlotWait(head.file);
+					await this.sleep(LLM_SLOT_POLL_MS);
 					continue;
 				}
+				this.endSlotWait("acquired");
 				// Dequeue and re-check synchronously — no awaits between the slot
 				// check and runAutoTag, so the free slot can't be raced away.
 				this.queue.shift();
@@ -208,6 +225,30 @@ export class AutoSpeakerTagger {
 		for (const f of candidates) {
 			this.maybeEnqueue(f);
 		}
+	}
+
+	/** Point the slot-wait countdown badge at the head's meeting card. Called
+	 * once per poll; re-firing just restarts the countdown. Skipped when the
+	 * meeting-note link doesn't resolve (nowhere to show it). */
+	private beginSlotWait(file: TFile): void {
+		const fm = this.deps.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		const noteFile = fm ? resolveWikiLink(this.deps.app, fm, FM.MEETING_NOTE, file.path) : null;
+		if (!noteFile) return;
+		// The waiting head changed (e.g. the old one was deleted mid-wait) —
+		// clear the stale card's badge before pointing at the new one.
+		if (this.slotWaitNotePath && this.slotWaitNotePath !== noteFile.path) {
+			this.endSlotWait("cancelled");
+		}
+		this.slotWaitNotePath = noteFile.path;
+		this.deps.onSlotWait?.(noteFile.path, Date.now() + LLM_SLOT_POLL_MS);
+	}
+
+	/** Clear the countdown badge if one is showing. Safe to call when not waiting. */
+	private endSlotWait(reason: "acquired" | "dropped" | "cancelled"): void {
+		if (!this.slotWaitNotePath) return;
+		const notePath = this.slotWaitNotePath;
+		this.slotWaitNotePath = null;
+		this.deps.onSlotWaitEnd?.(notePath, reason);
 	}
 
 	/** Cancellable sleep — stop() resolves it immediately. Single-consumer, so
