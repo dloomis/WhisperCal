@@ -1301,7 +1301,7 @@
 }
 
 /* Completion celebration — one-shot relay wave + gloss sweep when the
-   pipeline reaches "summarized". Each segment brightens and lifts in a
+   pipeline reaches "summarized". Each segment brightens in place in a
    left→right stagger; the Summary segment fills from pending gray to done
    green as the wave reaches it; then a shimmer chases the wave across the
    rail once. Applied by renderCardDynamic for a short window after the
@@ -1342,20 +1342,20 @@
 }
 
 @keyframes whisper-cal-relay {
-	0% { transform: none; filter: none; }
-	35% { transform: translateY(-2.5px); filter: brightness(1.45); }
-	100% { transform: none; filter: none; }
+	0% { filter: none; }
+	35% { filter: brightness(1.45); }
+	100% { filter: none; }
 }
 
 /* A just-finished segment starts from its pending gray and lands on done
-   green, so the motion visibly *seals* the stage. Shared by the wave's
+   green, so the color shift visibly *seals* the stage. Shared by the wave's
    Summary segment and the per-stage completions below. A playing animation
    out-ranks the normal done-state background; the 100% frame matches it
    exactly, so the hand-off when the animation ends is seamless. */
 @keyframes whisper-cal-relay-fill {
-	0% { background: var(--background-modifier-border); transform: none; filter: none; }
-	35% { background: var(--text-success); transform: translateY(-2.5px); filter: brightness(1.45); }
-	100% { background: var(--text-success); transform: none; filter: none; }
+	0% { background: var(--background-modifier-border); filter: none; }
+	35% { background: var(--text-success); filter: brightness(1.45); }
+	100% { background: var(--text-success); filter: none; }
 }
 
 @keyframes whisper-cal-rail-shimmer {
