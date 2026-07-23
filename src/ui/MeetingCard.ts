@@ -154,7 +154,7 @@ type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
 interface CelebrationState {
 	/** Per-stage done flags from the previous render (Note, Transcript, Speakers, Summary). */
 	prevDone: [boolean, boolean, boolean, boolean];
-	/** Full-rail wave window — set when Summary flips (the end-to-end finish). */
+	/** Full-rail pulse window — set when Summary flips (the end-to-end finish). */
 	railUntil: number;
 	/** Per-segment fill windows — set when an individual stage flips. */
 	segUntil: [number, number, number, number];
@@ -1153,7 +1153,7 @@ function renderCardDynamic(
 	// wave + shimmer — the finale the per-stage beats foreshadow. Flips are
 	// detected against the previous render's flags; the first sighting of a
 	// card only seeds the map. A summary regenerated after re-tagging resets
-	// pipeline_state first, so it flips again and earns another wave.
+	// pipeline_state first, so it flips again and earns another pulse.
 	const done: [boolean, boolean, boolean, boolean] = [
 		states.note === "complete",
 		states.transcript === "complete",
@@ -1165,13 +1165,12 @@ function renderCardDynamic(
 	if (cel) {
 		const flipped = [0, 1, 2, 3].filter(i => done[i] && !cel.prevDone[i]);
 		if (done[3] && flipped.includes(3)) {
-			// End-to-end finish — the wave animates every segment, so it
+			// End-to-end finish — the pulse animates every segment, so it
 			// supersedes any pending per-segment windows.
 			cel.railUntil = now + CELEBRATION_WINDOW_MS;
 			cel.segUntil = [0, 0, 0, 0];
 		} else {
-			// Left→right stagger when several stages land in one render,
-			// matching the wave's beat.
+			// Left→right stagger when several stages land in one render.
 			flipped.forEach((seg, order) => {
 				cel.segUntil[seg] = now + CELEBRATION_WINDOW_MS;
 				cel.segDelay[seg] = order * CELEBRATION_STAGGER_MS;
