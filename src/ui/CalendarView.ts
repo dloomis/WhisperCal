@@ -25,6 +25,7 @@ import {PeopleMatchService} from "../services/PeopleMatchService";
 import {resolveRecordingApiBaseUrl, recordingStatus, recordingSessionStatus} from "../services/RecordingApi";
 import {findNoteBySessionGuid, runApiLinkTail} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
+import {collectTranscriptRelatedFiles, trashMeetingFiles} from "../services/MeetingDeleter";
 
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
@@ -1609,16 +1610,24 @@ export class CalendarView extends ItemView {
 
 	private async handleDeleteUnlinked(recording: UnlinkedRecording): Promise<void> {
 		const title = recording.title || "Untitled recording";
-		const confirmed = await new DeleteTranscriptModal(this.app, title).prompt();
-		if (!confirmed) return;
+		// Resolve companions (audio, voiceprint sidecar) BEFORE anything is trashed —
+		// both are resolved off the transcript's basename/frontmatter, so once it's
+		// gone they'd be orphaned with no way back to them. Same opt-in as the
+		// meeting-note delete: listed in the modal, off by default.
+		const transcriptFile = recording.transcriptPath
+			? this.app.vault.getAbstractFileByPath(recording.transcriptPath)
+			: null;
+		const related = transcriptFile instanceof TFile
+			? collectTranscriptRelatedFiles(this.app, transcriptFile)
+			: [];
+		const choice = await new DeleteTranscriptModal(this.app, {title, relatedFiles: related}).prompt();
+		if (!choice) return;
 
 		try {
-			if (recording.transcriptPath) {
-				const file = this.app.vault.getAbstractFileByPath(recording.transcriptPath);
-				if (file instanceof TFile) {
-					await this.app.fileManager.trashFile(file);
-				}
-			}
+			const toTrash: TFile[] = [];
+			if (transcriptFile instanceof TFile) toTrash.push(transcriptFile);
+			if (choice.deleteRelated) toTrash.push(...related.map(r => r.file));
+			await trashMeetingFiles(this.app, toTrash);
 			void this.loadAndRenderUnlinkedSection();
 		} catch (e) {
 			console.error("[WhisperCal] Delete unlinked transcript error:", e);

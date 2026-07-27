@@ -10,32 +10,43 @@ export interface RelatedFile {
 }
 
 /**
- * Resolve the on-disk artifacts that belong to a single meeting: its linked
- * transcript, that transcript's source audio, and the transcript's Tome voiceprint
- * sidecar. Deliberately EXCLUDES the enrolled voiceprint libraries
+ * Resolve a transcript's companion artifacts: its source audio and its Tome
+ * voiceprint sidecar. Deliberately EXCLUDES the enrolled voiceprint libraries
  * (Caches/Voiceprints/<Name>.json) — those are per-person and shared across every
- * meeting, so deleting one meeting must never touch them. Deduped by path; the
- * meeting note itself is never included (the caller deletes it separately).
+ * meeting, so deleting one transcript must never touch them. The transcript itself
+ * is not included (the caller deletes it separately).
+ */
+export function collectTranscriptRelatedFiles(app: App, transcriptFile: TFile): RelatedFile[] {
+	const out: RelatedFile[] = [];
+	const seen = new Set<string>([transcriptFile.path]);
+	const add = (file: TFile | null, kind: RelatedFileKind): void => {
+		if (!file || seen.has(file.path)) return;
+		seen.add(file.path);
+		out.push({file, kind});
+	};
+
+	const transcriptFm = (app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {}) as Record<string, unknown>;
+	add(resolveTranscriptAudio(app, transcriptFile, transcriptFm), "audio");
+	add(resolveVoiceprintSidecar(app, transcriptFile, transcriptFm), "voiceprints");
+	return out;
+}
+
+/**
+ * Resolve the on-disk artifacts that belong to a single meeting: its linked
+ * transcript plus that transcript's companions (see
+ * `collectTranscriptRelatedFiles`). Deduped by path; the meeting note itself is
+ * never included (the caller deletes it separately).
  */
 export function collectMeetingRelatedFiles(
 	app: App,
 	notePath: string,
 	noteFm: Record<string, unknown>,
 ): RelatedFile[] {
-	const out: RelatedFile[] = [];
-	const seen = new Set<string>();
-	const add = (file: TFile | null, kind: RelatedFileKind): void => {
-		if (!file || file.path === notePath || seen.has(file.path)) return;
-		seen.add(file.path);
-		out.push({file, kind});
-	};
-
 	const transcriptFile = resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath);
-	if (transcriptFile) {
-		add(transcriptFile, "transcript");
-		const transcriptFm = (app.metadataCache.getFileCache(transcriptFile)?.frontmatter ?? {}) as Record<string, unknown>;
-		add(resolveTranscriptAudio(app, transcriptFile, transcriptFm), "audio");
-		add(resolveVoiceprintSidecar(app, transcriptFile, transcriptFm), "voiceprints");
+	if (!transcriptFile || transcriptFile.path === notePath) return [];
+	const out: RelatedFile[] = [{file: transcriptFile, kind: "transcript"}];
+	for (const rf of collectTranscriptRelatedFiles(app, transcriptFile)) {
+		if (rf.file.path !== notePath) out.push(rf);
 	}
 	return out;
 }
