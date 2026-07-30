@@ -666,6 +666,14 @@ Use `{{variableName}}` placeholders in your template body. All available variabl
 | `{{isAllDay}}` | All-day event flag | `false` |
 | `{{description}}` | Event body (HTML converted to Markdown) | Meeting agenda text |
 
+### Remove online-meeting join details
+
+Online meetings (Teams, Zoom) carry a large "join" block in the event
+description — join link, meeting ID, passcode, dial-in numbers. Enable
+**Remove online-meeting join details from note body** in **Settings → Notes &
+people** to strip that block from `{{description}}` when a note is created,
+leaving only the agenda. Off by default; existing notes are never modified.
+
 ### Reserved Frontmatter Keys
 
 The following keys are **auto-injected** by the plugin when creating a note. Do not add them to your template — they are managed programmatically:
@@ -1180,6 +1188,7 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Notes folder** | `Meetings` | Where meeting notes are created. |
 | **Note filename template** | `{{date}} - {{subject}}` | Filename pattern. Available variables: `{{date}}` (YYYY-MM-DD), `{{time}}` (HHmm, 24-hour), `{{subject}}`. Add `{{time}}` to keep two same-subject meetings on the same day in separate notes. |
 | **Note template** | *(empty)* | Path to a template file for meeting note body content. Copy the sample from the plugin's `samples/` folder to get started. |
+| **Remove online-meeting join details from note body** | Off | Strips the Teams/Zoom join block (join link, meeting ID, passcode, dial-in) from `{{description}}` when creating a note. |
 | **Unscheduled note subject** | `Unscheduled Meeting` | Subject line for ad-hoc meeting notes. |
 | **Transcripts folder** | `Transcripts` | Where transcript files are created. |
 | **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
