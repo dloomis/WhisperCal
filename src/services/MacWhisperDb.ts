@@ -69,7 +69,13 @@ function parseDateCreated(raw: string | null): Date | null {
 }
 
 const RECORDING_MATCH_LIMIT = 50;
-const RECENT_SESSION_LIMIT = 200;
+/**
+ * Cap on session rows fetched per query. Applied in SQL BEFORE the lookback
+ * age filter, so heavy recorders with more than this many sessions inside the
+ * lookback window would silently lose unlinked entries. 1000 keeps the query
+ * cheap while comfortably covering a 30-day window.
+ */
+const RECENT_SESSION_LIMIT = 1000;
 
 /** Validate that a string is a hex-encoded session ID (safe for SQL interpolation). */
 function isValidHexId(id: string): boolean {
