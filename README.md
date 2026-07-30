@@ -55,6 +55,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [All-Day Events](#all-day-events)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Merging Meetings](#merging-meetings)
+  - [Splitting a Meeting](#splitting-a-meeting)
   - [Active Event Highlighting](#active-event-highlighting)
   - [Conflict Detection](#conflict-detection)
   - [Gap Markers](#gap-markers)
@@ -121,6 +122,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Meeting export** — Bundle a meeting's note, transcript, and source audio into a single `.zip` outside the vault (⋯ menu > Export meeting bundle), ready to email or hand to someone who doesn't use Obsidian.
 - **Meeting import** — Take a bundle someone sent you and file it into your own vault (calendar ⋯ menu > Import meeting bundle), so a meeting you never attended reads like one you recorded yourself.
 - **Meeting merging** — Select two or more meeting cards and merge their notes and transcripts into one, with speaker labels renumbered, durations summed, and the original parts archived. Built for back-to-back recordings of a single long meeting.
+- **Meeting splitting** — The inverse of merging: when one recording covers two unrelated meetings, place a marker in the transcript where the second one begins and split it into two meetings — each with its own note, transcript, attendees, and voiceprints — ready to tag and summarize independently.
 - **Meeting research** — Select vault notes as context and run an LLM to generate pre-meeting research, independent of the transcript pipeline. Recurring meetings can carry reusable prep in a per-series note that pre-fills the research modal.
 - **People matching** — Attendees and organizers are matched to notes in a People folder and rendered as `[[wiki links]]`. Unmatched organizers can be auto-created.
 - **Per-prompt model selection** — Choose a different Claude model for each LLM prompt (speaker tagging, summarization, research).
@@ -360,6 +362,7 @@ The **⋯** mini button — or right-clicking anywhere on the card (except links
 | **Summarize meeting…** / **Regenerate summary…** | Speakers tagged / summary complete | Opens the instructions dialog, then runs summarization |
 | **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
 | **Re-record…** | Transcript linked, Recording API mode | Confirms, then clears the transcript and starts a fresh recording |
+| **Split transcript…** | Transcript linked, meeting not yet summarized, nothing mid-run | Opens the transcript in split mode to divide it into two meetings (see [Splitting a Meeting](#splitting-a-meeting)) |
 | **Export meeting bundle…** | A meeting note exists | Bundles the meeting's artifacts into a `.zip` outside the vault (see below) |
 
 The everyday next step stays one click on the smart button; the menu keeps everything else reachable without growing the action row.
@@ -420,6 +423,24 @@ When one long meeting ends up as several back-to-back recordings (e.g., "Plannin
 - Sets `pipeline_state: tagged` if every part was already tagged, otherwise `titled` — so you can run Speakers and Summary on the merged transcript as usual.
 
 Parts can be in any pipeline state — calendar-linked, ad hoc, tagged, or raw — and can be mixed freely in one merge.
+
+### Splitting a Meeting
+
+The inverse of merging: sometimes one recording covers two meetings — a scheduled tag-up dovetails into an unrelated discussion that deserves its own note, tags, and summary. **Split transcript…** (in the card's ⋯ menu) divides the transcript into two meetings at a point you choose:
+
+1. Pick **Split transcript…** on the card. The transcript opens with a banner across the top of the editor.
+2. Click in the transcript where the second meeting begins and press **Place marker** — a `--- ✂ SPLIT … ✂ ---` line appears at the cursor. You can move it by placing again (or cutting and pasting the line). **Cancel** removes it and changes nothing.
+3. Press **Split…**. A confirmation modal shows where the cut lands — the split snaps forward to the next speaker line — with each half's start time, duration, and speaker-line count, and asks for the new meeting's title.
+
+**What splitting does:**
+
+- Everything from the split point onward moves to a **new transcript** and a **new meeting note**, named and timestamped as if the second meeting had always been its own: the new `meeting_start` is the original start plus the split point's timestamp offset.
+- **Attendees, confirmed speakers, and the voiceprint sidecar are filtered per half** — each meeting lists only the people who actually speak in it. Applied speaker tags carry over; each half can then be tagged and summarized independently.
+- Both halves **share the original audio file**, and transcript timestamps stay recording-relative, so click-to-play keeps working in each. Deleting one half leaves the shared audio in place for the other.
+- The original meeting keeps its calendar link and is trimmed to end at the split time; the new meeting appears as its own card at the split time (a local card with a synthetic `split-` id, like a merged meeting). The two are cross-linked via `split_from` / `split_into` frontmatter.
+- The new files are fully created **before** the original transcript is touched, so an interrupted split never loses text.
+
+Splitting is offered only **before the meeting is summarized** — an existing summary would describe both halves — and while no recording or LLM job is running on the card.
 
 ### Active Event Highlighting
 
@@ -665,6 +686,7 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `macwhisper_session_id` | Links a MacWhisper recording to the note |
 | `macwhisper_session_ids` | All source session IDs on a merged note (see [Merging Meetings](#merging-meetings)) |
 | `merged_from` | Links to the archived original parts on a merged note |
+| `split_from` / `split_into` | Cross-links between the two halves of a split meeting (see [Splitting a Meeting](#splitting-a-meeting)) |
 | `transcript` | Backlink to the transcript file |
 | `pipeline_state` | Workflow state; mirrored from transcript automatically |
 
