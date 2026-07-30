@@ -20,7 +20,7 @@ import {coerceFmDate, coerceFmTime, parseDateTime, setTimeFormat} from "./utils/
 import {updateFrontmatter, readFmString, restoreFrontmatterFields, isSingleSourceTranscript} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
-import {transcriptBody, findSpeakerLabels} from "./utils/transcript";
+import {transcriptBody, findSpeakerLabels, hasLiveLegLabels} from "./utils/transcript";
 import {debug, setDebugLogging} from "./utils/debug";
 import type {AuthState} from "./services/CalendarAuth";
 import type {CalendarAuth} from "./services/CalendarAuth";
@@ -1030,6 +1030,23 @@ export default class WhisperCalPlugin extends Plugin {
 		let voiceprintMatches: string | undefined;
 		let preBody: string | undefined; // file snapshot taken just before the LLM edits it, for failure-restore
 		try {
+			// Not-yet-finalized guard: pipeline_state can be "titled" while Tome's finalizer
+			// hasn't yet replaced the body's live "Them" placeholder with diarized "Speaker N"
+			// labels (see AutoSpeakerTagger.isEligible for the writers that title early).
+			// Proceeding would run word replacements against a body Tome is about to rewrite,
+			// build mappings / spawn the LLM / present the tag modal on placeholder labels —
+			// and an Apply from that modal would permanently corrupt body + attendees +
+			// pipeline_state. Checked here, inside the try block, because the code above the
+			// slot claim must stay await-free (see the claim comment); the claim is released
+			// on the way out. In auto mode the tagger's isEligible already deferred upstream —
+			// this re-check is belt-and-braces for it, and the primary gate for the manual
+			// command/pill path.
+			if (hasLiveLegLabels(transcriptBody(await this.app.vault.cachedRead(transcriptFile)))) {
+				if (slotClaimed) releaseLlmSlot();
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
+				if (!auto) new Notice("Transcript is still finalizing — try Tag speakers again in a minute.");
+				return;
+			}
 			if (this.settings.replacementFilePath) {
 				const wr = await applyWordReplacements(this.app, transcriptPath, this.settings.replacementFilePath);
 				if (wr.totalCount > 0) console.debug(`[WhisperCal] Applied ${wr.totalCount} word replacement(s) before post-processing`);

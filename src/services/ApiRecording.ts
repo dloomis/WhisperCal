@@ -9,6 +9,7 @@ import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import type {OnStatus} from "./LinkRecording";
 import {FM} from "../constants";
+import {transcriptBody, hasLiveLegLabels} from "../utils/transcript";
 
 /** Prevents duplicate waitAndLink calls when stopApiRecording and watchApiRecording
  *  race. Keyed by session guid (note path for legacy sessions without one) so a
@@ -305,6 +306,9 @@ export function watchApiRecording(opts: {
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 100; // ~5 minutes
+/** 1s ticks the link tail waits for Tome's finalizer to rewrite the body — covers
+ * its usual 1-3 minute window after the transcript file lands. */
+const FINALIZE_WAIT_ATTEMPTS = 120;
 
 /**
  * Find the newest transcript file in a folder created after a given timestamp.
@@ -682,6 +686,40 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			console.debug(`[WhisperCal] Session ${sessionGuid} superseded by ${noteGuid} on ${currentNotePath} — leaving ${transcriptFile.path} for the unlinked flow`);
 			onStatus?.("Superseded by a newer recording — see unlinked transcripts", "alert-circle", 6000, "warning", "Superseded");
 			persistence?.remove(sessionGuid);
+			return;
+		}
+
+		// Finalization wait (defense-in-depth): don't enrich + title a transcript whose
+		// body still carries Tome's live-call-leg placeholder ("Them"; "You" is a
+		// permanent mic-leg label the finalizer keeps). Tome rewrites the placeholder to
+		// diarized "Speaker N" labels 1-3 minutes after the file lands, and titling
+		// before that lets downstream consumers act on placeholder labels (wrong cached
+		// speaker proposals, titles computed from an unfinalized body). The content-keyed
+		// guards in AutoSpeakerTagger / writeSpeakerProposals already make an early title
+		// harmless to speaker tagging, but this tail can reach here on paths where
+		// nothing else waits — a service crash, an unknown session status, the next-load
+		// reconcile, and the legacy-heuristics rung — so wait here too. The scope is
+		// deliberately narrow: only the "Them" placeholder blocks, and a body Tome has
+		// already finalized (or never wrote a live leg into) passes on the first tick.
+		let finalized = false;
+		for (let i = 0; i < FINALIZE_WAIT_ATTEMPTS; i++) {
+			try {
+				const content = await app.vault.cachedRead(transcriptFile);
+				if (!hasLiveLegLabels(transcriptBody(content))) {
+					finalized = true;
+					break;
+				}
+			} catch {
+				// Unreadable this tick (mid-write) — try again.
+			}
+			await sleep(1000);
+			if (watchersStopped) return;
+		}
+		if (!finalized) {
+			// Keep the in-flight bookkeeping entry (no persistence remove): the
+			// next-load reconcile re-runs this link tail, by which point Tome's
+			// finalizer will have rewritten the body.
+			onStatus?.("Transcript still finalizing — will retry on next reload", "alert-circle", 6000, "warning", "Not ready");
 			return;
 		}
 
