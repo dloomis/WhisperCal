@@ -389,6 +389,18 @@ export async function writeSpeakerProposals(
 	transcriptPath: string,
 	mappings: ProposedSpeakerMapping[],
 ): Promise<void> {
+	// Belt-and-braces: a mapping keyed on the literal "Them" means buildMappingsFromBody
+	// read Tome's live-call-leg placeholder, not a finalized diarized label — Tome hasn't
+	// rewritten the body yet. Caching a proposal against it freezes the wrong speaker group
+	// (Tome's own finalizer only patches its inline `attendees: […]` form, never an
+	// already-expanded object list), so refuse and let the caller retry once the body
+	// settles. Protects the manual tag-modal path in addition to the auto-tagger's own
+	// isEligible guard (hasLiveLegLabels, same helper).
+	if (mappings.some(m => m.originalName === "Them")) {
+		console.warn(`[WhisperCal] writeSpeakerProposals: refusing to write proposals for "${transcriptPath}" — a mapping's originalName is the live placeholder "Them" (transcript not yet finalized)`);
+		return;
+	}
+
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (!(file instanceof TFile)) return;
 

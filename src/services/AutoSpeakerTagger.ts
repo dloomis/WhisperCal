@@ -5,6 +5,7 @@ import {FM} from "../constants";
 import {readFmString, isSingleSourceTranscript, diarizedSpeakerCount} from "../utils/frontmatter";
 import {resolveWikiLink, getMarkdownFilesRecursive} from "../utils/vault";
 import {hasCachedProposals} from "./SpeakerTagParser";
+import {transcriptBody, hasLiveLegLabels} from "../utils/transcript";
 import {debug} from "../utils/debug";
 
 /** Delay between a transcript becoming eligible and the auto-tag run, so
@@ -78,7 +79,7 @@ export class AutoSpeakerTagger {
 			this.deps.app.metadataCache.on("changed", (file: TFile) => {
 				const folder = this.deps.getSettings().transcriptFolderPath;
 				if (!folder || !file.path.startsWith(folder + "/")) return;
-				this.maybeEnqueue(file);
+				void this.maybeEnqueue(file);
 			}),
 		);
 		// A deleted transcript re-arms re-recording: clear its loop guard
@@ -95,7 +96,7 @@ export class AutoSpeakerTagger {
 		);
 		this.catchupTimer = setTimeout(() => {
 			this.catchupTimer = null;
-			this.catchUpScan();
+			void this.catchUpScan();
 		}, CATCHUP_DELAY_MS);
 	}
 
@@ -113,9 +114,12 @@ export class AutoSpeakerTagger {
 
 	/**
 	 * Single eligibility predicate shared by the change listener, the catch-up
-	 * scan, and the dequeue re-check.
+	 * scan, and the dequeue re-check. Async because the not-yet-finalized guard
+	 * below reads the file body; callers that invoke a free LLM slot must await
+	 * this BEFORE checking canStartLlm() so the slot-check-to-runAutoTag span
+	 * stays free of awaits (see the comment in pump()).
 	 */
-	private isEligible(file: TFile): EligibilityResult {
+	private async isEligible(file: TFile): Promise<EligibilityResult> {
 		const s = this.deps.getSettings();
 		const skip = (reason: string): {ok: false} => {
 			debug("autoTag", `skip ${file.path}: ${reason}`);
@@ -132,6 +136,22 @@ export class AutoSpeakerTagger {
 		if (!fm || readFmString(fm, FM.PIPELINE_STATE) !== "titled") return skip("pipeline_state not titled");
 		const noteFile = resolveWikiLink(this.deps.app, fm, FM.MEETING_NOTE, file.path);
 		if (!noteFile) return skip("meeting_note link unresolved");
+		// pipeline_state can be set to "titled" by a writer that ran before Tome's own
+		// finalizer rewrote the body (the finalizer replaces its live-call-leg placeholder
+		// labels with real diarized "Speaker N" names, 1-3 min after linking). Reading a
+		// still-live body here would let buildMappingsFromBody cache a proposal keyed on
+		// "Them" that Tome's finalizer can never retroactively fix. Defer WITHOUT touching
+		// `attempted`, so the metadataCache "changed" event Tome's rewrite fires re-arms
+		// this file the moment the body is actually ready.
+		let content: string;
+		try {
+			content = await this.deps.app.vault.cachedRead(file);
+		} catch (e) {
+			return skip(`could not read transcript body: ${e instanceof Error ? e.message : String(e)}`);
+		}
+		if (hasLiveLegLabels(transcriptBody(content))) {
+			return skip("transcript not yet finalized — body still has a live 'Them' label");
+		}
 		// A single-source recording the diarizer collapsed to ≤1 speaker needs a manual hint
 		// (how many people / who's who) that only the instructions modal carries — voiceprint
 		// matching can't recover speakers diarization never separated, so leave those for a
@@ -146,19 +166,20 @@ export class AutoSpeakerTagger {
 		return {ok: true, fm, notePath: noteFile.path};
 	}
 
-	private maybeEnqueue(file: TFile): void {
+	private async maybeEnqueue(file: TFile): Promise<void> {
 		if (this.stopped) return;
 		if (this.queue.some(q => q.file === file)) return;
-		if (!this.isEligible(file).ok) return;
+		if (!(await this.isEligible(file)).ok) return;
 		this.queue.push({file, eligibleAt: Date.now() + SETTLE_MS});
 		debug("autoTag", `enqueued ${file.path}`);
 		void this.pump();
 	}
 
 	/**
-	 * Single-consumer serial loop: settle, wait for an LLM slot, re-check
-	 * eligibility at dequeue, then invoke the run. The head is re-read after
-	 * every sleep so queue mutations (deletes, stop) are picked up.
+	 * Single-consumer serial loop: settle, re-check eligibility (including the
+	 * async not-yet-finalized body read), wait for an LLM slot, then invoke the
+	 * run. The head is re-read after every sleep so queue mutations (deletes,
+	 * stop) are picked up.
 	 */
 	private async pump(): Promise<void> {
 		if (this.pumping || this.stopped) return;
@@ -169,6 +190,19 @@ export class AutoSpeakerTagger {
 				const settleWait = head.eligibleAt - Date.now();
 				if (settleWait > 0) {
 					await this.sleep(settleWait);
+					continue;
+				}
+				// Re-check eligibility BEFORE the slot gate below (not after, as a
+				// synchronous recheck would be) — isEligible awaits a vault read, and
+				// the slot-check-to-runAutoTag span must stay free of awaits so a
+				// concurrent manual tag run can't claim the slot in between (see
+				// doTagSpeakers' matching comment on its own synchronous slot claim).
+				const check = await this.isEligible(head.file);
+				if (!check.ok) {
+					// An in-wait head that went ineligible may still own the
+					// countdown badge — clear it so a stale countdown can't leak.
+					this.queue.shift();
+					this.endSlotWait("cancelled");
 					continue;
 				}
 				if (!this.deps.canStartLlm()) {
@@ -185,11 +219,9 @@ export class AutoSpeakerTagger {
 					continue;
 				}
 				this.endSlotWait("acquired");
-				// Dequeue and re-check synchronously — no awaits between the slot
-				// check and runAutoTag, so the free slot can't be raced away.
+				// Dequeue and invoke — no awaits between the slot check and
+				// runAutoTag, so the free slot can't be raced away.
 				this.queue.shift();
-				const check = this.isEligible(head.file);
-				if (!check.ok) continue;
 				// Mark before invoking: failed runs write nothing, so this is the
 				// anti-loop marker; on success the cached proposals take over.
 				this.attempted.add(head.file.path);
@@ -211,7 +243,7 @@ export class AutoSpeakerTagger {
 	}
 
 	/** Startup scan for transcripts that became ready while Obsidian was closed. */
-	private catchUpScan(): void {
+	private async catchUpScan(): Promise<void> {
 		if (this.stopped) return;
 		const s = this.deps.getSettings();
 		if (!s.autoSummarizeAfterTagging || s.autoTagLookbackHours <= 0) return;
@@ -222,8 +254,10 @@ export class AutoSpeakerTagger {
 			.filter(f => f.stat.ctime >= cutoff)
 			.sort((a, b) => a.stat.ctime - b.stat.ctime);
 		debug("autoTag", `catch-up scan: ${candidates.length} transcript(s) within ${s.autoTagLookbackHours}h`);
+		// Sequential, not Promise.all: preserves ctime enqueue order (each maybeEnqueue
+		// does an async body read, so parallel calls could otherwise race onto the queue).
 		for (const f of candidates) {
-			this.maybeEnqueue(f);
+			await this.maybeEnqueue(f);
 		}
 	}
 
