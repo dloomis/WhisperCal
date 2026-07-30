@@ -1,7 +1,7 @@
 import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM, SPLIT_MARKER} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording, stopLinkRecordingWatchers, resetLinkRecordingWatchers} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
@@ -42,6 +42,8 @@ import {installBundledPrompts} from "./services/PromptInstaller";
 import {PeopleMatchService} from "./services/PeopleMatchService";
 import {createPeopleNotesForNames} from "./services/PeopleAutoCreate";
 import {AutoSpeakerTagger, LLM_SLOT_POLL_MS, LLM_SLOT_MAX_WAIT_MS} from "./services/AutoSpeakerTagger";
+import {planSplit, splitMeeting, hasSplitMarker, removeSplitMarker} from "./services/MeetingSplitter";
+import {SplitConfirmModal} from "./ui/SplitConfirmModal";
 
 /** LLM credential/config keys that moved to WhisperCore. Only safe to drop from
  *  WhisperCal's data.json once the C3 hand-off has imported them into Core. */
@@ -139,6 +141,13 @@ export default class WhisperCalPlugin extends Plugin {
 	private unlinkedProvider!: UnlinkedRecordingProvider;
 	private autoTagger!: AutoSpeakerTagger;
 	private coreHandoffInFlight = false;
+	/**
+	 * The transcript currently open for "Split transcript…", if any. Transient
+	 * (never persisted): split mode is a single interaction — place a marker,
+	 * confirm, done — so a reload legitimately cancels it, leaving at most a
+	 * marker line the user can delete by hand.
+	 */
+	private splitMode: {transcriptPath: string; notePath: string} | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -256,6 +265,9 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			onResearch: (notePath: string) => {
 				this.doResearch(notePath);
+			},
+			onSplitTranscript: (transcriptFile: TFile, notePath: string) => {
+				void this.enterSplitMode(transcriptFile, notePath);
 			},
 			getAuthState: () => this.auth.getState(),
 			onSignIn: () => this.auth.startSignIn(),
@@ -486,6 +498,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// during teardown don't see stale entries.
 		this.cardUi.clear();
 		this.jobs.clear();
+		this.splitMode = null;
 		// Toolbar actions and editor banners aren't lifecycle-managed by Obsidian:
 		// without this, every visited markdown view keeps a dead icon wired to this
 		// (now unloaded) plugin instance.
@@ -507,13 +520,14 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	/** Strip the DOM this plugin injected into markdown views (word-replacement
-	 *  toolbar action, LLM progress banners). Obsidian doesn't unwind these. */
+	 *  toolbar action, LLM progress banners, the split-mode banner). Obsidian
+	 *  doesn't unwind these. */
 	private removeInjectedViewElements(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) continue;
 			view.containerEl
-				.querySelectorAll(".whisper-cal-word-replace-action, .whisper-cal-llm-banner")
+				.querySelectorAll(".whisper-cal-word-replace-action, .whisper-cal-llm-banner, .whisper-cal-split-banner")
 				.forEach(el => el.remove());
 		}
 	}
@@ -2217,6 +2231,7 @@ export default class WhisperCalPlugin extends Plugin {
 						this.removeBanner(view, op);
 					}
 				}
+				this.syncSplitBanner(view);
 			}
 		}
 	}
@@ -2233,6 +2248,7 @@ export default class WhisperCalPlugin extends Plugin {
 						this.removeBanner(view, op);
 					}
 				}
+				this.syncSplitBanner(view);
 			}
 		}
 	}
@@ -2251,6 +2267,180 @@ export default class WhisperCalPlugin extends Plugin {
 		view.contentEl
 			.querySelectorAll(`.${WhisperCalPlugin.BANNER_CLS}[data-op="${op}"]`)
 			.forEach(el => el.remove());
+	}
+
+	// ---------------------------------------------------------------------------
+	// Split transcript (see services/MeetingSplitter.ts)
+	// ---------------------------------------------------------------------------
+
+	private static readonly SPLIT_BANNER_CLS = "whisper-cal-split-banner";
+
+	/**
+	 * Open a transcript in split mode: the user places a marker line where the
+	 * second meeting begins, then confirms. Entered from the meeting card's ⋯ menu.
+	 */
+	async enterSplitMode(transcriptFile: TFile, notePath: string): Promise<void> {
+		this.splitMode = {transcriptPath: transcriptFile.path, notePath};
+		await this.app.workspace.openLinkText(transcriptFile.path, "", false);
+		this.updateAllBanners();
+	}
+
+	/** Leave split mode and drop the banner from every leaf showing it. */
+	private exitSplitMode(): void {
+		this.splitMode = null;
+		this.updateAllBanners();
+	}
+
+	/**
+	 * Add or remove the split banner on one markdown view. Driven from
+	 * updateBanners/updateAllBanners, so the same active-leaf-change hook that
+	 * keeps the LLM banners honest keeps this one pinned to the right tab.
+	 */
+	private syncSplitBanner(view: MarkdownView): void {
+		const cls = WhisperCalPlugin.SPLIT_BANNER_CLS;
+		const existing = view.contentEl.querySelector(`.${cls}`);
+		if (!this.splitMode || view.file?.path !== this.splitMode.transcriptPath) {
+			existing?.remove();
+			return;
+		}
+		if (existing) return;
+
+		const banner = view.contentEl.createDiv({cls});
+		banner.createSpan({
+			cls: "whisper-cal-split-banner-label",
+			text: "Place the split marker where the new meeting begins",
+		});
+		const row = banner.createDiv({cls: "whisper-cal-split-banner-buttons"});
+
+		const place = row.createEl("button", {text: "Place marker"});
+		place.addEventListener("click", () => this.placeSplitMarker());
+
+		const split = row.createEl("button", {text: "Split…", cls: "mod-cta"});
+		split.addEventListener("click", () => { void this.confirmSplit(); });
+
+		const cancel = row.createEl("button", {text: "Cancel"});
+		cancel.addEventListener("click", () => { void this.cancelSplitMode(); });
+
+		view.contentEl.prepend(banner);
+	}
+
+	/** The open markdown view for a path, if any. */
+	private findMarkdownView(path: string): MarkdownView | null {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file?.path === path) return view;
+		}
+		return null;
+	}
+
+	/**
+	 * Insert the marker on its own line above the cursor, moving it there if one
+	 * is already placed. Line-based edits (not setValue) so the surrounding text,
+	 * undo history, and scroll position all survive.
+	 */
+	private placeSplitMarker(): void {
+		if (!this.splitMode) return;
+		const view = this.findMarkdownView(this.splitMode.transcriptPath);
+		if (!view || this.app.workspace.getActiveViewOfType(MarkdownView) !== view) {
+			new Notice("Open the transcript tab, then click in the line where the new meeting starts");
+			return;
+		}
+		const editor = view.editor;
+		let target = editor.getCursor().line;
+
+		// Only one marker may exist — move the old one rather than adding a second.
+		for (let i = 0; i < editor.lineCount(); i++) {
+			if (editor.getLine(i).trim() !== SPLIT_MARKER) continue;
+			// placeSplitMarker writes "marker + blank line"; take both back out.
+			let end = i + 1;
+			if (end < editor.lineCount() && editor.getLine(end).trim() === "") end++;
+			const last = editor.lineCount() - 1;
+			const to = end > last
+				? {line: last, ch: editor.getLine(last).length}
+				: {line: end, ch: 0};
+			editor.replaceRange("", {line: i, ch: 0}, to);
+			if (target > i) target = Math.max(i, target - (end - i));
+			break;
+		}
+
+		// Clamp into range: removing the old marker can leave the cursor's remembered
+		// line past the end of the (now shorter) document.
+		target = Math.min(Math.max(target, 0), editor.lineCount() - 1);
+		editor.replaceRange(`${SPLIT_MARKER}\n\n`, {line: target, ch: 0});
+		editor.setCursor({line: Math.min(target + 2, editor.lineCount() - 1), ch: 0});
+	}
+
+	/** Push the editor buffer to disk so MeetingSplitter's vault.read sees the marker. */
+	private async flushEditor(path: string): Promise<void> {
+		await this.findMarkdownView(path)?.save();
+	}
+
+	/** Resolve split mode's two files, or null if either has gone away. */
+	private resolveSplitFiles(): {transcript: TFile; note: TFile} | null {
+		if (!this.splitMode) return null;
+		const transcript = this.app.vault.getAbstractFileByPath(this.splitMode.transcriptPath);
+		const note = this.app.vault.getAbstractFileByPath(this.splitMode.notePath);
+		if (!(transcript instanceof TFile) || !(note instanceof TFile)) return null;
+		return {transcript, note};
+	}
+
+	/** Validate the marker, preview the split, and — on confirm — perform it. */
+	private async confirmSplit(): Promise<void> {
+		const files = this.resolveSplitFiles();
+		if (!files) {
+			new Notice("The transcript or its meeting note is no longer available");
+			this.exitSplitMode();
+			return;
+		}
+		const originalTranscriptPath = files.transcript.path;
+		await this.flushEditor(originalTranscriptPath);
+
+		let plan;
+		try {
+			plan = await planSplit(this.app, this.settings, files.transcript, files.note);
+		} catch (e) {
+			new Notice(e instanceof Error ? e.message : String(e));
+			return; // stay in split mode so the marker can be moved
+		}
+
+		const title = await new SplitConfirmModal(this.app, {
+			plan,
+			defaultName: `${plan.subject} (split)`,
+			timezone: this.settings.timezone,
+		}).prompt();
+		if (!title) return;
+
+		try {
+			const result = await splitMeeting(this.app, this.settings, files.transcript, files.note, title);
+			// The first half's body just lost everything below the cut, so any
+			// speaker proposals cached against it describe a transcript that no
+			// longer exists. Drop them; the next Speakers run re-proposes.
+			await clearSpeakerProposals(this.app, originalTranscriptPath);
+			this.exitSplitMode();
+			new Notice(`Split into a new meeting: ${result.newNotePath.split("/").pop()?.replace(/\.md$/, "")}`);
+			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+				if (leaf.view instanceof CalendarView) leaf.view.rebuildCards();
+			}
+		} catch (e) {
+			console.error("[WhisperCal] Split transcript error:", e);
+			new Notice(`Failed to split transcript: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	/** Abandon split mode, taking the marker line back out of the transcript. */
+	private async cancelSplitMode(): Promise<void> {
+		const path = this.splitMode?.transcriptPath;
+		this.exitSplitMode();
+		if (!path) return;
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		try {
+			await this.flushEditor(path);
+			await this.app.vault.process(file, (data) =>
+				hasSplitMarker(data) ? removeSplitMarker(data) : data);
+		} catch (e) {
+			console.warn(`[WhisperCal] Could not remove the split marker from ${path}:`, e);
+		}
 	}
 
 	private async handleLinkRecording(

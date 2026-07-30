@@ -10,11 +10,45 @@ export interface RelatedFile {
 }
 
 /**
+ * True when a markdown file other than `excludePath` still points at `targetPath`.
+ *
+ * Two independent checks, because either can miss on its own:
+ *  - metadataCache.resolvedLinks covers body links and embeds (a merged
+ *    transcript's `![[audio]]`), but only indexes frontmatter wikilinks on
+ *    Obsidian versions that resolve them.
+ *  - a direct sweep of the transcript's sibling folder re-resolves each
+ *    transcript's `recording:` pointer, which is the exact shape a split's two
+ *    halves share and the one case that must never be missed.
+ */
+function isSharedWithAnotherNote(app: App, target: TFile, excludePath: string): boolean {
+	for (const [source, targets] of Object.entries(app.metadataCache.resolvedLinks)) {
+		if (source === excludePath) continue;
+		if (targets[target.path]) return true;
+	}
+	const siblings = app.vault.getAbstractFileByPath(excludePath)?.parent?.children ?? [];
+	for (const sibling of siblings) {
+		if (!(sibling instanceof TFile) || sibling.extension !== "md" || sibling.path === excludePath) continue;
+		const fm = (app.metadataCache.getFileCache(sibling)?.frontmatter ?? {}) as Record<string, unknown>;
+		if (resolveTranscriptAudio(app, sibling, fm)?.path === target.path) return true;
+		if (resolveVoiceprintSidecar(app, sibling, fm)?.path === target.path) return true;
+	}
+	return false;
+}
+
+/**
  * Resolve a transcript's companion artifacts: its source audio and its Tome
  * voiceprint sidecar. Deliberately EXCLUDES the enrolled voiceprint libraries
  * (Caches/Voiceprints/<Name>.json) — those are per-person and shared across every
  * meeting, so deleting one transcript must never touch them. The transcript itself
  * is not included (the caller deletes it separately).
+ *
+ * Also excludes any companion that ANOTHER markdown file still points at. This is
+ * what makes "Split transcript…" safe: the two halves of a split recording are
+ * separate transcripts backed by the one `.m4a`, each carrying the same
+ * `recording:` wikilink, so deleting one meeting must not take the other's audio
+ * with it. (A merged transcript embedding a part's audio counts the same way.)
+ * Each transcript still gets its own pruned voiceprint sidecar, so the sidecar
+ * normally has exactly one linker and is included as before.
  */
 export function collectTranscriptRelatedFiles(app: App, transcriptFile: TFile): RelatedFile[] {
 	const out: RelatedFile[] = [];
@@ -22,6 +56,10 @@ export function collectTranscriptRelatedFiles(app: App, transcriptFile: TFile): 
 	const add = (file: TFile | null, kind: RelatedFileKind): void => {
 		if (!file || seen.has(file.path)) return;
 		seen.add(file.path);
+		if (isSharedWithAnotherNote(app, file, transcriptFile.path)) {
+			console.debug(`[WhisperCal] Keeping shared ${kind} ${file.path} — still referenced by another note`);
+			return;
+		}
 		out.push({file, kind});
 	};
 

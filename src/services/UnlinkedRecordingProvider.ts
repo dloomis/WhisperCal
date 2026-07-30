@@ -58,6 +58,10 @@ export interface UnlinkedRecordingProvider {
 	/**
 	 * Test whether a note's frontmatter indicates it already has a recording
 	 * linked via THIS provider. Used to filter event candidates.
+	 *
+	 * `notePath` is the link-resolution context for providers whose marker is a
+	 * wiki-link: a link that no longer resolves means the note is NOT linked, and
+	 * must stay eligible so the unlinked flow can re-attach a transcript to it.
 	 */
-	isNoteLinked(fm: Record<string, unknown>): boolean;
+	isNoteLinked(fm: Record<string, unknown>, notePath: string): boolean;
 }

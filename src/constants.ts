@@ -49,6 +49,14 @@ export const FM = {
 	// this key hides the note's card in the calendar (both its local card and
 	// the underlying Graph event card); the merged note is the source of truth.
 	MERGED_INTO: "merged_into",
+	// Split provenance (the inverse of merged_from/merged_into). Written onto the
+	// second-half note + transcript minted by "Split transcript…"; the originals
+	// gain SPLIT_INTO. Unlike MERGED_INTO these are informational only — both
+	// halves are real meetings and both keep their cards.
+	SPLIT_FROM: "split_from",
+	SPLIT_INTO: "split_into",
+	/** Seconds into the shared recording at which the second half begins. */
+	SPLIT_OFFSET: "split_offset_seconds",
 	TRANSCRIPT: "transcript",
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",
@@ -64,3 +72,13 @@ export const FM = {
 
 /** Valid values written to `pipeline_state` across the pipeline. */
 export type PipelineState = "note" | "titled" | "transcript" | "tagged" | "summarized";
+
+/**
+ * Sentinel line the user places in a transcript to mark where a second meeting
+ * begins (see MeetingSplitter). Deliberately plain text rather than an HTML
+ * comment or a CM6 decoration: it has to be visible in both source and reading
+ * mode, survive a round-trip through the editor untouched, and be findable by
+ * exact string search. The scissors + em dashes make an accidental collision
+ * with real transcript text effectively impossible.
+ */
+export const SPLIT_MARKER = "--- ✂ SPLIT — everything below becomes a new meeting ✂ ---";

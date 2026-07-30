@@ -36,6 +36,8 @@ export interface CalendarViewCallbacks {
 	onReviewSpeakerCandidates: (notePath: string) => void;
 	onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch: (notePath: string) => void;
+	/** Open the transcript in split mode (banner + marker workflow). */
+	onSplitTranscript: (transcriptFile: TFile, notePath: string) => void;
 	getAuthState: () => AuthState;
 	onSignIn: () => Promise<void>;
 	onCancelSignIn: () => void;
@@ -519,6 +521,16 @@ export class CalendarView extends ItemView {
 		this.updateNowMarker();
 	}
 
+	/**
+	 * Full re-render from the cached event list, plus a refresh of the unlinked
+	 * section. Use after a vault change that ADDS or REMOVES a card (split,
+	 * delete, import) — rerenderCards only refreshes the cards already on screen.
+	 */
+	rebuildCards(): void {
+		if (this.cachedEvents) this.renderEvents(this.cachedEvents);
+		void this.loadAndRenderUnlinkedSection();
+	}
+
 	rerenderCard(notePath: string): void {
 		this.rerenderCardByPath(notePath);
 		// An in-place re-render can change the card's height (the activity badge
@@ -830,6 +842,7 @@ export class CalendarView extends ItemView {
 			onReviewSpeakerCandidates: this.callbacks.onReviewSpeakerCandidates,
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,
+			onSplitTranscript: this.callbacks.onSplitTranscript,
 			onNoteDeleted: () => {
 				// Re-render from cache so the timeline reflects the deletion: a
 				// local-only note's card disappears, while a Graph-backed note's card
@@ -965,6 +978,12 @@ export class CalendarView extends ItemView {
 			// "YYYY-MM-DD - Subject" (template-created) or "YYYY-MM-DD Subject"
 			// (verbatim names from the link-unlinked-transcript flow).
 			const isMerged = eventId.startsWith("merged-");
+			// Split-off second halves carry their own synthetic `split-` id and, like
+			// merged notes, need the deterministic card id so findNote resolves them by
+			// calendar_event_id. Everything else about them is an ordinary local card —
+			// notably they stay merge-selectable — so isMerged deliberately stays false
+			// and the `_merged` basename strip below doesn't apply (they have no suffix).
+			const hasSyntheticId = isMerged || eventId.startsWith("split-");
 			let strippedBasename = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "");
 			// Merged notes carry a `_merged` file suffix; drop it so the card
 			// shows the clean user-chosen name.
@@ -972,9 +991,9 @@ export class CalendarView extends ItemView {
 			const displaySubject = strippedBasename || meetingSubject || child.basename;
 
 			results.push({
-				// Merged notes key on their own synthetic id so findNote resolves
-				// them deterministically (calendar_event_id === event.id).
-				id: isMerged ? eventId : `unscheduled-${child.path}`,
+				// Merged/split notes key on their own synthetic id so findNote
+				// resolves them deterministically (calendar_event_id === event.id).
+				id: hasSyntheticId ? eventId : `unscheduled-${child.path}`,
 				subject: displaySubject,
 				body: "",
 				isAllDay: false,
@@ -1285,7 +1304,7 @@ export class CalendarView extends ItemView {
 		const note = findNoteBySessionGuid(this.app, rec.sessionGuid, this.settings.transcriptFolderPath);
 		if (!note) return false;
 		const fm = (this.app.metadataCache.getFileCache(note)?.frontmatter ?? {}) as Record<string, unknown>;
-		if (unlinkedProvider.isNoteLinked(fm)) return false;
+		if (unlinkedProvider.isNoteLinked(fm, note.path)) return false;
 		// Meeting context comes off the note's own frontmatter (NoteCreator wrote
 		// it at creation) so a guid-recovered transcript gets the same
 		// self-contained enrichment as one linked by the live tail. Subject falls
@@ -1356,7 +1375,7 @@ export class CalendarView extends ItemView {
 			const noteFile = this.noteCreator.findNote(e);
 			if (!noteFile) continue;
 			const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-			if (unlinkedProvider.isNoteLinked((fm as Record<string, unknown>) ?? {})) continue;
+			if (unlinkedProvider.isNoteLinked((fm as Record<string, unknown>) ?? {}, noteFile.path)) continue;
 			matches.push(e);
 		}
 		return matches.length === 1 ? matches[0]! : null;
@@ -1443,7 +1462,7 @@ export class CalendarView extends ItemView {
 			if (noteProvider && noteProvider !== this.settings.calendarProvider) continue;
 
 			// Already has a recording linked — nothing to attach.
-			if (unlinkedProvider.isNoteLinked(fm as Record<string, unknown>)) continue;
+			if (unlinkedProvider.isNoteLinked(fm as Record<string, unknown>, child.path)) continue;
 
 			const subject = child.basename.replace(/^\d{4}-\d{2}-\d{2}\s*-?\s*/, "")
 				|| meetingSubject || child.basename;
@@ -1487,7 +1506,7 @@ export class CalendarView extends ItemView {
 				const noteFile = this.noteCreator.findNote(e);
 				if (!noteFile) return true;
 				const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-				return !unlinkedProvider.isNoteLinked(fm as Record<string, unknown> ?? {});
+				return !unlinkedProvider.isNoteLinked(fm as Record<string, unknown> ?? {}, noteFile.path);
 			});
 
 			// Existing ad hoc notes (unscheduled, no transcript yet) are offered as

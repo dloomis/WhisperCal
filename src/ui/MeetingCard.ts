@@ -84,6 +84,8 @@ export interface MeetingCardOpts {
 	onResearch?: (notePath: string) => void;
 	onNoteDeleted?: () => void;
 	onNoteRenamed?: () => void;
+	/** Enter split mode on this meeting's transcript (see MeetingSplitter). */
+	onSplitTranscript?: (transcriptFile: TFile, notePath: string) => void;
 	peopleMatchService?: PeopleMatchService;
 	recordingApiBaseUrl?: string;
 	/**
@@ -208,6 +210,8 @@ function renderRailSeg(
 	if (state !== "pending") seg.addClass(`whisper-cal-rail-seg-${state}`);
 	// Pulse without recoloring: an active job on a segment that keeps its own
 	// state color (e.g. research running on an already-created green Note stage).
+	// The accent washes in and out over that fill, so it reads as active like a
+	// running segment while the underlying state color stays intact.
 	if (pulse) seg.addClass("whisper-cal-rail-seg-pulsing");
 	if (onClick) {
 		seg.addEventListener("click", onClick);
@@ -415,9 +419,21 @@ function computePillStates(
 	const research: PillState = jobs.has("research", notePath) ? "running"
 		: (noteFm[FM.RESEARCH_STATE] === "research-done" || noteFm["research_notes"]) ? "complete"
 		: "incomplete";
+	const pipelineState = noteFm[FM.PIPELINE_STATE] as string | undefined;
+	// A `transcript:` value that doesn't RESOLVE is not a transcript. Treating the
+	// bare string as complete wedges the card: the rail claims the stage is done,
+	// Speakers/Summarize then fail with "no transcript", and — because the same
+	// truthiness drives the record pill and isNoteLinked — the Link recording flow
+	// that would heal the note is hidden. Resolving first lets a dangling link fall
+	// back to "incomplete" and self-heal through the normal path.
+	const transcriptFile = noteFm[FM.TRANSCRIPT]
+		? resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath)
+		: null;
+	const transcriptPath = transcriptFile?.path ?? "";
+
 	const transcript: PillState = !noteExists
 		? "disabled"
-		: noteFm[FM.TRANSCRIPT] ? "complete" : "incomplete";
+		: transcriptFile ? "complete" : "incomplete";
 
 	// No cross-card "one at a time" lock: a sibling card recording (or, worse, a
 	// stale entry from one that already moved to transcribing) must not grey out
@@ -425,14 +441,8 @@ function computePillStates(
 	// instead and lets the user decide — see confirmIfServiceRecording.
 	const record: PillState = cardUi.hasRecording(notePath)
 		? "running"
-		: noteFm[FM.TRANSCRIPT] ? "complete"
+		: transcriptFile ? "complete"
 		: "incomplete";
-
-	const pipelineState = noteFm[FM.PIPELINE_STATE] as string | undefined;
-	const transcriptFile = noteFm[FM.TRANSCRIPT]
-		? resolveWikiLink(app, noteFm, FM.TRANSCRIPT, notePath)
-		: null;
-	const transcriptPath = transcriptFile?.path ?? "";
 
 	const speakers: PillState = transcript !== "complete"
 		? "disabled"
@@ -984,6 +994,21 @@ function renderCardDynamic(
 				}));
 		}
 
+		// Split transcript… — for a recording that turned out to cover two
+		// back-to-back meetings. Offered only before the summary exists: once the
+		// meeting is summarized the summary describes both halves, and cutting the
+		// transcript underneath it would leave the note describing a meeting that
+		// no longer matches its transcript. Also held back while any stage is
+		// mid-flight, since all three write to the very files the split rewrites.
+		if (tf && opts.onSplitTranscript
+			&& states.summary !== "complete" && states.summary !== "running"
+			&& states.speakers !== "running" && states.record !== "running") {
+			menu.addItem((item) => item
+				.setTitle("Split transcript…")
+				.setIcon("scissors")
+				.onClick(() => { opts.onSplitTranscript?.(tf, notePath); }));
+		}
+
 		// Export/delete need a note on disk — offered once one exists.
 		if (states.note === "complete") {
 			menu.addSeparator();
@@ -1103,9 +1128,10 @@ function renderCardDynamic(
 	// stays note-complete-gated for the Summary segment below, which must not
 	// create a note from its pending state.
 	// Research runs against the note (it's the Note stage's LLM action), so a
-	// running research job pulses this segment. Keep the segment's own color —
-	// green once the note exists — and pulse on top, rather than recoloring it to
-	// the running accent; the note-created state shouldn't visually regress mid-run.
+	// running research job pulses this segment. The pulse washes the running
+	// accent over the segment on the same beat as a running Speakers/Summary
+	// stage, but doesn't replace its color — green once the note exists — so the
+	// note-created state doesn't visually regress mid-run.
 	const noteSeg: RailSegState = states.note === "complete" ? "done" : "pending";
 	renderRailSeg(rail, "Note", noteSeg, () => { void openOrCreateNote(opts); },
 		undefined, states.research === "running");

@@ -195,8 +195,12 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		return true;
 	}
 
-	isNoteLinked(fm: Record<string, unknown>): boolean {
-		return !!fm[FM.TRANSCRIPT];
+	isNoteLinked(fm: Record<string, unknown>, notePath: string): boolean {
+		// Resolve, don't just test truthiness. A `transcript:` pointing at a file
+		// that was never created (or has since been renamed away) leaves the note
+		// with no transcript at all — reporting it as linked would exclude it from
+		// every link-target list and strand it permanently.
+		return !!resolveWikiLink(this.app, fm, FM.TRANSCRIPT, notePath);
 	}
 
 	/**
