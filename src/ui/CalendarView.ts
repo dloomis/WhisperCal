@@ -26,6 +26,7 @@ import {resolveRecordingApiBaseUrl, recordingStatus, recordingSessionStatus} fro
 import {findNoteBySessionGuid, runApiLinkTail} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
 import {collectTranscriptRelatedFiles, trashMeetingFiles} from "../services/MeetingDeleter";
+import {normalizeMeetingName} from "../utils/meetingName";
 
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
@@ -44,20 +45,6 @@ export interface CalendarViewCallbacks {
 	onOpenSettings: () => void;
 	subscribeAuthState: (listener: (state: AuthState) => void) => () => void;
 	getUnlinkedProvider: () => UnlinkedRecordingProvider;
-}
-
-/**
- * Normalize a meeting/transcript name for fuzzy equality: drop a leading ISO date prefix
- * (note templates often prepend "{{date}} - ", which the calendar subject lacks), lowercase,
- * and collapse whitespace. Used to decide whether an unlinked transcript "obviously" belongs
- * to a calendar meeting.
- */
-function normalizeMeetingName(s: string): string {
-	return s
-		.replace(/^\d{4}-\d{2}-\d{2}\s*[-–—]?\s*/, "")
-		.toLowerCase()
-		.replace(/\s+/g, " ")
-		.trim();
 }
 
 export class CalendarView extends ItemView {

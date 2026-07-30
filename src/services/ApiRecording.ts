@@ -9,11 +9,16 @@ import {resolveWikiLink} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import type {OnStatus} from "./LinkRecording";
 import {FM} from "../constants";
+import {waitForFinalizedTranscript} from "./TranscriptWait";
 
 /** Prevents duplicate waitAndLink calls when stopApiRecording and watchApiRecording
  *  race. Keyed by session guid (note path for legacy sessions without one) so a
  *  re-record's link tail is never swallowed by the prior session's still-running tail. */
 const linkingInProgress = new Set<string>();
+
+/** Cancel hooks for in-flight transcript waits — invoked on plugin unload so the
+ * metadataCache listeners are released immediately instead of on their next belt tick. */
+const activeWaitCancels = new Set<() => void>();
 
 /**
  * Plugin-lifecycle stop signal for the fire-and-forget watch/link loops. The
@@ -22,7 +27,11 @@ const linkingInProgress = new Set<string>();
  * writing vault files — after the plugin is disabled.
  */
 let watchersStopped = false;
-export function stopApiRecordingWatchers(): void { watchersStopped = true; }
+export function stopApiRecordingWatchers(): void {
+	watchersStopped = true;
+	for (const cancel of [...activeWaitCancels]) cancel();
+	activeWaitCancels.clear();
+}
 /** Re-arm after a plugin reload in case the module instance was reused. */
 export function resetApiRecordingWatchers(): void { watchersStopped = false; }
 
@@ -305,6 +314,14 @@ export function watchApiRecording(opts: {
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 100; // ~5 minutes
+/** Wall-clock cap on the event-driven wait for a finalized transcript export. The
+ * recording service's post-processing can land the final export minutes after capture
+ * ends; the wait re-arms on metadataCache "changed" events, so this cap only bounds the
+ * failure path (an export that never lands), not the normal one. */
+const TRANSCRIPT_EXPORT_WAIT_MS = 30 * 60_000;
+/** Belt-and-braces recheck interval for that wait — notices a missed change event, the
+ * plugin-unload stop signal, and the deadline even when the change feed stays quiet. */
+const TRANSCRIPT_RECHECK_MS = 30_000;
 
 /**
  * Find the newest transcript file in a folder created after a given timestamp.
@@ -495,13 +512,84 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 	const useGuid = !!sessionGuid && !!info?.guidAcknowledged;
 	onStatus?.("Waiting for transcript…", undefined, undefined, undefined, "Waiting");
 	try {
+		// Service-reported FINAL basename from the per-guid status — authoritative,
+		// immune to collision suffixes. Learned during the status poll below;
+		// findReady closes over it so a filename learned mid-wait still wins.
+		let guidTranscriptFilename: string | undefined;
+
+		// --- Match ladder (SESSION_GUID_DESIGN.md §6), one pass, no waiting ---
+		// Hoisted into a closure so the event-driven wait below can re-run it on
+		// every change signal. Rungs only fall downward; an id-based hit always
+		// beats heuristics.
+		const findReady = async (): Promise<TFile | null> => {
+			// Rung 1: exact filename reported by the per-guid status.
+			if (guidTranscriptFilename && sessionGuid) {
+				const guidPath = normalizePath(`${transcriptFolderPath}/${guidTranscriptFilename}`);
+				const byPath = app.vault.getAbstractFileByPath(guidPath);
+				if (byPath instanceof TFile) {
+					// Verify the file really carries our guid — a stale/foreign file at
+					// this path must not be cross-wired. An unreadable/unstamped file is
+					// still accepted: the service itself named this file for this guid.
+					const fileGuid = await readTranscriptSessionGuid(app, byPath);
+					if (fileGuid === undefined || fileGuid === sessionGuid) return byPath;
+					console.warn(`[WhisperCal] ${byPath.path} carries ${FM.SESSION_GUID} ${fileGuid}, expected ${sessionGuid} — falling back to guid scan`);
+				}
+			}
+
+			// Rung 2: scan the transcript folder for the file stamped with our guid.
+			// Catches service-crash/orphan-refinalize cases (the guid is written at
+			// session START) and completed sessions the service no longer remembers.
+			if (useGuid && sessionGuid) {
+				const byGuid = await findTranscriptByGuid(app, transcriptFolderPath, sessionGuid);
+				if (byGuid) return byGuid;
+			}
+
+			// Rung 3 (legacy heuristics — the only path for an unacknowledged guid,
+			// and the last resort otherwise). The recording service named the file
+			// from the suggestedFilename captured at record-start — derive the
+			// expected path from it directly; the caller's notePath may reflect a
+			// rename made after recording began.
+			const namePrefix = info?.suggestedFilename;
+			const expectedPath = namePrefix
+				? normalizePath(`${transcriptFolderPath}/${namePrefix}.md`)
+				: getTranscriptPath(notePath, transcriptFolderPath);
+			// A file already at the expected path from BEFORE this session stopped
+			// (e.g. the prior transcript of a re-recorded note) is not ours — require
+			// creation after beforeStop, like findNewestFile does.
+			const byExpected = app.vault.getAbstractFileByPath(expectedPath);
+			let candidate: TFile | null =
+				byExpected instanceof TFile && byExpected.stat.ctime > beforeStop ? byExpected : null;
+			if (!candidate) {
+				// Newest-file fallback, restricted to this recording's filename prefix —
+				// and never a file already linked to some other meeting note (its
+				// meeting_note backlink says a prior link flow adopted it).
+				const newest = findNewestFile(app, transcriptFolderPath, beforeStop, namePrefix);
+				const newestFm = newest ? app.metadataCache.getFileCache(newest)?.frontmatter : undefined;
+				if (newest && !newestFm?.[FM.MEETING_NOTE]) candidate = newest;
+			}
+			// Same guid safety net as rung 1: a candidate stamped with a DIFFERENT
+			// session guid belongs to another recording — don't adopt it. An
+			// unstamped file is still accepted (legacy guid-unaware service).
+			if (candidate && sessionGuid) {
+				const fileGuid = await readTranscriptSessionGuid(app, candidate);
+				if (fileGuid !== undefined && fileGuid !== sessionGuid) {
+					console.warn(`[WhisperCal] ${candidate.path} carries ${FM.SESSION_GUID} ${fileGuid}, expected ${sessionGuid} — not adopting`);
+					candidate = null;
+				}
+			}
+			return candidate;
+		};
+
+		// Skip the status poll when the transcript is already in the vault (a
+		// reconcile/watch hand-off may arrive when /status already describes a
+		// different meeting).
+		const alreadyFinalized = (await findReady()) !== null;
+
 		// --- Wait for post-processing to finish ---
 		// Per-guid when the service acknowledged our guid (unambiguous when a
 		// prior session post-processes while a new one records), global /status
-		// otherwise (legacy service). guidTranscriptFilename is the service-
-		// reported FINAL basename — authoritative, immune to collision suffixes.
-		let guidTranscriptFilename: string | undefined;
-		if (useGuid && sessionGuid) {
+		// otherwise (legacy service).
+		if (!alreadyFinalized && useGuid && sessionGuid) {
 			// The stall cap only counts polls that show no sign of progress. While
 			// the service reports "transcribing" it is working normally — a long
 			// meeting's on-device transcription can far exceed 5 minutes — so those
@@ -542,11 +630,13 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 					stalledPolls++;
 				}
 				if (stalledPolls >= MAX_POLL_ATTEMPTS || Date.now() - waitStart > TRANSCRIBE_BACKSTOP_MS) {
+					// Give up on the STATUS poll only — the export may still land, and
+					// the event-driven file wait below is the one that would see it.
 					onStatus?.("Transcript not ready — check recording service", "alert-circle", 6000, "warning", "Not ready");
-					return;
+					break;
 				}
 			}
-		} else {
+		} else if (!alreadyFinalized) {
 			// Poll recording API status until transcription completes
 			for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
 				await sleep(POLL_INTERVAL_MS);
@@ -562,87 +652,41 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 					break;
 				}
 				if (i === MAX_POLL_ATTEMPTS - 1) {
+					// Budget exhausted on the STATUS poll only — fall through to the
+					// event-driven file wait, which may still see the export land.
 					onStatus?.("Transcript not ready — check recording service", "alert-circle", 6000, "warning", "Not ready");
-					return;
-				}
-			}
-		}
-
-		// --- Locate the transcript: match ladder (SESSION_GUID_DESIGN.md §6) ---
-		// Rungs only fall downward; an id-based hit always beats heuristics.
-		let transcriptFile: TFile | null = null;
-
-		// Rung 1: exact filename reported by the per-guid status. Poll briefly —
-		// the service writes outside Obsidian, so the vault index may lag.
-		if (guidTranscriptFilename && sessionGuid) {
-			const guidPath = normalizePath(`${transcriptFolderPath}/${guidTranscriptFilename}`);
-			for (let i = 0; i < 15 && !transcriptFile; i++) {
-				const byPath = app.vault.getAbstractFileByPath(guidPath);
-				if (byPath instanceof TFile) {
-					transcriptFile = byPath;
 					break;
 				}
-				await sleep(1000);
-				if (watchersStopped) return;
-			}
-			if (transcriptFile) {
-				// Verify the file really carries our guid — a stale/foreign file at
-				// this path must not be cross-wired. An unreadable/unstamped file is
-				// still accepted: the service itself named this file for this guid.
-				const fileGuid = await readTranscriptSessionGuid(app, transcriptFile);
-				if (fileGuid !== undefined && fileGuid !== sessionGuid) {
-					console.warn(`[WhisperCal] ${transcriptFile.path} carries ${FM.SESSION_GUID} ${fileGuid}, expected ${sessionGuid} — falling back to guid scan`);
-					transcriptFile = null;
-				}
 			}
 		}
 
-		// Rung 2: scan the transcript folder for the file stamped with our guid.
-		// Catches service-crash/orphan-refinalize cases (the guid is written at
-		// session START) and completed sessions the service no longer remembers.
-		if (!transcriptFile && useGuid && sessionGuid) {
-			transcriptFile = await findTranscriptByGuid(app, transcriptFolderPath, sessionGuid);
+		// --- Wait for the export to land ---
+		// Event-driven (metadataCache "changed") with a wall-clock cap, NOT a fixed
+		// poll budget: the recording service's post-processing can land the final
+		// export minutes after capture ends, and a fixed budget that expired before
+		// the export landed is what silently killed auto-linking for card-started
+		// recordings. Every change signal re-runs the full match ladder, so a
+		// guid-reported filename learned above still wins over the heuristics.
+		const wait = waitForFinalizedTranscript({
+			findReady,
+			subscribeChanges: (onChange) => {
+				const ref = app.metadataCache.on("changed", (file) => {
+					if (file.path.startsWith(transcriptFolderPath + "/")) onChange();
+				});
+				return () => app.metadataCache.offref(ref);
+			},
+			isStopped: () => watchersStopped,
+			timeoutMs: TRANSCRIPT_EXPORT_WAIT_MS,
+			recheckIntervalMs: TRANSCRIPT_RECHECK_MS,
+		});
+		activeWaitCancels.add(wait.cancel);
+		let transcriptFile: TFile | null;
+		try {
+			transcriptFile = await wait.promise;
+		} finally {
+			activeWaitCancels.delete(wait.cancel);
 		}
-
-		// Rung 3 (legacy heuristics — the only path for an unacknowledged guid,
-		// and the last resort otherwise). The recording service named the file
-		// from the suggestedFilename captured at record-start — derive the
-		// expected path from it directly; the caller's notePath may reflect a
-		// rename made after recording began.
-		if (!transcriptFile) {
-			const namePrefix = info?.suggestedFilename;
-			const expectedPath = namePrefix
-				? normalizePath(`${transcriptFolderPath}/${namePrefix}.md`)
-				: getTranscriptPath(notePath, transcriptFolderPath);
-
-			// Poll ONLY the expected path for the full window. With concurrent
-			// recordings, an immediate newest-file fallback could adopt another
-			// meeting's transcript and then cross-wire its frontmatter — so we scan
-			// the folder only once, after the window expires, and only for a file
-			// whose basename matches this recording's suggestedFilename.
-			// A file already at the expected path from BEFORE this session stopped
-			// (e.g. the prior transcript of a re-recorded note) is not ours — require
-			// creation after beforeStop, like findNewestFile does.
-			for (let i = 0; i < 15 && !transcriptFile; i++) {
-				await sleep(1000);
-				if (watchersStopped) return;
-				const byPath = app.vault.getAbstractFileByPath(expectedPath);
-				if (byPath instanceof TFile && byPath.stat.ctime > beforeStop) transcriptFile = byPath;
-			}
-			if (!transcriptFile) {
-				transcriptFile = findNewestFile(app, transcriptFolderPath, beforeStop, namePrefix);
-			}
-			// Same guid safety net as rung 1: a candidate stamped with a DIFFERENT
-			// session guid belongs to another recording — don't adopt it. An
-			// unstamped file is still accepted (legacy guid-unaware service).
-			if (transcriptFile && sessionGuid) {
-				const fileGuid = await readTranscriptSessionGuid(app, transcriptFile);
-				if (fileGuid !== undefined && fileGuid !== sessionGuid) {
-					console.warn(`[WhisperCal] ${transcriptFile.path} carries ${FM.SESSION_GUID} ${fileGuid}, expected ${sessionGuid} — not adopting`);
-					transcriptFile = null;
-				}
-			}
-		}
+		if (watchersStopped) return; // resolved by unload — don't touch the vault
 
 		if (!transcriptFile) {
 			onStatus?.("Transcript file not found — check output folder", "alert-circle", 6000, "warning", "Not found");
