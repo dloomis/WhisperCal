@@ -281,7 +281,7 @@ export class NoteCreator {
 		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
 		const peopleMatch = peopleSvc.matchAttendees(event.attendees);
 		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
-		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated);
+		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated, {stripJoinBlock: this.settings.stripJoinBlock});
 		const content = applyTemplate(template, variables);
 		return this.injectReservedFrontmatter(content, event, variables);
 	}
