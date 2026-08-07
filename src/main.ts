@@ -887,6 +887,16 @@ export default class WhisperCalPlugin extends Plugin {
 	 */
 	private showLlmWaitStatus(notePath: string, retryAt: number): void {
 		const render = () => {
+			// Mirror clearLlmWaitStatus's guard: never write over a status somebody
+			// else owns. A job that started while this waiter was parked sets its
+			// own badge once, and a 1 Hz unguarded overwrite would stomp it for the
+			// job's whole run — then clearLlmWaitStatus, seeing its own badge, would
+			// delete the running job's status outright.
+			const existing = this.cardUi.getStatus(notePath);
+			if (existing && existing.badge?.label !== WhisperCalPlugin.LLM_WAIT_BADGE) {
+				this.stopLlmWaitTicker(notePath);
+				return;
+			}
 			const secs = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
 			this.cardUi.setStatus(notePath, {
 				message: `LLM concurrency limit reached — retrying in ${secs}s`,
@@ -897,8 +907,10 @@ export default class WhisperCalPlugin extends Plugin {
 			this.refreshCalendarCards(notePath);
 		};
 		this.stopLlmWaitTicker(notePath);
-		render();
+		// Register before the first render so that render's own bail-out (a status
+		// owned by someone else) can stop the ticker it would otherwise leave behind.
 		this.llmWaitTickers.set(notePath, setInterval(render, 1000));
+		render();
 	}
 
 	private stopLlmWaitTicker(notePath: string): void {
@@ -1157,11 +1169,16 @@ export default class WhisperCalPlugin extends Plugin {
 				// (snapshot restore, writeSpeakerProposals, tripwire/frontmatter restore)
 				// finish before a re-dispatch can race them. The modal itself stays
 				// fire-and-forget inside handleSpeakerTagSuccess.
+				// The LLM run lasts minutes and renaming the meeting mid-run is
+				// supported (⋯ → Rename moves note and transcript together), so the
+				// path captured at spawn time can be stale. transcriptFile.path
+				// tracks the rename; resolve through it, not the captured string.
+				const livePath = transcriptFile.path;
 				if (result.exitCode !== 0) {
-					await this.restoreTranscriptBody(transcriptPath, preBody, notePath, auto);
+					await this.restoreTranscriptBody(transcriptFile, preBody, notePath, auto);
 					return;
 				}
-				await this.handleSpeakerTagSuccess(result.stdout, transcriptFile, transcriptPath, notePath, auto, preBody);
+				await this.handleSpeakerTagSuccess(result.stdout, transcriptFile, livePath, notePath, auto, preBody);
 			},
 		});
 	}
@@ -1171,8 +1188,10 @@ export default class WhisperCalPlugin extends Plugin {
 		// Success/error paths below will set their own status as needed.
 		const clearProgressStatus = () => this.clearProgressStatus(notePath);
 
-		// Verify the transcript file still exists after the LLM run
-		if (!this.app.vault.getAbstractFileByPath(transcriptPath)) {
+		// Verify the transcript file still exists after the LLM run. Resolved via
+		// the live TFile path — a rename mid-run must not read as a deletion and
+		// throw away the work the LLM just finished.
+		if (!(this.app.vault.getAbstractFileByPath(transcriptFile.path) instanceof TFile)) {
 			if (auto) {
 				this.setCardStatus(notePath, "Transcript was deleted while post-processing was running", "alert-circle", 8000, "warning", "Deleted");
 				return;
@@ -1205,7 +1224,7 @@ export default class WhisperCalPlugin extends Plugin {
 				const labelsCollapsed = beforeLabels > 0 && afterLabels < beforeLabels * LABEL_FLOOR;
 				const nearTotalLoss = beforeWords >= MIN_REAL_WORDS && afterWords < MIN_REAL_WORDS;
 				if ((wordsCollapsed && labelsCollapsed) || nearTotalLoss) {
-					await this.restoreTranscriptBody(transcriptPath, snapshot, notePath, auto, "Transcript post-processing removed too much text — transcript restored");
+					await this.restoreTranscriptBody(transcriptFile, snapshot, notePath, auto, "Transcript post-processing removed too much text — transcript restored");
 					return;
 				}
 			} catch (e) {
@@ -1291,24 +1310,33 @@ export default class WhisperCalPlugin extends Plugin {
 	 * write error is logged, not thrown.
 	 */
 	private async restoreTranscriptBody(
-		transcriptPath: string,
+		target: TFile | string,
 		snapshot: string | undefined,
 		notePath: string,
 		auto: boolean,
 		message = "Transcript post-processing failed — transcript restored",
 	): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(transcriptPath);
+		// Prefer the live TFile: its `.path` tracks a rename made while the LLM ran,
+		// where a lookup by the spawn-time path silently finds nothing.
+		const file = target instanceof TFile ? target : this.app.vault.getAbstractFileByPath(target);
+		let restored = false;
 		if (snapshot !== undefined && file instanceof TFile) {
 			try {
 				await this.app.vault.process(file, () => snapshot);
+				restored = true;
 			} catch (e) {
 				console.error("[WhisperCal] failed to restore transcript snapshot", e);
 			}
 		}
+		// Only claim a restore that actually happened — otherwise the user is told
+		// the transcript is safe while a half-rewritten body sits on disk.
+		const outcome = restored
+			? message
+			: "Transcript post-processing failed — the transcript could not be restored and may be partly rewritten";
 		if (auto) {
-			this.setCardStatus(notePath, message, "alert-circle", 8000, "warning", "Failed");
+			this.setCardStatus(notePath, outcome, "alert-circle", 8000, "warning", "Failed");
 		} else {
-			new Notice(message);
+			new Notice(outcome);
 		}
 	}
 
@@ -2280,6 +2308,13 @@ export default class WhisperCalPlugin extends Plugin {
 	 * second meeting begins, then confirms. Entered from the meeting card's ⋯ menu.
 	 */
 	async enterSplitMode(transcriptFile: TFile, notePath: string): Promise<void> {
+		// Split mode is single-slot: pointing it at a second transcript hides the
+		// first one's banner, taking away the only Cancel that strips its marker.
+		// The stranded "--- ✂ SPLIT ---" line would then sit in the body forever and
+		// flow into every later LLM prompt built from that transcript.
+		if (this.splitMode && this.splitMode.transcriptPath !== transcriptFile.path) {
+			await this.cancelSplitMode();
+		}
 		this.splitMode = {transcriptPath: transcriptFile.path, notePath};
 		await this.app.workspace.openLinkText(transcriptFile.path, "", false);
 		this.updateAllBanners();

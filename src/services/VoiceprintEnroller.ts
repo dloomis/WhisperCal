@@ -403,7 +403,14 @@ export async function healVoiceprints(
 	// confirming a proposal under a variant spelling ("Dave Smith" for library
 	// "David Smith") is an ACCEPTED match, not a correction — healing it would
 	// delete the sample enroll just added.
+	// BOTH sides must be canonicalized. `proposed` is the raw LIBRARY name, but
+	// the modal pre-fill the user clicked Apply on was rewritten to the
+	// People-note basename by canonicalizeProposals. Comparing a canonical
+	// confirmed name against a drifted library name (People note renamed after
+	// enrollment, or now covered by a nickname/email variant) reads an untouched,
+	// accepted proposal as a correction and deletes a genuine sample.
 	const peopleSvc = new PeopleMatchService(app, peopleFolderPath);
+	const canonOf = (n: string): string => peopleSvc.canonicalName(n) ?? n;
 
 	let healed = 0;
 	for (const d of decisions) {
@@ -411,8 +418,7 @@ export async function healVoiceprints(
 		if (!proposed) continue;                            // not a voiceprint match
 		const confirmed = d.confirmedName?.trim();
 		if (!confirmed) continue;                           // cleared/skipped — not a "wrong match" signal
-		if (confirmed === proposed) continue;               // match accepted — nothing to heal
-		if ((peopleSvc.canonicalName(confirmed) ?? confirmed) === proposed) continue; // same person under a variant — accepted
+		if (canonOf(confirmed) === canonOf(proposed)) continue; // same person (possibly under a variant) — accepted
 		const sp = sidecar.speakers[d.diarizerLabel || d.originalName];
 		if (!sp || !Array.isArray(sp.embedding) || sp.embedding.length === 0) continue;
 		if (await removeCulpritSample(app, voiceprintFolderPath, proposed, sp.embedding)) healed++;

@@ -57,7 +57,11 @@ type EligibilityResult =
  */
 export class AutoSpeakerTagger {
 	/** FIFO of pending transcripts. Holds live TFiles so paths survive renames. */
-	private queue: {file: TFile; eligibleAt: number}[] = [];
+	/** `waitStartedAt` is stamped when this entry first finds no free LLM slot —
+	 *  NOT at enqueue. Time spent merely queued behind earlier transcripts must
+	 *  not count against LLM_SLOT_MAX_WAIT_MS, or a backlog longer than the budget
+	 *  drops its whole tail on each item's very first slot check. */
+	private queue: {file: TFile; eligibleAt: number; waitStartedAt?: number}[] = [];
 	/** Session-scoped loop guard for runs that wrote nothing (failures, zero
 	 * mappings). Successful runs are blocked durably by their cached proposals. */
 	private readonly attempted = new Set<string>();
@@ -172,7 +176,23 @@ export class AutoSpeakerTagger {
 					continue;
 				}
 				if (!this.deps.canStartLlm()) {
-					if (Date.now() - head.eligibleAt > LLM_SLOT_MAX_WAIT_MS) {
+					// The slot may be busy with a MANUAL tag of this very transcript.
+					// Showing a countdown then would stomp that job's own "Processing"
+					// badge every second for its whole run — so keep waiting quietly.
+					// (The dequeue-time eligibility re-check drops the item once the
+					// manual run caches its proposals.)
+					if (this.deps.jobs.has("speakerTag", head.file.path)) {
+						this.endSlotWait("cancelled");
+						await this.sleep(LLM_SLOT_POLL_MS);
+						continue;
+					}
+					head.waitStartedAt ??= Date.now();
+					// Point the countdown badge at this head BEFORE the drop check, so
+					// a head that times out on its first look still has a card status
+					// to clear — endSlotWait early-returns when nothing is showing,
+					// which is how dropped items used to vanish with no feedback.
+					this.beginSlotWait(head.file);
+					if (Date.now() - head.waitStartedAt > LLM_SLOT_MAX_WAIT_MS) {
 						// Drop without marking attempted so a later frontmatter
 						// change or the next startup scan re-arms it.
 						this.queue.shift();
@@ -180,7 +200,6 @@ export class AutoSpeakerTagger {
 						debug("autoTag", `slot wait timed out — dropping ${head.file.path}`);
 						continue;
 					}
-					this.beginSlotWait(head.file);
 					await this.sleep(LLM_SLOT_POLL_MS);
 					continue;
 				}

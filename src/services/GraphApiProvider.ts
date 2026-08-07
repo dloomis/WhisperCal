@@ -1,6 +1,6 @@
 import {htmlToMarkdown, requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory, ResponseStatus} from "../types";
-import {getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
+import {allDayCoversDay, getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
 import type {CalendarAuth} from "./CalendarAuth";
 
 // Graph API response shapes (Microsoft-specific)
@@ -143,7 +143,13 @@ export class GraphApiProvider implements CalendarProvider {
 		}
 		const userEmail = this.userEmail;
 		const colorMap = this.categoryColors ?? new Map<string, string>();
-		return allEvents.map(e => parseGraphEvent(e, userEmail, colorMap, timezone));
+		// Drop all-day events the query window only clipped: Graph stores them as
+		// [D 00:00Z, D+1 00:00Z), which overlaps the configured-zone window of the
+		// neighboring day. Filtering here (not at render) also keeps the ghost out
+		// of the day's cache entry, which past days are served from forever.
+		return allEvents
+			.map(e => parseGraphEvent(e, userEmail, colorMap, timezone))
+			.filter(e => !e.isAllDay || allDayCoversDay(e.startTime, e.endTime, date, timezone));
 	}
 
 	getUserEmail(): string {

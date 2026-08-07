@@ -578,14 +578,22 @@ export class SpeakerTagModal extends Modal {
 
 	onClose(): void {
 		const decisions: SpeakerTagDecision[] | null = this.submitted
-			? this.mappings.map((m, i) => ({
-				speakerId: m.speakerId,
-				originalName: m.originalName,
-				diarizerLabel: m.diarizerLabel,
-				confirmedName: this.inputs[i]?.value.trim() ?? "",
-				confidence: m.confidence,
-				evidence: m.evidence,
-			}))
+			? this.mappings.map((m, i) => {
+				const confirmedName = this.inputs[i]?.value.trim() ?? "";
+				// Confidence and evidence describe the PROPOSAL. Carrying them onto a
+				// name the user typed instead stamps the rejected match's provenance
+				// ("CERTAIN", "cosine 0.812") onto a different person, and the next
+				// cached re-review presents it as if the system had matched them.
+				const kept = confirmedName === m.proposedName;
+				return {
+					speakerId: m.speakerId,
+					originalName: m.originalName,
+					diarizerLabel: m.diarizerLabel,
+					confirmedName,
+					confidence: kept ? m.confidence : "",
+					evidence: kept ? m.evidence : "",
+				};
+			})
 			: null;
 
 		// Stop playback before tearing down the modal DOM.

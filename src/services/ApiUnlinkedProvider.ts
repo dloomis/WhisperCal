@@ -3,7 +3,7 @@ import {TFile, TFolder, normalizePath} from "obsidian";
 import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} from "./UnlinkedRecordingProvider";
 import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "../utils/vault";
-import {batchUpdateFrontmatter} from "../utils/frontmatter";
+import {batchUpdateFrontmatter, removeFrontmatterKeys} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
 import {parseDurationSeconds} from "../utils/time";
 import {FM} from "../constants";
@@ -184,13 +184,29 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		const noteGuid: unknown = noteFm?.[FM.SESSION_GUID];
 		const noteGuidInFlight = typeof noteGuid === "string" && noteGuid !== transcriptGuid
 			&& this.settings.activeApiRecordings.some(e => e.sessionGuid === noteGuid);
-		await batchUpdateFrontmatter(opts.app, opts.notePath, {
-			[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
-			[FM.PIPELINE_STATE]: "titled",
-			...(typeof transcriptGuid === "string" && transcriptGuid && !noteGuidInFlight
-				? {[FM.SESSION_GUID]: transcriptGuid}
-				: {}),
-		});
+		try {
+			await batchUpdateFrontmatter(opts.app, opts.notePath, {
+				[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
+				[FM.PIPELINE_STATE]: "titled",
+				...(typeof transcriptGuid === "string" && transcriptGuid && !noteGuidInFlight
+					? {[FM.SESSION_GUID]: transcriptGuid}
+					: {}),
+			});
+		} catch (err) {
+			// The note-side write can fail on a hand-authored ad hoc target with
+			// malformed YAML (the "existing note" choice links to arbitrary user
+			// notes). Without a rollback the transcript keeps a resolving
+			// meeting_note backlink, so findUnlinked skips it forever while the note
+			// stays unlinked — a half-linked pair with no way back. Drop the backlink
+			// so the transcript is listed again and a retry works.
+			console.error(`[WhisperCal] Failed to link ${transcriptFile.path} on the note side — reverting its meeting_note:`, err);
+			try {
+				await removeFrontmatterKeys(this.app, transcriptFile.path, [FM.MEETING_NOTE]);
+			} catch (revertErr) {
+				console.error(`[WhisperCal] Could not revert meeting_note on ${transcriptFile.path}:`, revertErr);
+			}
+			throw err;
+		}
 
 		return true;
 	}

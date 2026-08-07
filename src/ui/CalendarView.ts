@@ -1417,11 +1417,17 @@ export class CalendarView extends ItemView {
 			});
 		});
 
-		const deleteBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small whisper-cal-btn-danger", text: "Delete"});
-		deleteBtn.addEventListener("click", (e) => {
-			e.stopPropagation();
-			void this.handleDeleteUnlinked(recording);
-		});
+		// Delete only when there is a vault file to delete. A MacWhisper-source
+		// entry is a row in MacWhisper's own database with no transcript here, so
+		// the button would confirm a destructive action and trash nothing, leaving
+		// the same recording listed forever.
+		if (recording.transcriptPath) {
+			const deleteBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small whisper-cal-btn-danger", text: "Delete"});
+			deleteBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.handleDeleteUnlinked(recording);
+			});
+		}
 	}
 
 	/**
@@ -1536,9 +1542,15 @@ export class CalendarView extends ItemView {
 					timezone: this.settings.timezone,
 					transcriptFolderPath: this.settings.transcriptFolderPath,
 					isRecurring: noteFm?.["is_recurring"] === true,
-					meetingDate: typeof noteFm?.["meeting_date"] === "string" ? noteFm["meeting_date"] : undefined,
-					meetingStart: typeof noteFm?.["meeting_start"] === "string" ? noteFm["meeting_start"] : undefined,
-					meetingEnd: typeof noteFm?.["meeting_end"] === "string" ? noteFm["meeting_end"] : undefined,
+					// Coerced, not typeof-guarded: this is a hand-authored ad hoc note,
+					// so unquoted `meeting_date: 2026-08-05` re-reads as a Date and
+					// `meeting_start: 16:39` as the number 999. A typeof guard silently
+					// passes undefined and the transcript loses the meeting context that
+					// makes it self-contained for LLM runs. (organizer/location below are
+					// genuinely strings.)
+					meetingDate: coerceFmDate(noteFm?.["meeting_date"]),
+					meetingStart: coerceFmTime(noteFm?.["meeting_start"]),
+					meetingEnd: coerceFmTime(noteFm?.["meeting_end"]),
 					organizer: typeof noteFm?.["meeting_organizer"] === "string" ? noteFm["meeting_organizer"] : undefined,
 					location: typeof noteFm?.["meeting_location"] === "string" ? noteFm["meeting_location"] : undefined,
 				});
@@ -1551,8 +1563,13 @@ export class CalendarView extends ItemView {
 				if (existingNote) {
 					notePath = existingNote.path;
 				} else {
-					await this.noteCreator.createNote(choice.event);
-					notePath = this.noteCreator.getNotePath(choice.event);
+					// createNote Notices and returns null when the note template is
+					// unset or missing. Proceeding would enrich and rename the
+					// transcript against a note that doesn't exist, and linkToNote
+					// would still report success.
+					const created = await this.noteCreator.createNote(choice.event);
+					if (!created) return;
+					notePath = created.path;
 				}
 				await unlinkedProvider.linkToNote({
 					app: this.app,
@@ -1601,8 +1618,10 @@ export class CalendarView extends ItemView {
 					responseStatus: "organizer",
 					categories: [],
 				};
-				await this.noteCreator.createNote(event, {preserveTimestamps: true, filenameOverride: name});
-				const notePath = this.noteCreator.getNotePath(event, {filenameOverride: name});
+				// Same guard as the event branch: no note, no link.
+				const created = await this.noteCreator.createNote(event, {preserveTimestamps: true, filenameOverride: name});
+				if (!created) return;
+				const notePath = created.path;
 				await unlinkedProvider.linkToNote({
 					app: this.app,
 					recording,
@@ -1629,6 +1648,13 @@ export class CalendarView extends ItemView {
 
 	private async handleDeleteUnlinked(recording: UnlinkedRecording): Promise<void> {
 		const title = recording.title || "Untitled recording";
+		// Belt-and-braces for the button gating above: never confirm a delete that
+		// can't remove anything.
+		if (!recording.transcriptPath) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			new Notice("This recording lives in MacWhisper — delete it there");
+			return;
+		}
 		// Resolve companions (audio, voiceprint sidecar) BEFORE anything is trashed —
 		// both are resolved off the transcript's basename/frontmatter, so once it's
 		// gone they'd be orphaned with no way back to them. Same opt-in as the

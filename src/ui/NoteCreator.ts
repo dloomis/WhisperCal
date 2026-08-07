@@ -97,6 +97,10 @@ export class NoteCreator {
 		// after the note was made. See the fallback below the loop.
 		const rescheduled: TFile[] = [];
 
+		// Notes claiming this event id on a DIFFERENT day — the meeting was moved
+		// to another date after its note existed. See the second fallback below.
+		const movedDay: TFile[] = [];
+
 		for (const child of files) {
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;
 			if (!fm) continue;
@@ -117,10 +121,13 @@ export class NoteCreator {
 			// would bind the shared unscheduled placeholder card to whichever ad
 			// hoc note happened to be the day's only one.
 			if (isRealEventId(fm[FM.CALENDAR_EVENT_ID])
-				&& fm[FM.CALENDAR_EVENT_ID] === event.id
-				&& fmDate === date) {
-				if (startMatches(fm as Record<string, unknown>)) return child;
-				rescheduled.push(child);
+				&& fm[FM.CALENDAR_EVENT_ID] === event.id) {
+				if (fmDate === date) {
+					if (startMatches(fm as Record<string, unknown>)) return child;
+					rescheduled.push(child);
+				} else {
+					movedDay.push(child);
+				}
 			}
 
 			// Match on meeting_subject + meeting_date + meeting_start.
@@ -142,11 +149,25 @@ export class NoteCreator {
 		// leave those unmatched rather than guess.
 		if (rescheduled.length === 1) return rescheduled[0]!;
 
+		// Rescheduled to a different DAY: same id, different meeting_date. Nothing
+		// else can find that note — subject and last-resort matching are both gated
+		// on the date — so without this every ensureNote trigger mints a duplicate
+		// on the new day while the old note keeps the transcript and lingers as a
+		// ghost card. Restricted to non-recurring events: the documented Graph
+		// anomaly (one id shared across occurrences of a series) IS the cross-day
+		// case, so a series must keep the same-day requirement.
+		if (!event.isRecurring && movedDay.length === 1) return movedDay[0]!;
+
 		// Last resort: match notes whose basename contains the subject and
 		// whose frontmatter Date (or meeting_date) falls on the same day.
 		// Catches legacy notes created outside WhisperCal. Still applies the
 		// time qualifier when meeting_start is present.
+		// Skipped for degenerate subjects: sanitizeFilename strips colons, so the
+		// very common "1:1" becomes "11" — a substring of countless basenames
+		// ("Sprint 11 planning"), which would resolve the card to an unrelated note
+		// and write its transcript pointer into it.
 		const subject = sanitizeFilename(event.subject);
+		if (subject.length < 3) return null;
 		for (const child of files) {
 			if (!child.basename.includes(subject)) continue;
 			const fm = this.app.metadataCache.getFileCache(child)?.frontmatter;

@@ -2,7 +2,7 @@ import {App, Notice} from "obsidian";
 import {findRecordingsNear, hasTranscriptLines, MacWhisperDbError, type MacWhisperRecording} from "./MacWhisperDb";
 import {createTranscriptFile} from "./TranscriptWriter";
 import {RecordingSuggestModal} from "../ui/RecordingSuggestModal";
-import {updateFrontmatter} from "../utils/frontmatter";
+import {removeFrontmatterKeys, updateFrontmatter} from "../utils/frontmatter";
 import {getLinkedSessionIds} from "../utils/vault";
 import {sleep} from "../utils/time";
 import type {EventAttendee} from "../types";
@@ -49,6 +49,19 @@ async function performLink(opts: {
 	}
 	// Phase 2: Create transcript file in background (fire-and-forget)
 	// Polls for transcript lines in case MacWhisper is still transcribing.
+	//
+	// The claim written above is what every retry avenue filters on: the command
+	// refuses a note that already has a session id, and the card's link search and
+	// the unlinked section both exclude claimed sessions. So a phase-2 failure
+	// that leaves the claim in place makes the recording permanently unlinkable \u2014
+	// release it on every path that produces no transcript.
+	const releaseClaim = async (): Promise<void> => {
+		try {
+			await removeFrontmatterKeys(app, notePath, [FM.MACWHISPER_SESSION_ID]);
+		} catch (err) {
+			console.error("[WhisperCal] Failed to release the MacWhisper session claim:", err);
+		}
+	};
 	void (async () => {
 		onStatus?.("Linking recording\u2026", undefined, undefined, undefined, "Linking");
 		try {
@@ -64,6 +77,7 @@ async function performLink(opts: {
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {
+					await releaseClaim();
 					onStatus?.("Transcription in progress \u2014 try again later", "alert-circle", 6000, "warning", "Not ready");
 					return;
 				}
@@ -85,10 +99,16 @@ async function performLink(opts: {
 			if (transcriptPath) {
 				onStatus?.("Recording linked", "check", 4000, "done", "Linked");
 			} else {
-				onStatus?.("Linked (no transcript)", "check", 4000, "done", "Linked");
+				// No transcript was written (session gone from MacWhisper's DB, or
+				// the existing transcript belongs to a different session). Reporting
+				// this as a success left the note dead-claiming a recording it never
+				// got, with no way back.
+				await releaseClaim();
+				onStatus?.("Could not create a transcript for this recording — try linking it again", "alert-circle", 6000, "warning", "No transcript");
 			}
 		} catch (err) {
 			console.error("[WhisperCal] Transcript creation failed:", err);
+			await releaseClaim();
 			onStatus?.("Transcript creation failed", "alert-circle", 6000, "warning", "Failed");
 		}
 	})();

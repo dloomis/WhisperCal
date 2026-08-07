@@ -51,6 +51,11 @@ export async function applySpeakerTags(
 		}
 	}
 
+	// Names un-tagged on a re-review (the user cleared the input). Collected in the
+	// frontmatter pass — only the attendee entry knows the diarizer stub to go back
+	// to — and replayed over the body below.
+	const retractions: Array<{from: string; to: string}> = [];
+
 	// 1. Update frontmatter
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 		const attendees = frontmatter["attendees"] ?? frontmatter["speakers"];
@@ -60,7 +65,23 @@ export async function applySpeakerTags(
 				// Read speaker.name before any rename below — it's still the original label here.
 				const decision = (speaker.id ? decisionById.get(speaker.id) : undefined)
 					?? (speaker.name ? decisionByName.get(speaker.name.toLowerCase()) : undefined);
-				if (!decision || !decision.confirmedName) continue;
+				if (!decision) continue;
+				if (!decision.confirmedName) {
+					// Cleared on a re-review. The enroller drops this speaker's
+					// voiceprint sample and the confirmed_speakers rebuild below omits
+					// them, so leaving the attendee named (and the body labelled) would
+					// keep a retracted person visible throughout the transcript while
+					// every invisible layer disagrees. Put the diarizer stub back.
+					if (speaker.stub === false && speaker.original_name
+						&& speaker.name && speaker.name !== speaker.original_name) {
+						retractions.push({from: speaker.name, to: speaker.original_name});
+						speaker.name = speaker.original_name;
+						speaker.stub = true;
+						delete speaker.confidence;
+						delete speaker.evidence;
+					}
+					continue;
+				}
 				// Preserve the diarizer stub: set original_name only on the first tag. On a
 				// re-tag review, speaker.name is already a real name, so overwriting would lose
 				// the stub that voiceprint match/enroll key off.
@@ -99,7 +120,7 @@ export async function applySpeakerTags(
 	}
 
 	// Collect replacements, process longer names first to avoid substring collisions
-	const replacements: Array<{from: string; to: string}> = [];
+	const replacements: Array<{from: string; to: string}> = [...retractions];
 	for (const d of decisions) {
 		if (d.confirmedName && d.originalName !== d.confirmedName) {
 			replacements.push({from: d.originalName, to: d.confirmedName});

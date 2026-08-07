@@ -156,8 +156,12 @@ function extractJsonSpeakers(
 		if (typeof entry?.index !== "number") continue;
 		const originalName = typeof entry.original_name === "string" ? entry.original_name : "";
 		if (!originalName) continue;
-		const speaker = speakers[entry.index];
 		const proposed = cleanProposedName(entry.proposed_name);
+		// Identity is NEVER taken from the LLM's index. mergeWithFrontmatter exists
+		// precisely because the LLM's numbering can differ from the frontmatter
+		// order, so speakers[entry.index] may be a different person entirely — an
+		// entry that ends up a name-unmatched leftover would carry a real
+		// attendee's id and steal that attendee's decision downstream.
 		llmMap.set(entry.index, {
 			index: entry.index,
 			originalName,
@@ -165,8 +169,8 @@ function extractJsonSpeakers(
 			source: proposed ? "llm" : "",
 			confidence: cleanConfidence(entry.confidence),
 			evidence: entry.evidence ?? "",
-			speakerId: speaker?.id ?? "",
-			lineCount: speaker?.line_count ?? 0,
+			speakerId: "",
+			lineCount: 0,
 		});
 	}
 	if (llmMap.size === 0) {
@@ -199,7 +203,8 @@ function extractLegacySpeakers(
 		const proposedName = match[3] ?? "";
 		const confidence = match[4] ?? "";
 		const evidence = match[5]?.trim() ?? "";
-		const speaker = speakers[index];
+		// Same as the JSON parser: identity comes from mergeWithFrontmatter's
+		// name match, never from the LLM's own index.
 		llmMap.set(index, {
 			index,
 			originalName,
@@ -207,8 +212,8 @@ function extractLegacySpeakers(
 			source: proposedName ? "llm" : "",
 			confidence: confidence.toUpperCase(),
 			evidence,
-			speakerId: speaker?.id ?? "",
-			lineCount: speaker?.line_count ?? 0,
+			speakerId: "",
+			lineCount: 0,
 		});
 	}
 	if (llmMap.size > 0) {
@@ -252,8 +257,8 @@ function mergeWithFrontmatter(
 			merged.push({
 				...llm,
 				index: i,
-				speakerId: s.id ?? llm.speakerId,
-				lineCount: s.line_count ?? llm.lineCount,
+				speakerId: s.id ?? "",
+				lineCount: s.line_count ?? 0,
 			});
 		} else {
 			merged.push({

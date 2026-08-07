@@ -210,19 +210,26 @@ export async function createPeopleNotesForNames(
 		const lastName = parsed.split(/\s+/).pop();
 		if (lastName && existingLastNames.has(lastName.toLowerCase())) continue;
 
-		const path = normalizePath(`${peopleFolderPath}/${sanitizeFilename(parsed)}.md`);
+		// The note is named after the CONFIRMED name, not the parsed one. `parsed`
+		// exists only for the guards above — parseDisplayName drops middle names
+		// and initials, strips suffixes, and re-cases, so naming the note after it
+		// leaves a dangling `[[Aaron D Falk]]` in confirmed_speakers and a
+		// "Aaron D Falk.json" library beside an "Aaron Falk.md" note, breaking the
+		// 1:1 library↔People-note alignment the plugin depends on. This mirrors the
+		// modal's own "+ Create note" behavior.
+		const path = normalizePath(`${peopleFolderPath}/${sanitizeFilename(name)}.md`);
 		if (app.vault.getAbstractFileByPath(path)) continue;
 
 		try {
 			let content = template
-				? applyTemplate(template, buildPeopleVariableMap(parsed, ""))
-				: `---\nfull_name: "${parsed}"\n---\n`;
+				? applyTemplate(template, buildPeopleVariableMap(name, ""))
+				: `---\nfull_name: "${name}"\n---\n`;
 			if (contextLabel) content += `\n\n> [!info] Auto-created\n> Speaker in **${contextLabel}**\n`;
 			await app.vault.create(path, content);
-			created.push(parsed);
+			created.push(name);
 			console.debug(`[WhisperCal] Auto-created People note from speaker tag: ${path}`);
 		} catch (e) {
-			console.warn(`[WhisperCal] failed to auto-create People note "${parsed}"`, e);
+			console.warn(`[WhisperCal] failed to auto-create People note "${name}"`, e);
 		}
 	}
 

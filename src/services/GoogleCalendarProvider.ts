@@ -1,6 +1,6 @@
 import {requestUrl} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventCategory} from "../types";
-import {getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
+import {allDayCoversDay, getDayStartUTC, getDayEndUTC, midnightFromDateKey} from "../utils/time";
 import type {CalendarAuth} from "./CalendarAuth";
 
 const CALENDAR_BASE = "https://www.googleapis.com/calendar/v3";
@@ -119,7 +119,12 @@ export class GoogleCalendarProvider implements CalendarProvider {
 		} while (pageToken);
 
 		const email = this.userEmail ?? "";
-		return allEvents.map(e => parseGoogleEvent(e, email, timezone));
+		// Same window-overlap trim as the Graph provider: whenever the calendar's
+		// own zone differs from the configured one, the day query returns the
+		// neighboring day's all-day events too.
+		return allEvents
+			.map(e => parseGoogleEvent(e, email, timezone))
+			.filter(e => !e.isAllDay || allDayCoversDay(e.startTime, e.endTime, date, timezone));
 	}
 
 	getUserEmail(): string {

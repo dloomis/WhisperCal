@@ -999,8 +999,13 @@ function renderCardDynamic(
 		// meeting is summarized the summary describes both halves, and cutting the
 		// transcript underneath it would leave the note describing a meeting that
 		// no longer matches its transcript. Also held back while any stage is
-		// mid-flight, since all three write to the very files the split rewrites.
-		if (tf && opts.onSplitTranscript
+		// mid-flight, since all three write to the very files the split rewrites,
+		// and on MERGED transcripts, where each part keeps its own clock — the
+		// boundary line's stamp is part-relative, so every instant the split
+		// derives from it would be hours wrong.
+		const isMerged = tf !== null
+			&& app.metadataCache.getFileCache(tf)?.frontmatter?.[FM.MERGED_FROM] !== undefined;
+		if (tf && !isMerged && opts.onSplitTranscript
 			&& states.summary !== "complete" && states.summary !== "running"
 			&& states.speakers !== "running" && states.record !== "running") {
 			menu.addItem((item) => item
@@ -1263,7 +1268,14 @@ function renderCardDynamic(
 			// its link tail can recover the transcript from disk by guid — so the
 			// click always clears the recording state instead of silently no-oping.
 			const stopBaseUrl = opts.resolveRecordingApiBaseUrl?.() || recordingApiBaseUrl || "";
-			void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: stopBaseUrl, cardUi, onStatus: onStatusForCard(notePath, opts)});
+			// Live path getter, mirroring startCardApiRecording: when this stop wins
+			// the dedupe race its link tail owns the card's status for a potentially
+			// hours-long transcription, and Rename is offered throughout. A static
+			// path would file every status under the old key while the re-rendered
+			// card reads the new one — no completion or failure feedback at all.
+			const liveNoteFile = app.vault.getAbstractFileByPath(notePath);
+			const liveStopPath = () => (liveNoteFile instanceof TFile ? liveNoteFile.path : notePath);
+			void stopApiRecording({app, notePath, transcriptFolderPath, baseUrl: stopBaseUrl, cardUi, onStatus: onStatusForCard(liveStopPath, opts)});
 			clearRecordingUi();
 			if (launchedApp) {
 				void closeMeetingApp(launchedApp);

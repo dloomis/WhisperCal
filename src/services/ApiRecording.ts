@@ -1,7 +1,7 @@
 import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus, recordingSessionStatus} from "./RecordingApi";
 import type {SessionGuidStatus} from "./RecordingApi";
-import {batchUpdateFrontmatter} from "../utils/frontmatter";
+import {batchUpdateFrontmatter, removeFrontmatterKeys} from "../utils/frontmatter";
 import type {CardUiState, RecordingInfo} from "./CardUiState";
 import {formatDate, formatTime, sleep} from "../utils/time";
 import type {CalendarEvent} from "../types";
@@ -700,10 +700,26 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		// Batch into a single processFrontMatter call to avoid a race with the
 		// pipeline_state mirror handler that fires when the transcript is enriched.
 		const transcriptBasename = transcriptFile.basename;
-		await batchUpdateFrontmatter(app, currentNotePath, {
-			[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,
-			[FM.PIPELINE_STATE]: "titled",
-		});
+		try {
+			await batchUpdateFrontmatter(app, currentNotePath, {
+				[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,
+				[FM.PIPELINE_STATE]: "titled",
+			});
+		} catch (err) {
+			// Enrichment already put a resolving meeting_note on the transcript, so
+			// leaving it there after a failed note-side write (malformed YAML on a
+			// hand-authored note) hides the transcript from findUnlinked while the
+			// note stays unlinked. Drop the backlink so the pair stays retryable.
+			console.error(`[WhisperCal] Note-side link failed for ${currentNotePath} — reverting meeting_note on ${transcriptFile.path}:`, err);
+			if (!enrichmentFailed) {
+				try {
+					await removeFrontmatterKeys(app, transcriptFile.path, [FM.MEETING_NOTE]);
+				} catch (revertErr) {
+					console.error(`[WhisperCal] Could not revert meeting_note on ${transcriptFile.path}:`, revertErr);
+				}
+			}
+			throw err;
+		}
 		// Linked — the in-flight bookkeeping entry has served its purpose.
 		if (sessionGuid) persistence?.remove(sessionGuid);
 
@@ -792,8 +808,10 @@ async function reconcileOne(app: App, entry: PersistedApiRecording, baseUrl: str
 	}
 
 	// Already linked (a prior pass or the unlinked flow beat us) — stale entry.
-	const noteFm = app.metadataCache.getFileCache(noteFile)?.frontmatter;
-	if (noteFm?.[FM.TRANSCRIPT]) {
+	// Resolve the link: a dangling `transcript:` means this note has no transcript,
+	// and dropping the entry on it would abandon a session that finished while
+	// Obsidian was closed.
+	if (getLinkedTranscriptFile(app, noteFile.path)) {
 		persistence?.remove(sessionGuid);
 		return;
 	}
@@ -880,12 +898,13 @@ function attachReconciledRecording(app: App, entry: PersistedApiRecording, noteP
 	console.debug(`[WhisperCal] Reconciled live recording ${entry.sessionGuid} for ${notePath}`);
 }
 
-/** Check if a meeting note already has a transcript linked. */
+/** Check if a meeting note already has a transcript linked. Resolves the link
+ *  rather than testing truthiness — a `transcript:` pointing at a file that no
+ *  longer exists counts as no transcript, the same rule computePillStates and
+ *  isNoteLinked follow. Otherwise the card offers Record while auto-record
+ *  quietly stands down. */
 export function hasLinkedTranscript(app: App, notePath: string): boolean {
-	const file = app.vault.getAbstractFileByPath(notePath);
-	if (!(file instanceof TFile)) return false;
-	const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-	return !!fm?.[FM.TRANSCRIPT];
+	return getLinkedTranscriptFile(app, notePath) !== null;
 }
 
 /** Resolve and return the linked transcript TFile, if any. */

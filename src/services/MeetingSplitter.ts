@@ -2,7 +2,7 @@ import type {App} from "obsidian";
 import {TFile, normalizePath} from "obsidian";
 import type {WhisperCalSettings} from "../settings";
 import {FM, SPLIT_MARKER} from "../constants";
-import {ensureFolder, resolveVoiceprintSidecar, resolveTranscriptAudio} from "../utils/vault";
+import {ensureFolder, resolveVoiceprintSidecar, resolveTranscriptAudio, stripWikiLink} from "../utils/vault";
 import {readFmString} from "../utils/frontmatter";
 import {findSpeakerLabels, transcriptStartOffset} from "../utils/transcript";
 import {
@@ -143,6 +143,52 @@ function filterAttendees(raw: unknown, keep: Set<string>): unknown[] | null {
 	});
 }
 
+/**
+ * The keys one half's voiceprint sidecar must keep.
+ *
+ * The Tome sidecar's `speakers` map is keyed by DIARIZER STUBS ("Speaker 1"…),
+ * and tagging never rewrites those keys — it only renames the body labels and
+ * parks the stub on the attendee's `original_name`. Pruning by body label alone
+ * therefore matches nothing on a tagged transcript and writes `speakers: {}`,
+ * silently killing acoustic matching and enrollment for the tail forever. So the
+ * keep-set is the kept attendees' stubs, unioned with the body labels (untagged
+ * transcripts, where label and key are the same string).
+ */
+function sidecarKeysFor(rawAttendees: unknown, keep: Set<string>): Set<string> {
+	const keys = new Set(keep);
+	if (!Array.isArray(rawAttendees)) return keys;
+	for (const entry of rawAttendees as unknown[]) {
+		if (entry === null || typeof entry !== "object") continue;
+		const name = attendeeName(entry);
+		if (name === null || !keep.has(name)) continue;
+		const orig = (entry as FrontmatterSpeaker).original_name;
+		if (typeof orig === "string" && orig) keys.add(orig);
+	}
+	return keys;
+}
+
+/**
+ * Filter `confirmed_speakers` for one half. Entries are wikilinks (`[[Dan
+ * Loomis]]`) holding the CANONICAL People-note name, while the body labels hold
+ * the name as typed — so testing the raw entry against a set of bare labels is
+ * never true and would empty the field on both halves. Compare through
+ * stripWikiLink, case-insensitively, and prefer keep-over-drop: an entry that
+ * matches no label in EITHER half (canonical name drifted from what was typed)
+ * stays on both rather than being silently destroyed.
+ */
+function filterConfirmedSpeakers(raw: unknown, mine: Set<string>, other: Set<string>): unknown[] | null {
+	if (!Array.isArray(raw)) return null;
+	const lower = (s: Set<string>): Set<string> => new Set([...s].map(v => v.toLowerCase()));
+	const mineLower = lower(mine);
+	const otherLower = lower(other);
+	return (raw as unknown[]).filter((entry) => {
+		if (typeof entry !== "string") return true;
+		const name = (stripWikiLink(entry).split("/").pop() ?? "").toLowerCase();
+		if (mineLower.has(name)) return true;
+		return !otherLower.has(name);
+	});
+}
+
 /** Distinct speaker labels in a chunk of transcript text, in order of appearance. */
 function labelsIn(text: string): Set<string> {
 	return new Set(findSpeakerLabels(text).map(l => l.name));
@@ -187,6 +233,17 @@ export async function planSplit(
 	transcriptFile: TFile,
 	noteFile: TFile,
 ): Promise<SplitPlan> {
+	// A merged transcript deliberately keeps each part's own clock, so the
+	// boundary line's `(NNNN.NNN)` stamp is relative to whichever part it sits in
+	// — not to the merged transcript's `created`. Everything downstream (split
+	// instant, part B's date/filename, both halves' meeting_end, click-to-play
+	// indexing) would be minted from the wrong moment. The ⋯ menu already hides
+	// Split here; this is the backstop.
+	const mergedFm = app.metadataCache.getFileCache(transcriptFile)?.frontmatter;
+	if (mergedFm?.[FM.MERGED_FROM] !== undefined) {
+		throw new Error("This transcript was merged from several meetings — its timestamps restart at each part, so it can't be split");
+	}
+
 	// Fresh read, not cachedRead: the marker was typed into the editor moments ago.
 	const content = await app.vault.read(transcriptFile);
 
@@ -298,6 +355,7 @@ export async function splitMeeting(
 
 	const partALabels = labelsIn(partAText.slice(transcriptStartOffset(partAText)));
 	const partBLabels = labelsIn(partBLines);
+	const partBSidecarKeys = sidecarKeysFor(transcriptFm["attendees"], partBLabels);
 
 	// ---- Names. The date prefix comes from the SPLIT instant, not the
 	// original's `created`: findLocalNotes only surfaces a local card on the day
@@ -355,7 +413,7 @@ export async function splitMeeting(
 				if (speakers !== null && typeof speakers === "object") {
 					const pruned: Record<string, unknown> = {};
 					for (const [label, value] of Object.entries(speakers as Record<string, unknown>)) {
-						if (partBLabels.has(label)) pruned[label] = value;
+						if (partBSidecarKeys.has(label)) pruned[label] = value;
 					}
 					parsed["speakers"] = pruned;
 				}
@@ -393,10 +451,8 @@ export async function splitMeeting(
 			// Tome affinity lookups can never resolve one session to two transcripts.
 			const attendees = filterAttendees(transcriptFm["attendees"], partBLabels);
 			if (attendees) fm["attendees"] = attendees;
-			const confirmed = transcriptFm[FM.CONFIRMED_SPEAKERS];
-			if (Array.isArray(confirmed)) {
-				fm[FM.CONFIRMED_SPEAKERS] = confirmed.filter(c => typeof c === "string" && partBLabels.has(c));
-			}
+			const confirmed = filterConfirmedSpeakers(transcriptFm[FM.CONFIRMED_SPEAKERS], partBLabels, partALabels);
+			if (confirmed) fm[FM.CONFIRMED_SPEAKERS] = confirmed;
 			if (Array.isArray(transcriptFm["tags"])) fm["tags"] = [...(transcriptFm["tags"] as unknown[])];
 			fm[FM.MEETING_NOTE] = wikiLinkToPath(newNotePath);
 			fm["meeting_subject"] = title;
@@ -457,10 +513,8 @@ export async function splitMeeting(
 		if (offsetSeconds > 0) fm["duration"] = formatElapsed(plan.partASeconds);
 		const attendees = filterAttendees(fm["attendees"], partALabels);
 		if (attendees) fm["attendees"] = attendees;
-		const confirmed = fm[FM.CONFIRMED_SPEAKERS];
-		if (Array.isArray(confirmed)) {
-			fm[FM.CONFIRMED_SPEAKERS] = confirmed.filter(c => typeof c === "string" && partALabels.has(c));
-		}
+		const confirmed = filterConfirmedSpeakers(fm[FM.CONFIRMED_SPEAKERS], partALabels, partBLabels);
+		if (confirmed) fm[FM.CONFIRMED_SPEAKERS] = confirmed;
 		fm[FM.SPLIT_INTO] = wikiLinkToPath(newTranscriptPath);
 	});
 

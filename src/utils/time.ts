@@ -169,6 +169,25 @@ export function formatDate(date: Date, timezone: string): string {
 }
 
 /**
+ * True when an all-day event spanning [start, end) covers the requested day.
+ *
+ * The day query window is built from configured-zone midnights, but an all-day
+ * event is stored as a UTC-midnight-to-UTC-midnight span, so the two overlap
+ * across the zone offset and the provider gets a neighboring day's all-day event
+ * back in every fetch. Without this filter that ghost renders as a banner on the
+ * wrong day AND is persisted under that day's cache key. End is exclusive, so
+ * multi-day all-day events still cover every day they actually span.
+ */
+export function allDayCoversDay(start: Date, end: Date, date: Date, timezone: string): boolean {
+	const day = formatDate(date, timezone);
+	const from = formatDate(start, timezone);
+	const to = formatDate(end, timezone);
+	// A zero-or-negative span (malformed end) still belongs to its start day.
+	if (to <= from) return day === from;
+	return from <= day && day < to;
+}
+
+/**
  * Format a Date as a readable date string for display (e.g. "Friday, February 28, 2026").
  */
 export function formatDisplayDate(date: Date, timezone: string): string {
