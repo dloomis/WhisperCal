@@ -657,11 +657,19 @@ Until both are done, the automatic pull stays quiet and the card shows *"Meeting
 
 ### Which messages land in the note
 
-A **recurring Teams meeting series shares one chat thread across every occurrence** — the thread id is identical week to week. So each occurrence's note gets only its own slice of that thread: from **15 minutes before** the scheduled start to **4 hours after** the scheduled end. Chat from a different occurrence never bleeds into the wrong note, and a weekly series doesn't duplicate its whole history into every note.
+Only the chat from **during the meeting** — 5 minutes either side of it, to catch a "joining now" a minute early and a reply that lands just after someone hangs up.
+
+The end of that window is whichever is later, the **scheduled end** or **how long the recording actually ran** (read from the transcript's `duration`). A meeting that goes 25 minutes over keeps chatting for those 25 minutes, and the scheduled end would cut the log off mid-conversation.
+
+The window matters more than it looks, for two reasons. A **recurring series shares one chat thread across every occurrence** — the thread id is identical week to week — so an unwindowed pull would drop the entire series history into every occurrence's note. And the thread stays live all day after the call; everything posted to it later is a different conversation that happens to share an address.
+
+The trade-off: messages posted well after the meeting never reach the note, including on a re-pull, which applies the same window. If you want a wider net, raise `GRACE_MS` in `src/services/MeetingChat.ts`.
 
 ### Re-pulling
 
-The automatic pull fires the moment the transcript lands — which is usually *before* people post the links they promised on the call. **Pull Teams meeting chat** in the card's ⋯ menu (or the *Pull Teams meeting chat* command with the note open) re-reads the thread and **rewrites the section in place**, so re-pulling is safe and repeatable. A re-pull that finds nothing leaves an existing section untouched rather than emptying it.
+**Pull Teams meeting chat** in the card's ⋯ menu (or the *Pull Teams meeting chat* command with the note open) re-reads the thread and **rewrites the section in place**, so re-pulling is safe and repeatable. A re-pull that finds nothing leaves an existing section untouched rather than emptying it.
+
+Re-pulling uses the same meeting window, so it isn't a way to collect post-meeting chatter — it's for filling in a note whose automatic pull was skipped, or one written before the meeting finished.
 
 Two things worth knowing:
 

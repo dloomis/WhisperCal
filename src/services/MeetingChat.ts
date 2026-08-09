@@ -3,7 +3,8 @@ import type {CalendarAuth} from "./CalendarAuth";
 import type {WhisperCalSettings} from "../settings";
 import {FM, MEETING_CHAT_HEADING} from "../constants";
 import {bodyStartOffset, readFmString} from "../utils/frontmatter";
-import {coerceFmDate, coerceFmTime, formatDate, formatTime, parseDateTime} from "../utils/time";
+import {coerceFmDate, coerceFmTime, formatDate, formatTime, parseDateTime, parseDurationSeconds} from "../utils/time";
+import {resolveWikiLink} from "../utils/vault";
 import {PeopleMatchService} from "./PeopleMatchService";
 import {
 	extractChatThreadId,
@@ -20,23 +21,35 @@ import {
  *
  * ## Why the section is windowed
  *
- * A recurring Teams meeting series shares ONE chat thread across every
- * occurrence — the thread id in the join URL is identical week to week. Writing
- * the whole thread would duplicate the entire history into every occurrence's
- * note and grow without bound, so only messages inside this occurrence's window
- * are kept: from `PRE_ROLL_MS` before the scheduled start to `POST_ROLL_MS`
- * after the scheduled end.
+ * A meeting chat thread is not the meeting. Two things make an unwindowed pull
+ * wrong rather than merely noisy:
+ *
+ * - A recurring series shares ONE thread across every occurrence — the thread id
+ *   in the join URL is identical week to week — so the whole history would land
+ *   in every occurrence's note.
+ * - The thread stays live all day after the call. Everything posted to it later
+ *   is a different conversation that happens to share an address.
+ *
+ * So the window is the meeting itself: `GRACE_MS` either side of start and end,
+ * where "end" is the later of the scheduled end and how long the recording
+ * actually ran (see {@link resolveWindow}).
+ *
+ * Note what this costs: a re-pull applies the SAME window, so messages posted
+ * well after the call never reach the note by any path. That is the intended
+ * trade — the section is a record of the meeting, and widening it is a matter
+ * of raising `GRACE_MS`.
  */
 
-/** Chat that starts before the call does — "running 5 late", join troubles. */
-const PRE_ROLL_MS = 15 * 60 * 1000;
 /**
- * Trailing window for post-meeting chatter (the links people promise to send).
- * Generous enough to cover a meeting that ran well past its scheduled end, and
- * short enough that a daily series never reaches the next occurrence.
+ * Grace on each side of the meeting. Small on purpose: the section should read
+ * as the conversation that happened *during* the call, not the thread's whole
+ * afternoon. It covers only the edges that genuinely belong to the meeting —
+ * "joining now" a minute early, a reply landing just after someone hangs up,
+ * and the fact that Teams timestamps and calendar times don't agree to the
+ * second. Post-meeting chatter is what the manual re-pull is for.
  */
-const POST_ROLL_MS = 4 * 60 * 60 * 1000;
-/** Assumed duration when a note carries no `meeting_end` (ad hoc notes). */
+const GRACE_MS = 5 * 60 * 1000;
+/** Assumed duration when a note has neither `meeting_end` nor a recording. */
 const FALLBACK_DURATION_MS = 60 * 60 * 1000;
 
 /** Why a pull produced nothing. Only `error` kinds are worth surfacing. */
@@ -82,7 +95,7 @@ export async function pullMeetingChat(deps: MeetingChatDeps, notePath: string): 
 		return {status: "skipped", reason: "The meeting's join link carries no Teams chat thread."};
 	}
 
-	const chatWindow = resolveWindow(fm, settings.timezone, noteFile);
+	const chatWindow = resolveWindow(app, fm, settings.timezone, noteFile);
 	let messages: MeetingChatMessage[];
 	try {
 		messages = await fetchChatMessages(auth, threadId, chatWindow.from, chatWindow.to);
@@ -146,8 +159,19 @@ async function resolveJoinUrl(
 	}
 }
 
-/** The occurrence's chat window, from the note's own meeting times. */
+/**
+ * The occurrence's chat window: the meeting itself, plus {@link GRACE_MS} on
+ * each side.
+ *
+ * The end is whichever is later — the scheduled end, or how long the recording
+ * actually ran. A meeting that goes 25 minutes over keeps chatting for those 25
+ * minutes, and the scheduled end would cut the log off mid-conversation; the
+ * transcript's own `duration` is the honest record of when it really finished.
+ * A meeting that ends early keeps its scheduled end, which costs nothing (there
+ * is simply no chat in the empty tail).
+ */
 function resolveWindow(
+	app: App,
 	fm: Record<string, unknown> | undefined,
 	timezone: string,
 	noteFile: TFile,
@@ -161,20 +185,38 @@ function resolveWindow(
 	// own creation time — for an ad hoc note that IS the meeting start.
 	const start = (date && startTime ? parseDateTime(date, startTime, timezone) : null)
 		?? new Date(noteFile.stat.ctime);
-	const end = (date && endTime ? parseDateTime(date, endTime, timezone) : null)
-		?? new Date(start.getTime() + FALLBACK_DURATION_MS);
+	const scheduledEnd = date && endTime ? parseDateTime(date, endTime, timezone) : null;
 
-	// A meeting that ends before it starts (hand-edited frontmatter, a meeting
-	// crossing midnight where only the date of the start was recorded) would
-	// otherwise produce an empty window that silently returns no messages.
-	const safeEnd = end.getTime() > start.getTime()
-		? end
+	// An end at or before the start (hand-edited frontmatter, a meeting crossing
+	// midnight where only the start's date was recorded) would otherwise produce
+	// an empty window that silently returns no messages.
+	let end = scheduledEnd && scheduledEnd.getTime() > start.getTime()
+		? scheduledEnd
 		: new Date(start.getTime() + FALLBACK_DURATION_MS);
 
+	const recordedMs = recordedDurationMs(app, fm, noteFile.path);
+	if (recordedMs > 0) {
+		const recordedEnd = new Date(start.getTime() + recordedMs);
+		if (recordedEnd.getTime() > end.getTime()) end = recordedEnd;
+	}
+
 	return {
-		from: new Date(start.getTime() - PRE_ROLL_MS),
-		to: new Date(safeEnd.getTime() + POST_ROLL_MS),
+		from: new Date(start.getTime() - GRACE_MS),
+		to: new Date(end.getTime() + GRACE_MS),
 	};
+}
+
+/**
+ * How long the linked recording ran, in ms, or 0 when there is no transcript,
+ * no `duration` on it, or the note isn't linked yet (the automatic pull runs
+ * right after linking, so the transcript is normally there by then).
+ */
+function recordedDurationMs(app: App, fm: Record<string, unknown> | undefined, notePath: string): number {
+	if (!fm) return 0;
+	const transcript = resolveWikiLink(app, fm, FM.TRANSCRIPT, notePath);
+	if (!transcript) return 0;
+	const transcriptFm = app.metadataCache.getFileCache(transcript)?.frontmatter;
+	return parseDurationSeconds(transcriptFm?.["duration"]) * 1000;
 }
 
 /**
