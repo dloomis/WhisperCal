@@ -336,6 +336,12 @@ export class NoteCreator {
 		if (event.seriesId) {
 			reserved.push(`${FM.MEETING_SERIES_ID}: "${yamlEscape(event.seriesId)}"`);
 		}
+		// Join URL, for online meetings only. Stamped because it is the durable
+		// handle on the Teams chat thread: the "Meeting Chat" pull reads the
+		// thread id out of it long after the event has left the calendar cache.
+		if (event.onlineMeetingUrl) {
+			reserved.push(`${FM.MEETING_JOIN_URL}: "${yamlEscape(event.onlineMeetingUrl)}"`);
+		}
 		const reservedStr = reserved.join("\n");
 
 		// Insert before the closing --- of the template's frontmatter. A template

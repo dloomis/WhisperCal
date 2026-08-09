@@ -77,6 +77,13 @@ export interface WhisperCalSettings {
 	 * call. Recording API source only. Migrated from the old `autoRecordOnLaunch`.
 	 */
 	automateMeetingRecording: boolean;
+	/**
+	 * Pull the Teams meeting chat into the meeting note under a "Meeting Chat"
+	 * heading once a recording's link tail finishes. Microsoft provider only,
+	 * and needs the delegated Chat.Read scope on the WhisperCore token — without
+	 * it the automatic pull logs and stays silent (the manual re-pull explains).
+	 */
+	pullMeetingChat: boolean;
 	skipWordReplacementConfirm: boolean;
 	voiceprintFolderPath: string;
 	/** Min cosine similarity (0–1) to accept an acoustic voiceprint match. Higher = stricter. */
@@ -156,6 +163,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	recordingSource: "macwhisper",
 	recordingApiBaseUrl: "",
 	automateMeetingRecording: false,
+	pullMeetingChat: true,
 	skipWordReplacementConfirm: false,
 	voiceprintFolderPath: "Caches/Voiceprints",
 	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
@@ -784,6 +792,18 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.automateMeetingRecording)
 				.onChange(value => {
 					this.plugin.settings.automateMeetingRecording = value;
+					this.debouncedSave();
+				}));
+
+		new Setting(apiSettings)
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+			.setName("Pull Teams meeting chat")
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product/permission names
+			.setDesc("When a recording finishes, add the meeting's Teams chat to the meeting note under a \"Meeting Chat\" heading. Microsoft calendars only, and your WhisperCore sign-in must include the Chat.Read permission — sign out and back in after granting it. Re-pull any time from a card's ⋯ menu.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.pullMeetingChat)
+				.onChange(value => {
+					this.plugin.settings.pullMeetingChat = value;
 					this.debouncedSave();
 				}));
 

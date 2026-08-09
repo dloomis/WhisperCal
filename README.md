@@ -74,6 +74,10 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Stage 4 — Summary](#stage-4--summary)
   - [Stage 5 — Research](#stage-5--research)
   - [Pipeline State Tracking](#pipeline-state-tracking)
+- [Teams Meeting Chat](#teams-meeting-chat)
+  - [Granting the permission](#granting-the-permission)
+  - [Which messages land in the note](#which-messages-land-in-the-note)
+  - [Re-pulling](#re-pulling)
 - [Meeting Note Templates](#meeting-note-templates)
   - [Template Setup](#template-setup)
   - [Template Variables](#template-variables)
@@ -117,6 +121,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - **Automated recording** — Optionally tie recording to the meeting's lifecycle: clicking a meeting's join link on its card auto-starts recording, and pressing Stop closes the meeting app (Teams, Zoom) to leave the call. See [Automate Meeting Recording](#automate-meeting-recording).
 - **Transcript post-processing — embeddings-first** — Known people are tagged by **acoustic voiceprint** (matched against your enrolled library), locally, before any LLM runs; unknowns are confirmed by ear in the modal. An optional LLM pass (enabled by setting a post-processing prompt) fixes transcription and diarization errors in the transcript itself and proposes names for speakers voiceprints didn't match. Review proposals with per-speaker excerpts and click-to-play before approving.
 - **Acoustic voiceprints** — When [Tome](https://github.com/dloomis/Tome) exports per-speaker voice embeddings, applying speaker tags enrolls each confirmed person into `Caches/Voiceprints/`. Returning speakers then match automatically, the library self-improves as you tag, and a corrected false match self-heals. Optionally **auto-tag** recordings where every speaker is a high-confidence match — these silent auto-tags skip the modal but never write back to a library, guarding against voiceprint drift.
+- **Teams meeting chat** — When a recording finishes, the meeting's Teams chat is pulled into the note under a `## Meeting Chat` heading — links, corrections, and side conversation the transcript never captured. Verbatim, LLM-free, authors linked to People notes, and re-pullable from the ⋯ menu to catch what gets posted after the call. See [Teams Meeting Chat](#teams-meeting-chat).
 - **Meeting summarization** — Run an LLM in the background to produce an executive summary, with a progress banner in the note editor.
 - **Per-run custom instructions** — The card's smart action button (and the matching ⋯ menu items) for speaker tagging and summarization open an instructions dialog where you can add one-off instructions for that LLM run (e.g., "focus on action items"); leave it empty to run normally.
 - **Meeting export** — Bundle a meeting's note, transcript, and source audio into a single `.zip` outside the vault (⋯ menu > Export meeting bundle), ready to email or hand to someone who doesn't use Obsidian.
@@ -363,6 +368,7 @@ The **⋯** mini button — or right-clicking anywhere on the card (except links
 | **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
 | **Re-record…** | Transcript linked, Recording API mode | Confirms, then clears the transcript and starts a fresh recording |
 | **Split transcript…** | Transcript linked, meeting not yet summarized, nothing mid-run | Opens the transcript in split mode to divide it into two meetings (see [Splitting a Meeting](#splitting-a-meeting)) |
+| **Pull Teams meeting chat** | Online meeting, note exists, Microsoft calendar | Re-reads the meeting's Teams chat into the note (see [Teams Meeting Chat](#teams-meeting-chat)) |
 | **Export meeting bundle…** | A meeting note exists | Bundles the meeting's artifacts into a `.zip` outside the vault (see below) |
 
 The everyday next step stays one click on the smart button; the menu keeps everything else reachable without growing the action row.
@@ -632,6 +638,38 @@ The state lives on the **transcript file** as its source of truth. WhisperCal au
 
 ---
 
+## Teams Meeting Chat
+
+What gets typed into the Teams chat during a call — the link someone pastes, the correction nobody says out loud, the "+1" that settles a decision — never reaches the transcript. WhisperCal pulls that chat into the meeting note under a **`## Meeting Chat`** heading once the recording's transcript is linked.
+
+The log is verbatim and LLM-free: each message shows its author, local time, and body, with attachments as links and an *(edited)* marker where Teams reports one. Authors resolve to `[[People note]]` links when a matching note exists, so meeting chat joins the same backlink graph as invitees and confirmed speakers. Teams system messages ("X joined the meeting", "recording started") and deleted messages are dropped.
+
+**Enable it** in **Settings > WhisperCal > Recording > Pull Teams meeting chat** (on by default). Microsoft calendars only.
+
+### Granting the permission
+
+Reading chat needs the delegated **`Chat.Read`** Graph scope, which WhisperCore requests as part of its Microsoft sign-in. Two one-time steps:
+
+1. In the Azure portal, open your app registration → **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → **Chat.Read**, then grant consent.
+2. In WhisperCore's settings, **sign out and sign back in** to Microsoft. Core sends its full scope set on every token refresh, so an existing session keeps refreshing against the old consent until it is re-established. (If your tenant grants *admin* consent for `Chat.Read`, the next refresh picks it up silently and you can skip this step — but signing out and back in is the reliable path either way.)
+
+Until both are done, the automatic pull stays quiet and the card shows *"Meeting chat unavailable — check the Chat.Read permission"* after a recording; the manual pull explains the same thing in a notice.
+
+### Which messages land in the note
+
+A **recurring Teams meeting series shares one chat thread across every occurrence** — the thread id is identical week to week. So each occurrence's note gets only its own slice of that thread: from **15 minutes before** the scheduled start to **4 hours after** the scheduled end. Chat from a different occurrence never bleeds into the wrong note, and a weekly series doesn't duplicate its whole history into every note.
+
+### Re-pulling
+
+The automatic pull fires the moment the transcript lands — which is usually *before* people post the links they promised on the call. **Pull Teams meeting chat** in the card's ⋯ menu (or the *Pull Teams meeting chat* command with the note open) re-reads the thread and **rewrites the section in place**, so re-pulling is safe and repeatable. A re-pull that finds nothing leaves an existing section untouched rather than emptying it.
+
+Two things worth knowing:
+
+- Notes created before this feature existed have no `meeting_join_url` to read, so WhisperCal falls back to re-fetching the event from Graph — which only works while the meeting is still on your calendar. New notes stamp the URL and keep working indefinitely.
+- Summarization edits the meeting note, and the chat section sits in that note. If a summarizer prompt rewrites the note wholesale it can disturb the section — re-pull to restore it.
+
+---
+
 ## Meeting Note Templates
 
 ### Template Setup
@@ -681,6 +719,7 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `meeting_organizer` | Meeting organizer as wiki link |
 | `tags` | Used to distinguish meeting notes from transcript files |
 | `calendar_event_id` | Identifies this file as a WhisperCal meeting note |
+| `meeting_join_url` | Online meetings only; carries the Teams chat thread id (see [Teams Meeting Chat](#teams-meeting-chat)) |
 | `note_created` | Fallback timestamp for unscheduled notes |
 | `is_recurring` | Passed to transcript creation |
 | `macwhisper_session_id` | Links a MacWhisper recording to the note |

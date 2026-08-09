@@ -10,6 +10,7 @@ export const COMMAND_SUMMARIZE = "summarize-transcript";
 export const COMMAND_RESEARCH = "research-meeting";
 export const COMMAND_WORD_REPLACE = "run-word-replacements";
 export const COMMAND_OPEN_SERIES_NOTE = "open-meeting-series-note";
+export const COMMAND_PULL_MEETING_CHAT = "pull-meeting-chat";
 
 /**
  * Tome writes its dynamic API port to a file in its per-user data dir. The
@@ -60,6 +61,13 @@ export const FM = {
 	TRANSCRIPT: "transcript",
 	MEETING_NOTE: "meeting_note",
 	CALENDAR_EVENT_ID: "calendar_event_id",
+	/**
+	 * The event's online-meeting join URL, stamped at note creation. For Teams
+	 * meetings it carries the chat thread id, which is how the "Meeting Chat"
+	 * pull finds the conversation long after the calendar cache has rolled over.
+	 * Notes predating this key fall back to re-reading the event from Graph.
+	 */
+	MEETING_JOIN_URL: "meeting_join_url",
 	MEETING_SERIES_ID: "meeting_series_id",
 	CONFIRMED_SPEAKERS: "confirmed_speakers",
 	VOICEPRINTS: "voiceprints",
@@ -82,3 +90,10 @@ export type PipelineState = "note" | "titled" | "transcript" | "tagged" | "summa
  * with real transcript text effectively impossible.
  */
 export const SPLIT_MARKER = "--- ✂ SPLIT — everything below becomes a new meeting ✂ ---";
+
+/**
+ * Heading the Teams meeting-chat log is written under. Re-pulling rewrites this
+ * section in place, so the exact text is a contract with MeetingChat's section
+ * finder — changing it strands any section already written under the old name.
+ */
+export const MEETING_CHAT_HEADING = "Meeting Chat";

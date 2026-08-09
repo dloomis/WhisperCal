@@ -82,6 +82,8 @@ export interface MeetingCardOpts {
 	onReviewSpeakerCandidates?: (notePath: string) => void;
 	onSummarize?: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch?: (notePath: string) => void;
+	/** Re-pull the Teams meeting chat into the note (Microsoft provider only). */
+	onPullMeetingChat?: (notePath: string) => void;
 	onNoteDeleted?: () => void;
 	onNoteRenamed?: () => void;
 	/** Enter split mode on this meeting's transcript (see MeetingSplitter). */
@@ -810,7 +812,7 @@ function renderCardDynamic(
 		event, timezone, noteCreator, app,
 		transcriptFolderPath = "Transcripts",
 		recordingWindowMinutes = 10,
-		onNoteCreated, onTagSpeakers, onSummarize, onResearch,
+		onNoteCreated, onTagSpeakers, onSummarize, onResearch, onPullMeetingChat,
 	} = opts;
 
 	const states = computePillStates(app, noteCreator, event, opts.jobs, opts.cardUi);
@@ -969,6 +971,19 @@ function renderCardDynamic(
 						})();
 					}));
 			}
+		}
+
+		// Pull Teams meeting chat — offered only for an online meeting whose note
+		// already exists (the chat is written INTO that note, so there is nothing
+		// to do without one) and re-runnable: the automatic pull happens the
+		// moment a recording lands, which is exactly when the "here's the link I
+		// mentioned" messages haven't been posted yet.
+		if (onPullMeetingChat && noteFile && event.isOnlineMeeting) {
+			menu.addItem((item) => item
+				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+				.setTitle("Pull Teams meeting chat")
+				.setIcon("messages-square")
+				.onClick(() => { onPullMeetingChat(noteFile.path); }));
 		}
 
 		// Re-record… — moved here off the action row; only when a transcript

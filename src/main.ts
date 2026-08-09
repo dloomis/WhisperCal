@@ -1,7 +1,7 @@
 import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, FM, SPLIT_MARKER} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, COMMAND_PULL_MEETING_CHAT, FM, SPLIT_MARKER} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording, stopLinkRecordingWatchers, resetLinkRecordingWatchers} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
@@ -34,8 +34,10 @@ import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvid
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
 import {applyWordReplacements, showReplacementNotice} from "./services/WordReplacer";
 import {appendLlmErrorSection} from "./utils/llmErrorLog";
-import {getLinkedTranscriptFile, stopApiRecordingWatchers, resetApiRecordingWatchers, registerApiRecordingPersistence, reconcileApiRecordings} from "./services/ApiRecording";
+import {getLinkedTranscriptFile, stopApiRecordingWatchers, resetApiRecordingWatchers, registerApiRecordingPersistence, registerApiRecordingLinkedHook, reconcileApiRecordings} from "./services/ApiRecording";
 import type {PersistedApiRecording} from "./services/ApiRecording";
+import {pullMeetingChat, noticeForOutcome} from "./services/MeetingChat";
+import type {OnStatus} from "./services/LinkRecording";
 import {resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import {WordReplacementModal} from "./ui/WordReplacementModal";
 import {installBundledPrompts} from "./services/PromptInstaller";
@@ -173,6 +175,15 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 		});
 
+		// Teams meeting-chat pull, fired once a recording's link tail finishes.
+		// The setting is read at call time, so toggling it takes effect without
+		// a reload — and an in-flight recording started before it was switched
+		// off doesn't pull on landing.
+		registerApiRecordingLinkedHook((notePath, onStatus) => {
+			if (!this.settings.pullMeetingChat) return;
+			void this.doPullMeetingChat(notePath, {auto: true, onStatus});
+		});
+
 		// Background auto-tagging of newly linked transcripts (automatic mode).
 		// Constructed before onLayoutReady so the callback can't race a layout
 		// that is already ready.
@@ -265,6 +276,9 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			onResearch: (notePath: string) => {
 				this.doResearch(notePath);
+			},
+			onPullMeetingChat: (notePath: string) => {
+				void this.doPullMeetingChat(notePath);
 			},
 			onSplitTranscript: (transcriptFile: TFile, notePath: string) => {
 				void this.enterSplitMode(transcriptFile, notePath);
@@ -423,6 +437,24 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: COMMAND_PULL_MEETING_CHAT,
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
+			name: "Pull Teams meeting chat",
+			checkCallback: (checking) => {
+				// Offered regardless of the automatic-pull setting: that setting
+				// governs the unattended path, not whether the user may ask for it.
+				if (this.settings.calendarProvider !== "microsoft") return false;
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (!fm?.[FM.CALENDAR_EVENT_ID]) return false;
+				if (checking) return true;
+				void this.doPullMeetingChat(file.path);
+				return true;
+			},
+		});
+
+		this.addCommand({
 			id: COMMAND_WORD_REPLACE,
 			name: "Run word replacements",
 			editorCallback: (_editor, ctx) => {
@@ -493,6 +525,7 @@ export default class WhisperCalPlugin extends Plugin {
 		// Detach the recording bookkeeping from this (dying) plugin instance so a
 		// straggling async flow can't write through to a stale settings object.
 		registerApiRecordingPersistence(null);
+		registerApiRecordingLinkedHook(null);
 		this.auth.cancelSignIn();
 		// Stop UI timers and clear job/card state up front so handlers that fire
 		// during teardown don't see stale entries.
@@ -1857,6 +1890,49 @@ export default class WhisperCalPlugin extends Plugin {
 				}
 			},
 		});
+	}
+
+	/**
+	 * Pull the Teams meeting chat into a meeting note (MeetingChat).
+	 *
+	 * Two callers with different reporting contracts. The manual path (⋯ menu,
+	 * command palette) explains every outcome — the user asked and deserves an
+	 * answer. The automatic path fires unbidden after a recording lands, so it
+	 * only speaks up for the two outcomes worth interrupting for: chat actually
+	 * added, and a permission failure the user has to go fix. "This meeting has
+	 * no Teams link" is the common case for in-person meetings and stays quiet.
+	 */
+	private async doPullMeetingChat(notePath: string, opts?: {auto?: boolean; onStatus?: OnStatus}): Promise<void> {
+		const outcome = await pullMeetingChat(
+			{app: this.app, auth: this.auth, settings: this.settings},
+			notePath,
+		);
+
+		if (!opts?.auto) {
+			noticeForOutcome(outcome);
+			return;
+		}
+
+		const setStatus = opts.onStatus
+			?? ((message: string, icon?: string, timeout?: number, variant?: CardStatusVariant, badge?: string) =>
+				this.setCardStatus(notePath, message, icon, timeout, variant, badge));
+
+		switch (outcome.status) {
+		case "written":
+			setStatus("Meeting chat added", "messages-square", 4000, "done", "Chat");
+			break;
+		case "error":
+			// A missing scope is silent-but-permanent otherwise: every recording
+			// would quietly skip the chat with nothing on screen to explain why.
+			console.warn(`[WhisperCal] Meeting chat pull failed for ${notePath}: ${outcome.reason}`);
+			if (outcome.kind === "forbidden" || outcome.kind === "auth") {
+				setStatus("Meeting chat unavailable — check the Chat.Read permission", "alert-circle", 8000, "warning", "No chat");
+			}
+			break;
+		default:
+			debug("meetingChat", `${notePath}: ${outcome.status}${outcome.status === "skipped" ? ` (${outcome.reason})` : ""}`);
+			break;
+		}
 	}
 
 	private async doWordReplacements(file: TFile): Promise<void> {

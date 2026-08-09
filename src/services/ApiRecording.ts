@@ -56,6 +56,18 @@ export function registerApiRecordingPersistence(p: ApiRecordingPersistence | nul
 }
 
 /**
+ * Post-link side effect the plugin registers on load: the Teams meeting-chat
+ * pull (MeetingChat). Registered rather than imported because it needs the
+ * plugin's auth + settings, which this module deliberately doesn't know about —
+ * same pattern as `persistence`. Null when the plugin is unloaded, or when the
+ * feature is off. Fire-and-forget: a chat pull must never delay or fail a link.
+ */
+let onLinked: ((notePath: string, onStatus?: OnStatus) => void) | null = null;
+export function registerApiRecordingLinkedHook(fn: ((notePath: string, onStatus?: OnStatus) => void) | null): void {
+	onLinked = fn;
+}
+
+/**
  * Heuristic: did /start fail because the service is already capturing? The error
  * is the API's "Recording API error: <status> <body>" message; the service returns
  * a conflict (409) whose body explains it's already recording. Match either signal.
@@ -739,6 +751,12 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 		} else {
 			onStatus?.("Transcript linked", "check", 4000, "done", "Linked");
 		}
+
+		// The recording is over and the note is linked — pull the Teams meeting
+		// chat in behind it. Deliberately last and deliberately not awaited: the
+		// link is the contract this function owes its caller, and a Graph hiccup
+		// must not turn a successful link into a "Failed to link transcript".
+		onLinked?.(currentNotePath, onStatus);
 	} catch (err) {
 		console.error("[WhisperCal] Transcript linking failed:", err);
 		onStatus?.("Failed to link transcript", "alert-circle", 6000, "warning", "Failed");

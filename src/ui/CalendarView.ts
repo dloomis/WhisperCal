@@ -36,6 +36,8 @@ export interface CalendarViewCallbacks {
 	onReviewSpeakerCandidates: (notePath: string) => void;
 	onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch: (notePath: string) => void;
+	/** Pull (or re-pull) the meeting's Teams chat into its note. */
+	onPullMeetingChat: (notePath: string) => void;
 	/** Open the transcript in split mode (banner + marker workflow). */
 	onSplitTranscript: (transcriptFile: TFile, notePath: string) => void;
 	getAuthState: () => AuthState;
@@ -842,6 +844,11 @@ export class CalendarView extends ItemView {
 			onReviewSpeakerCandidates: this.callbacks.onReviewSpeakerCandidates,
 			onSummarize: this.callbacks.onSummarize,
 			onResearch: this.callbacks.onResearch,
+			// Teams-only feature; offering it on a Google calendar would be a menu
+			// item that can only ever report "not a Teams meeting".
+			onPullMeetingChat: this.settings.calendarProvider === "microsoft"
+				? this.callbacks.onPullMeetingChat
+				: undefined,
 			onSplitTranscript: this.callbacks.onSplitTranscript,
 			onNoteDeleted: () => {
 				// Re-render from cache so the timeline reflects the deletion: a
