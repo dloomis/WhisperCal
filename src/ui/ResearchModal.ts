@@ -1,4 +1,4 @@
-import {Modal, App, Menu, TFile, setIcon} from "obsidian";
+import {Modal, App, Menu, TFile, setIcon, setTooltip} from "obsidian";
 import {renderModalHeader} from "./ModalHeader";
 import {addActivateOnKey} from "../utils/a11y";
 
@@ -287,6 +287,9 @@ export class ResearchModal extends Modal {
 				cls: "whisper-cal-chip-label",
 				text: path.replace(/\.md$/, "").split("/").pop() ?? path,
 			});
+			// Chips show the basename only, and clip at their max width — hovering
+			// reveals the full vault path.
+			setTooltip(chip, path.replace(/\.md$/, ""));
 			const remove = chip.createSpan({cls: "whisper-cal-chip-remove"});
 			setIcon(remove, "x");
 			remove.setAttribute("aria-label", "Remove note");
@@ -394,10 +397,14 @@ export class ResearchModal extends Modal {
 			const check = item.createSpan({cls: "whisper-cal-research-check"});
 			setIcon(check, isSelected ? "check-square" : "square");
 
+			const displayPath = file.path.replace(/\.md$/, "");
 			item.createSpan({
-				text: file.path.replace(/\.md$/, ""),
+				text: displayPath,
 				cls: "whisper-cal-research-item-path",
 			});
+			// The modal is a fixed width, so long paths ellipsize — hovering the row
+			// reveals the whole thing.
+			setTooltip(item, displayPath);
 
 			item.addEventListener("click", () => {
 				if (this.selected.has(file.path)) {
