@@ -732,6 +732,19 @@
 	color: var(--text-faint);
 }
 
+/* Settings modal — the tab bar needs more horizontal room than the stock
+   settings width leaves it (at the default, "LLM engine" wraps to a second
+   row). Widened only while WhisperCal's tab is the one on screen: Obsidian
+   swaps the tab container on every settings-tab switch, so :has() goes false
+   the moment another plugin's page replaces ours and no other settings page
+   is affected. */
+.modal.mod-settings:has(.whisper-cal-settings) {
+	--modal-width: 96vw;
+	--modal-max-width: 1200px;
+	width: var(--modal-width);
+	max-width: var(--modal-max-width);
+}
+
 /* Settings — wider text inputs (1.5x default) */
 .whisper-cal-settings input[type="text"],
 .whisper-cal-settings input[type="password"],
@@ -744,7 +757,12 @@
    Scoped selectors out-rank Obsidian's `button:not(.clickable-icon)` styles. */
 .whisper-cal-settings .whisper-cal-settings-tabbar {
 	display: flex;
-	flex-wrap: wrap;
+	/* One row, always — the widened modal above buys the room for it. On a
+	   window too narrow even for that, the row scrolls sideways rather than
+	   wrapping (a second row shifts every pane's content down by 38px). */
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	scrollbar-width: thin;
 	gap: 4px;
 	margin-bottom: 16px;
 	padding-bottom: 10px;
@@ -753,6 +771,9 @@
 
 .whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab {
 	height: 28px;
+	/* Never squeezed narrower than its label — flex items shrink by default. */
+	flex-shrink: 0;
+	white-space: nowrap;
 	padding: 0 12px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
