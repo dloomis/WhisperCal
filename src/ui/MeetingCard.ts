@@ -187,9 +187,9 @@ export function pruneCelebrations(livePaths: Set<string>): void {
 }
 
 /**
- * Render one segment of the 4-bar status rail. Hovering the rail expands
- * every segment into a labeled bar (the stage name), so the enabled segments
- * need no tooltip. Clickable when an onClick is supplied — opening the stage's
+ * Render one segment of the 4-bar status rail. Every segment is a labeled bar
+ * carrying its stage name, so the enabled ones need no tooltip. Clickable when
+ * an onClick is supplied — opening the stage's
  * artifact — otherwise quiet: the stage is pending and its artifact doesn't
  * exist yet, and a disabledTooltip (e.g. "No transcript detected") explains why
  * on hover.
@@ -309,7 +309,7 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 	const isImportantOrganizer = importantEmails.length > 0
 		&& event.organizerEmail
 		&& importantEmails.includes(event.organizerEmail.toLowerCase());
-	// Icon row — always created; holds optional status icons + collapse toggle
+	// Icon row — always created; holds the optional status icons
 	const iconRow = gutter.createDiv({cls: "whisper-cal-card-gutter-icons"});
 
 	if (event.isOrganizer) {
@@ -326,6 +326,13 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		const mergedEl = iconRow.createDiv({cls: "whisper-cal-card-gutter-merged", attr: {"aria-label": "Merged meeting"}});
 		setIcon(mergedEl, "git-merge");
 	}
+
+	// Record/Stop slot — the capture control lives in the gutter rather than the
+	// action row, where it keeps a fixed position of its own regardless of what
+	// the pipeline's next verb happens to be. Created empty in the static zone
+	// and filled by renderCardDynamic, which owns the record state.
+	// Bottom-aligned by CSS so it sits level with the action row.
+	gutter.createDiv({cls: "whisper-cal-card-gutter-record"});
 
 	return {gutter, timeDiv: timeDivRef, iconRow};
 }
@@ -657,11 +664,10 @@ function onStatusForCard(
 		if (msg) {
 			// Dedupe: polling flows re-issue the same status every tick (e.g.
 			// "Transcribing…" every 3s from waitAndLink). An unchanged status must
-			// not re-render — each rebuild resets the collapsed actions row, and
-			// with the pointer resting on the card the :hover rule re-expands it,
-			// so the card visibly snaps shut and reopens on every tick. Skipped
-			// only for non-auto-clearing statuses; an auto-clear re-issue must
-			// still write so its clear timer re-arms.
+			// not re-render — every rebuild tears down and recreates the card's
+			// whole dynamic zone (rail, buttons, listeners) for no visible change,
+			// once a second. Skipped only for non-auto-clearing statuses; an
+			// auto-clear re-issue must still write so its clear timer re-arms.
 			const prev = cardUi.getStatus(notePath);
 			if (!autoClearMs && prev && prev.message === msg && prev.icon === icon
 				&& prev.variant === variant && prev.badge?.label === badge) {
@@ -694,8 +700,8 @@ function clearCardRecordingUi(opts: MeetingCardOpts, notePath: string): void {
 
 /**
  * Start an API capture and surface any failure with a retry path. The single
- * entry point shared by the manual Record button, the ⋯ menu's Re-record, and
- * auto-record — they differ only in `resetFrontmatter` and the `onAttempt`
+ * entry point shared by the manual Record/Re-record button and auto-record —
+ * they differ only in `resetFrontmatter` and the `onAttempt`
  * bookkeeping. Resolves the base URL live because Tome's API port changes on each
  * launch, so a snapshot from card render can point at a dead port. When the
  * service is unreachable — no port file yet, or a refused connection — shows the
@@ -760,8 +766,8 @@ function attemptAutoRecord(opts: MeetingCardOpts, event: CalendarEvent, joinUrl:
 }
 
 /**
- * Start (or restart) an API recording for a card. Shared by the smart Record
- * button, the ⋯ menu's Re-record… item, and auto-record-on-launch. Confirms with
+ * Start (or restart) an API recording for a card. Shared by the gutter's
+ * Record/Re-record button and auto-record-on-launch. Confirms with
  * the user if the service is mid-recording, ensures the note exists, starts
  * capture, optionally resets stale transcript frontmatter, then watches for the
  * service to finish. Returns true if capture started.
@@ -858,6 +864,12 @@ function renderCardDynamic(
 		}
 
 	}
+
+	// Gutter record slot — the Record/Stop button's home (see renderGutter).
+	// It lives in the static zone, so this dynamic pass clears and refills it.
+	const recordSlotEl = cardEl.querySelector(".whisper-cal-card-gutter-record");
+	const recordSlot = recordSlotEl instanceof HTMLElement ? recordSlotEl : null;
+	recordSlot?.empty();
 
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
 	const llmOn = opts.llmEnabled !== false;
@@ -986,28 +998,9 @@ function renderCardDynamic(
 				.onClick(() => { onPullMeetingChat(noteFile.path); }));
 		}
 
-		// Re-record… — moved here off the action row; only when a transcript
-		// exists and the recording service is the active source. The record
-		// check closes a transient: right after a re-record starts, the old
-		// transcript link can still be in frontmatter while capture is live.
-		if (states.transcript === "complete" && states.record !== "running" && recordingApiBaseUrl) {
-			menu.addItem((item) => item
-				.setTitle("Re-record…")
-				.setIcon("mic")
-				.onClick(() => {
-					void (async () => {
-						const choice = await new ReRecordConfirmModal(app, {
-							pipelineState: states.pipelineState,
-						}).prompt();
-						if (choice === "view") {
-							const tf2 = states.transcriptFile;
-							if (tf2) void app.workspace.openLinkText(tf2.path, "", false);
-						} else if (choice === "re-record") {
-							startCapture(opts, notePath, true, () => {});
-						}
-					})();
-				}));
-		}
+		// No Re-record… item: the gutter's capture button covers it at every
+		// pipeline stage (and carries the same confirm modal), so a menu copy
+		// would be a second door onto the same destructive action.
 
 		// Split transcript… — for a recording that turned out to cover two
 		// back-to-back meetings. Offered only before the summary exists: once the
@@ -1099,17 +1092,15 @@ function renderCardDynamic(
 		return menu;
 	};
 
-	// Expand group — the status rail and the collapsible actions share one hover
-	// container so auto-expand keys on the rail alone (not the whole card), while
-	// still staying open when the pointer moves down onto the revealed buttons.
-	// When collapsed the actions have zero height, so the only hover target is the
-	// rail itself; see .whisper-cal-card-expand in styles.css.
+	// Expand group — one container for the status rail, the action row, and the
+	// status line. Cards no longer collapse: they render in what used to be the
+	// hover state, so the action row is always on screen. The group is now a
+	// layout wrapper only; see .whisper-cal-card-expand in styles.css.
 	const expandGroup = zone.createDiv({cls: "whisper-cal-card-expand"});
 
-	// Status rail — four segments (Note · Transcript · Speakers · Summary).
-	// Rendered before the collapsible actions and always visible (the rail stays
-	// shown even when collapsed). Each segment opens its stage's artifact on
-	// click; hovering the rail expands the segments into labeled bars.
+	// Status rail — four labeled segments (Note · Transcript · Speakers ·
+	// Summary), rendered above the action row. Each segment opens its stage's
+	// artifact on click.
 	const rail = expandGroup.createDiv({cls: "whisper-cal-rail"});
 
 	// Activity badge — while a job runs (LLM or voiceprint), a blinking light +
@@ -1119,9 +1110,9 @@ function renderCardDynamic(
 	// — see styles.css); together with the pulsing rail segment it replaces the
 	// verbose status line.
 	const badgeStatus = opts.cardUi.getStatus(notePath);
-	// The badge hangs below the rail; this class buys the collapsed card the
-	// extra height for it (see .whisper-cal-card-has-badge in styles.css) so
-	// the bottom whitespace stays constant whether or not a badge is showing.
+	// The badge's second line hangs below the rail's row; this class widens the
+	// rail's bottom margin to reserve that space (see .whisper-cal-card-has-badge
+	// in styles.css) so it can't collide with the action row.
 	cardEl.toggleClass("whisper-cal-card-has-badge", !!badgeStatus?.badge);
 	if (badgeStatus?.badge) {
 		// The variant class colors the light: progress = blinking red,
@@ -1246,24 +1237,43 @@ function renderCardDynamic(
 		});
 	}
 
-	// Actions row (wrapped for collapse animation)
+	// Actions row
 	const actionsWrap = expandGroup.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Smart action button — always the pipeline's next verb; absent when the
-	// pipeline is complete. Priority order per the state machine.
+	// Capture control host — the gutter slot, so Record/Stop is visible without
+	// hovering the card. Falls back to the action row if the slot is missing.
+	const recordHost = recordSlot ?? actions;
+
+	// Capture control — Record/Stop lives in the gutter and sits deliberately
+	// outside the smart-button state machine below. Starting and stopping a
+	// capture is time-critical, and re-recording a meeting that already has a
+	// transcript (or a summary) is a real workflow — so the button stays offered
+	// at every pipeline stage and ReRecordConfirmModal guards the destructive
+	// part, rather than the button disappearing once a transcript lands. Only
+	// the API source has a start/stop control; the MacWhisper source's "Link
+	// recording" is a file picker, not a capture control, and stays in the
+	// action row below.
 	if (states.record === "running") {
 		// 1 — recording in progress: red Stop button with a live timer.
 		if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
-		const stopBtn = actions.createEl("button", {
+		const stopBtn = recordHost.createEl("button", {
 			cls: "whisper-cal-smart whisper-cal-smart-stop",
 			attr: {"aria-label": "Stop recording"},
 		});
 		const ico = stopBtn.createSpan({cls: "whisper-cal-smart-icon"});
 		setIcon(ico, "square");
-		stopBtn.createSpan({cls: "whisper-cal-smart-label", text: "Stop · "});
-		// Dedicated elapsed span — startDurationTimer writes the counter here.
-		const elapsedEl = stopBtn.createSpan({cls: "whisper-cal-smart-elapsed"});
+		// Dedicated elapsed element — startDurationTimer writes the counter here.
+		// In the gutter the button is icon-only (its aria-label is the tooltip)
+		// and the counter gets its own line beneath it; the action-row fallback
+		// keeps the original inline "Stop · MM:SS".
+		let elapsedEl: HTMLElement;
+		if (recordSlot) {
+			elapsedEl = recordSlot.createDiv({cls: "whisper-cal-smart-elapsed whisper-cal-gutter-elapsed"});
+		} else {
+			stopBtn.createSpan({cls: "whisper-cal-smart-label", text: "Stop · "});
+			elapsedEl = stopBtn.createSpan({cls: "whisper-cal-smart-elapsed"});
+		}
 		startDurationTimer(cardUi, notePath, elapsedEl);
 		stopBtn.addEventListener("click", () => {
 			// stopApiRecording deletes the recording entry synchronously (before its
@@ -1299,77 +1309,113 @@ function renderCardDynamic(
 				new Notice(`Closing ${appLabel} to leave the meeting`);
 			}
 		});
-	} else if (states.transcript !== "complete") {
-		// 2 — no transcript yet: Record (API) or Link recording (MacWhisper).
-		if (recordingApiBaseUrl) {
-			const recordBtn = renderSmartBtn(actions, "mic", "Record", {ariaLabel: "Record"});
-			// Start capture, disabling the button while it runs. A success re-renders
-			// the card (this button is gone); any non-start path re-enables it.
-			const runRecordCapture = () => {
-				recordBtn.disabled = true;
-				startCapture(opts, notePath, false, started => {
-					if (!started) recordBtn.disabled = false;
-				});
-			};
-			recordBtn.addEventListener("click", () => {
-				recordBtn.disabled = true;
-				void (async () => {
-					try {
-						// Detect an orphaned transcript file on disk that the note's
-						// frontmatter doesn't link to (e.g. a prior recording where the
-						// link write silently dropped). Without this, re-recording would
-						// overwrite the file with no warning.
-						const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-						const expectedTranscriptPath = normalizePath(
-							`${transcriptFolderPath}/${noteBasename} - Transcript.md`,
-						);
-						const orphanedTranscript = noteBasename
-							? app.vault.getAbstractFileByPath(expectedTranscriptPath)
-							: null;
-						if (orphanedTranscript instanceof TFile) {
-							const choice = await new ReRecordConfirmModal(app, {
-								pipelineState: states.pipelineState,
-								linked: false,
-							}).prompt();
-							if (choice === "view") {
-								// Heal the broken linkage so the note's pipeline state
-								// reflects reality before we navigate away. Mirrors what
-								// waitAndLink would have written had it not silently failed.
-								try {
-									await batchUpdateFrontmatter(app, notePath, {
-										[FM.TRANSCRIPT]: `[[${orphanedTranscript.basename}]]`,
-										[FM.PIPELINE_STATE]: "titled",
-									});
-									new Notice("Restored transcript link in meeting note");
-								} catch (err) {
-									console.error("[WhisperCal] Failed to heal transcript link:", err);
-									new Notice("Couldn't restore transcript link — see console");
-								}
-								void app.workspace.openLinkText(orphanedTranscript.path, "", false);
-								recordBtn.disabled = false;
-								return;
-							}
-							if (choice !== "re-record") {
-								recordBtn.disabled = false;
-								return;
-							}
-							// Defensive: clear any stale pipeline frontmatter that may
-							// have been partially written before the link step failed.
-							await removeFrontmatterKeys(app, notePath, [
-								FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
-							]);
-						}
-					} catch (err) {
-						// The orphan check / frontmatter reset failed — this is not a
-						// capture-start error, so no unreachable modal applies.
-						new Notice(err instanceof Error ? err.message : "Failed to start recording");
+	} else if (recordingApiBaseUrl) {
+		// Reads "Re-record" once a transcript is linked. Same control either way,
+		// but the name should say what the click will do — and the gutter button
+		// is icon-only, so its aria-label is the only name the user ever sees.
+		const hasTranscript = states.transcript === "complete";
+		const recordLabel = hasTranscript ? "Re-record" : "Record";
+		const recordBtn = renderSmartBtn(recordHost, "mic", recordLabel, {ariaLabel: recordLabel});
+		// Start capture, disabling the button while it runs. A success re-renders
+		// the card (this button is rebuilt); any non-start path re-enables it.
+		// resetFrontmatter clears the linked transcript and pipeline state — only
+		// the already-linked path needs it, since the orphan path below clears
+		// those keys itself before starting.
+		const runRecordCapture = (resetFrontmatter: boolean) => {
+			recordBtn.disabled = true;
+			startCapture(opts, notePath, resetFrontmatter, started => {
+				if (!started) recordBtn.disabled = false;
+			});
+		};
+		recordBtn.addEventListener("click", () => {
+			recordBtn.disabled = true;
+			void (async () => {
+				if (hasTranscript) {
+					// A transcript is already linked — confirm before discarding it
+					// along with any speaker tags and summary built on top of it.
+					const choice = await new ReRecordConfirmModal(app, {
+						pipelineState: states.pipelineState,
+					}).prompt();
+					if (choice === "view") {
+						const tf2 = states.transcriptFile;
+						if (tf2) void app.workspace.openLinkText(tf2.path, "", false);
 						recordBtn.disabled = false;
 						return;
 					}
-					runRecordCapture();
-				})();
-			});
-		} else {
+					if (choice !== "re-record") {
+						recordBtn.disabled = false;
+						return;
+					}
+					runRecordCapture(true);
+					return;
+				}
+				try {
+					// Detect an orphaned transcript file on disk that the note's
+					// frontmatter doesn't link to (e.g. a prior recording where the
+					// link write silently dropped). Without this, re-recording would
+					// overwrite the file with no warning.
+					const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+					const expectedTranscriptPath = normalizePath(
+						`${transcriptFolderPath}/${noteBasename} - Transcript.md`,
+					);
+					const orphanedTranscript = noteBasename
+						? app.vault.getAbstractFileByPath(expectedTranscriptPath)
+						: null;
+					if (orphanedTranscript instanceof TFile) {
+						const choice = await new ReRecordConfirmModal(app, {
+							pipelineState: states.pipelineState,
+							linked: false,
+						}).prompt();
+						if (choice === "view") {
+							// Heal the broken linkage so the note's pipeline state
+							// reflects reality before we navigate away. Mirrors what
+							// waitAndLink would have written had it not silently failed.
+							try {
+								await batchUpdateFrontmatter(app, notePath, {
+									[FM.TRANSCRIPT]: `[[${orphanedTranscript.basename}]]`,
+									[FM.PIPELINE_STATE]: "titled",
+								});
+								new Notice("Restored transcript link in meeting note");
+							} catch (err) {
+								console.error("[WhisperCal] Failed to heal transcript link:", err);
+								new Notice("Couldn't restore transcript link — see console");
+							}
+							void app.workspace.openLinkText(orphanedTranscript.path, "", false);
+							recordBtn.disabled = false;
+							return;
+						}
+						if (choice !== "re-record") {
+							recordBtn.disabled = false;
+							return;
+						}
+						// Defensive: clear any stale pipeline frontmatter that may
+						// have been partially written before the link step failed.
+						await removeFrontmatterKeys(app, notePath, [
+							FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.MACWHISPER_SESSION_ID,
+						]);
+					}
+				} catch (err) {
+					// The orphan check / frontmatter reset failed — this is not a
+					// capture-start error, so no unreachable modal applies.
+					new Notice(err instanceof Error ? err.message : "Failed to start recording");
+					recordBtn.disabled = false;
+					return;
+				}
+				runRecordCapture(false);
+			})();
+		});
+	}
+
+	// Smart action button — the pipeline's next verb after capture; absent when
+	// the pipeline is complete. Priority order per the state machine.
+	if (states.record === "running") {
+		// 1 — capture underway. The gutter's Stop button owns this state; no other
+		//     stage can start until the recording finishes.
+	} else if (states.transcript !== "complete") {
+		// 2 — no transcript yet. With the API source the gutter's Record button is
+		//     the next verb; the MacWhisper source instead links a recording that
+		//     already exists on disk.
+		if (!recordingApiBaseUrl) {
 			const linkBtn = renderSmartBtn(actions, "mic", "Link recording", {ariaLabel: "Link recording"});
 			linkBtn.addEventListener("click", () => {
 				linkBtn.disabled = true;
@@ -1421,8 +1467,10 @@ function renderCardDynamic(
 
 	// ⋯ mini — opens the secondary-actions menu; also bound to right-click on
 	// the card body. Always available (its items adapt to state, and Open note/
-	// Research create the note themselves).
-	const moreMini = actions.createEl("button", {
+	// Research create the note themselves), so it shares the gutter slot with
+	// the capture button: both are fixed controls, unlike the action row, whose
+	// single button changes with the pipeline stage.
+	const moreMini = recordHost.createEl("button", {
 		cls: "whisper-cal-mini",
 		attr: {"aria-label": "More actions"},
 	});
@@ -1467,12 +1515,6 @@ function renderCardDynamic(
 		statusEl.createSpan({text: cs.message});
 	}
 
-	// Cards rest collapsed and expand on hover — but pin one open while a
-	// recording is live so the Stop button is never hidden. Other activity
-	// (LLM jobs, voiceprint) announces itself via the gutter badge and the
-	// pulsing rail segment instead of holding the card open.
-	const pinned = states.record === "running";
-	cardEl.toggleClass("whisper-cal-card-active", pinned);
 }
 
 /** Update only the dynamic parts of an existing meeting card in-place. */
