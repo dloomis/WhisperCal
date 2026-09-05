@@ -299,26 +299,6 @@
 	stroke-width: 2.5px;
 }
 
-/* Fixed-controls slot — the capture button and the ⋯ menu, the two controls
-   that don't change with the pipeline stage, share a row at the bottom of the
-   gutter. margin-top:auto pins the row level with the action row on the right.
-   Wraps so the Stop button's elapsed counter can take a line of its own below
-   (it carries order:1 to land there regardless of DOM order). Hidden when
-   empty so it can't add height to the gutter column. */
-.whisper-cal-card-gutter-record {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px;
-	margin-top: auto;
-	padding-top: 8px;
-	width: 100%;
-}
-
-.whisper-cal-card-gutter-record:empty {
-	display: none;
-}
-
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
 	--wc-category-color: var(--text-warning);
@@ -478,6 +458,16 @@
 	flex-wrap: wrap;
 	gap: 4px;
 	margin-top: 10px;
+	/* Positioning context for the activity badge, which projects into the gutter
+	   so it lines up with this row. */
+	position: relative;
+}
+
+/* The badge is absolutely positioned and so adds no height of its own. When a
+   job's badge arrives with no button beside it, this floor keeps the row (and
+   with it the card) tall enough to show it. */
+.whisper-cal-card-has-badge .whisper-cal-card-actions {
+	min-height: var(--wc-card-btn-h);
 }
 
 /* Expand group — wraps the status rail, the action row, and the status line.
@@ -510,13 +500,10 @@
 }
 
 .whisper-cal-card-actions-wrap > .whisper-cal-card-actions {
-	overflow: hidden;
-	min-height: 0;
 	margin-top: 0;
-	/* Inner padding keeps button borders clear of overflow:hidden clipping; the
-	   negative margins over-cancel it by 1px so the first button sits 1px left
-	   of the rail's first segment — its border makes a flush box read as
-	   indented, so the optical alignment needs the extra pixel. */
+	/* The negative margins over-cancel the padding by 1px so the first button
+	   sits 1px left of the rail's first segment — its border makes a flush box
+	   read as indented, so the optical alignment needs the extra pixel. */
 	padding: 0 2px;
 	margin-left: -3px;
 	margin-right: -3px;
@@ -1158,34 +1145,58 @@
 	position: relative;
 }
 
-/* While an activity badge is showing, its two-line block hangs ~7px below the
-   rail's row. This margin reserves that space so the badge never collides with
-   the action row below it. (It collapses with the action row's own 10px top
-   margin, so 10px here leaves the gap unchanged.) */
-.whisper-cal-card-has-badge .whisper-cal-rail {
+/* The recording timer hangs below the gutter slot's control row and out of
+   flow, so nothing else reserves its height: it reaches ~20px past the rail's
+   bottom edge, and 10px here plus the card content's 12px bottom padding clears
+   that. The margin collapses with the action row's own 10px top margin, so a
+   card that has an action row is unaffected. */
+.whisper-cal-card-recording .whisper-cal-rail {
 	margin-bottom: 10px;
 }
 
-/* Activity badge — one-word activity label ("Processing", "Summarizing"),
-   with the LLM model name on a second line. Shown while a job runs; replaces
-   the old verbose status line. A child of the rail, absolutely positioned
-   leftward into the time gutter so it sits exactly level with the rail's row.
-   Horizontal math: the rail's left edge sits at gutter width (92px) + gutter
-   border (3px) + content padding (12px) = 107px from the card's left edge;
-   anchoring the badge's right edge 25px left of the rail and giving it the
-   gutter's inner width (72px) lines it up with the gutter's 10px padding box. */
-.whisper-cal-rail .whisper-cal-rail-badge {
+/* Gutter control slot — the capture button and the ⋯ menu, the two controls
+   that don't change with the pipeline stage. Absolutely positioned against the
+   rail so its row is level with the rail's four segments by construction (both
+   are --wc-card-btn-h tall, and top:0 lines up their tops) regardless of what
+   the action row below is showing. Horizontal math: the rail's left edge sits at
+   gutter width (92px) + gutter border (3px) + content padding (12px) = 107px
+   from the card's left edge; anchoring the slot's right edge 25px left of the
+   rail and giving it the gutter's inner width (72px) lines it up with the
+   gutter's 10px padding box. Wraps so the timer and the badge take lines of
+   their own below the row (each carries an order so it lands there regardless
+   of DOM order). */
+.whisper-cal-card-gutter-record {
 	position: absolute;
+	top: 0;
 	right: calc(100% + 25px);
 	width: 72px;
-	/* First line level with the rail's row, model line hanging below: the
-	   label's ~13px text line is centered on the rail bars
-	   ((26 - 13) / 2 ≈ 6). */
-	top: 6px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+/* Activity badge — one-word activity label ("Processing", "Summarizing"), with
+   the LLM model name on a second line. Shown while a job runs; replaces the old
+   verbose status line. A child of the action row, absolutely positioned leftward
+   into the time gutter so it sits exactly level with whatever button shares that
+   row. Horizontal math: the rail's left edge sits at gutter width (92px) + gutter
+   border (3px) + content padding (12px) = 107px from the card's left edge, and
+   the action row's own padding box starts 3px left of that; anchoring the badge's
+   right edge 22px left of the row and giving it the gutter's inner width (72px)
+   lines it up with the gutter's 10px padding box. top/bottom:0 + centered content
+   keeps its lines vertically centered on the button beside it, whether it has one
+   line or two. */
+.whisper-cal-card-actions .whisper-cal-rail-badge {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: calc(100% + 22px);
+	width: 72px;
 	line-height: 1.3;
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	justify-content: center;
 	font-size: 10px;
 	color: var(--text-normal);
 }
@@ -1494,8 +1505,8 @@
 /* Elapsed counter — the icon-only Stop button has nowhere to put it, so it
    rides on its own line under the control row, tinted to match the button and
    left-aligned so it starts on the Stop button's left edge. order:1 puts it
-   last in the flex row (it is created before the ⋯ button) and the 100% basis
-   forces the wrap onto its own line. */
+   after the row (it is created before the ⋯ button) and the 100% basis forces
+   the wrap onto its own line. */
 .whisper-cal-gutter-elapsed {
 	order: 1;
 	flex: 0 0 100%;

@@ -327,13 +327,6 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		setIcon(mergedEl, "git-merge");
 	}
 
-	// Record/Stop slot — the capture control lives in the gutter rather than the
-	// action row, where it keeps a fixed position of its own regardless of what
-	// the pipeline's next verb happens to be. Created empty in the static zone
-	// and filled by renderCardDynamic, which owns the record state.
-	// Bottom-aligned by CSS so it sits level with the action row.
-	gutter.createDiv({cls: "whisper-cal-card-gutter-record"});
-
 	return {gutter, timeDiv: timeDivRef, iconRow};
 }
 
@@ -865,12 +858,6 @@ function renderCardDynamic(
 
 	}
 
-	// Gutter record slot — the Record/Stop button's home (see renderGutter).
-	// It lives in the static zone, so this dynamic pass clears and refills it.
-	const recordSlotEl = cardEl.querySelector(".whisper-cal-card-gutter-record");
-	const recordSlot = recordSlotEl instanceof HTMLElement ? recordSlotEl : null;
-	recordSlot?.empty();
-
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
 	const llmOn = opts.llmEnabled !== false;
 	const {cardUi} = opts;
@@ -1103,30 +1090,26 @@ function renderCardDynamic(
 	// artifact on click.
 	const rail = expandGroup.createDiv({cls: "whisper-cal-rail"});
 
+	// Gutter control slot — the capture button and the ⋯ menu, plus whatever
+	// hangs beneath them (the recording timer, the activity badge). A child of
+	// the rail, absolutely positioned leftward into the time gutter, so its row
+	// is level with the rail's four segments by construction — no matter what
+	// the action row below is or isn't showing. See styles.css for the math.
+	const recordSlot = rail.createDiv({cls: "whisper-cal-card-gutter-record"});
+
 	// Activity badge — while a job runs (LLM or voiceprint), a blinking light +
 	// one-word action label (with the LLM model name on a second line) rides in
-	// the gutter, level with the rail. A child of the rail so it's absolutely
-	// positioned against the rail's own row (projected leftward into the gutter
-	// — see styles.css); together with the pulsing rail segment it replaces the
-	// verbose status line.
+	// the gutter, level with the action row; together with the pulsing rail
+	// segment it replaces the verbose status line. Rendered with the action row
+	// below, since that is the row it lines up with.
 	const badgeStatus = opts.cardUi.getStatus(notePath);
-	// The badge's second line hangs below the rail's row; this class widens the
-	// rail's bottom margin to reserve that space (see .whisper-cal-card-has-badge
-	// in styles.css) so it can't collide with the action row.
+	// The badge is absolutely positioned, so it adds no height of its own; this
+	// class floors the action row's height so a badge with no button beside it
+	// still fits (see .whisper-cal-card-has-badge in styles.css).
 	cardEl.toggleClass("whisper-cal-card-has-badge", !!badgeStatus?.badge);
-	if (badgeStatus?.badge) {
-		// The variant class colors the light: progress = blinking red,
-		// done = green, warning = orange (see styles.css).
-		const badgeVariant = badgeStatus.variant ?? "progress";
-		const badge = rail.createDiv({
-			cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${badgeVariant}`,
-			attr: {"aria-label": badgeStatus.message},
-		});
-		badge.createDiv({cls: "whisper-cal-rail-badge-label", text: badgeStatus.badge.label});
-		if (badgeStatus.badge.model) {
-			badge.createDiv({cls: "whisper-cal-rail-badge-model", text: badgeStatus.badge.model});
-		}
-	}
+	// The recording timer hangs below the gutter's control row, also out of
+	// flow, and nothing else reserves its height (see the class in styles.css).
+	cardEl.toggleClass("whisper-cal-card-recording", states.record === "running");
 
 	const openNote = states.note === "complete" ? () => { void openOrCreateNote(opts); } : undefined;
 	const openTranscript = states.transcriptFile
@@ -1241,9 +1224,24 @@ function renderCardDynamic(
 	const actionsWrap = expandGroup.createDiv({cls: "whisper-cal-card-actions-wrap"});
 	const actions = actionsWrap.createDiv({cls: "whisper-cal-card-actions"});
 
-	// Capture control host — the gutter slot, so Record/Stop is visible without
-	// hovering the card. Falls back to the action row if the slot is missing.
-	const recordHost = recordSlot ?? actions;
+	// Activity badge — a child of the action row, absolutely positioned leftward
+	// into the gutter so it sits exactly level with whatever button shares the
+	// row (Tag speakers…, Summarizing…). Being in the row also keeps the row
+	// non-empty, so the wrapper's hide-when-empty rule leaves the card expanded
+	// for a badge that arrives with no button beside it.
+	if (badgeStatus?.badge) {
+		// The variant class colors the light: progress = blinking red,
+		// done = green, warning = orange (see styles.css).
+		const badgeVariant = badgeStatus.variant ?? "progress";
+		const badge = actions.createDiv({
+			cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${badgeVariant}`,
+			attr: {"aria-label": badgeStatus.message},
+		});
+		badge.createDiv({cls: "whisper-cal-rail-badge-label", text: badgeStatus.badge.label});
+		if (badgeStatus.badge.model) {
+			badge.createDiv({cls: "whisper-cal-rail-badge-model", text: badgeStatus.badge.model});
+		}
+	}
 
 	// Capture control — Record/Stop lives in the gutter and sits deliberately
 	// outside the smart-button state machine below. Starting and stopping a
@@ -1257,23 +1255,16 @@ function renderCardDynamic(
 	if (states.record === "running") {
 		// 1 — recording in progress: red Stop button with a live timer.
 		if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
-		const stopBtn = recordHost.createEl("button", {
+		const stopBtn = recordSlot.createEl("button", {
 			cls: "whisper-cal-smart whisper-cal-smart-stop",
 			attr: {"aria-label": "Stop recording"},
 		});
 		const ico = stopBtn.createSpan({cls: "whisper-cal-smart-icon"});
 		setIcon(ico, "square");
 		// Dedicated elapsed element — startDurationTimer writes the counter here.
-		// In the gutter the button is icon-only (its aria-label is the tooltip)
-		// and the counter gets its own line beneath it; the action-row fallback
-		// keeps the original inline "Stop · MM:SS".
-		let elapsedEl: HTMLElement;
-		if (recordSlot) {
-			elapsedEl = recordSlot.createDiv({cls: "whisper-cal-smart-elapsed whisper-cal-gutter-elapsed"});
-		} else {
-			stopBtn.createSpan({cls: "whisper-cal-smart-label", text: "Stop · "});
-			elapsedEl = stopBtn.createSpan({cls: "whisper-cal-smart-elapsed"});
-		}
+		// The button is icon-only (its aria-label is the tooltip), so the counter
+		// takes its own line beneath it inside the slot.
+		const elapsedEl = recordSlot.createDiv({cls: "whisper-cal-smart-elapsed whisper-cal-gutter-elapsed"});
 		startDurationTimer(cardUi, notePath, elapsedEl);
 		stopBtn.addEventListener("click", () => {
 			// stopApiRecording deletes the recording entry synchronously (before its
@@ -1315,7 +1306,7 @@ function renderCardDynamic(
 		// is icon-only, so its aria-label is the only name the user ever sees.
 		const hasTranscript = states.transcript === "complete";
 		const recordLabel = hasTranscript ? "Re-record" : "Record";
-		const recordBtn = renderSmartBtn(recordHost, "mic", recordLabel, {ariaLabel: recordLabel});
+		const recordBtn = renderSmartBtn(recordSlot, "mic", recordLabel, {ariaLabel: recordLabel});
 		// Start capture, disabling the button while it runs. A success re-renders
 		// the card (this button is rebuilt); any non-start path re-enables it.
 		// resetFrontmatter clears the linked transcript and pipeline state — only
@@ -1470,7 +1461,7 @@ function renderCardDynamic(
 	// Research create the note themselves), so it shares the gutter slot with
 	// the capture button: both are fixed controls, unlike the action row, whose
 	// single button changes with the pipeline stage.
-	const moreMini = recordHost.createEl("button", {
+	const moreMini = recordSlot.createEl("button", {
 		cls: "whisper-cal-mini",
 		attr: {"aria-label": "More actions"},
 	});
