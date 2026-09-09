@@ -1176,7 +1176,7 @@
 	gap: 4px;
 }
 
-/* Activity badge — one-word activity label ("Processing", "Summarizing"), with
+/* Activity badge — one-word activity label ("Tagging", "Summarizing"), with
    the LLM model name on a second line. Shown while a job runs; replaces the old
    verbose status line. A child of the action row, absolutely positioned leftward
    into the time gutter so it sits exactly level with whatever button shares that
@@ -1468,17 +1468,6 @@
 	font-size: 10px;
 	font-weight: var(--font-medium);
 	line-height: 1;
-}
-
-/* Busy button — a background LLM job for this stage is running (disabled). */
-.whisper-cal-smart.whisper-cal-smart-busy {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
-	border-color: var(--interactive-accent);
-	color: var(--interactive-accent);
-	/* Plain arrow, not `wait` — on macOS the wait cursor is the beach ball,
-	   which reads as a hung app. The button is disabled while busy anyway. */
-	cursor: default;
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
 }
 
 /* Gutter capture button — icon only, since the gutter's 72px inner column has
@@ -2610,7 +2599,6 @@
 	.whisper-cal-rail-seg.whisper-cal-rail-seg-running,
 	.whisper-cal-rail-seg.whisper-cal-rail-seg-rec,
 	.whisper-cal-rail-badge-progress .whisper-cal-rail-badge-label,
-	.whisper-cal-smart.whisper-cal-smart-busy,
 	.whisper-cal-card-status,
 	.whisper-cal-rec-dot-inline::after,
 	.whisper-cal-llm-banner {

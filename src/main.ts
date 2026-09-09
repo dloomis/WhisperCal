@@ -1167,7 +1167,7 @@ export default class WhisperCalPlugin extends Plugin {
 			promptPath: this.settings.speakerTaggingPromptPath,
 			preClaimed: slotClaimed,
 			cardIcon: "users-round",
-			cardBadge: "Processing",
+			cardBadge: "Tagging",
 			cardModel: this.settings.speakerTagModel || undefined,
 			cardNotePath: notePath,
 			onRegister: () => this.updateBanners(transcriptPath),

@@ -177,7 +177,7 @@ export class AutoSpeakerTagger {
 				}
 				if (!this.deps.canStartLlm()) {
 					// The slot may be busy with a MANUAL tag of this very transcript.
-					// Showing a countdown then would stomp that job's own "Processing"
+					// Showing a countdown then would stomp that job's own "Tagging"
 					// badge every second for its whole run — so keep waiting quietly.
 					// (The dequeue-time eligibility re-check drops the item once the
 					// manual run caches its proposals.)

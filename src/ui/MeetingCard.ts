@@ -231,7 +231,7 @@ function renderSmartBtn(
 	container: HTMLElement,
 	icon: string,
 	label: string,
-	opts: {cls?: string; count?: number; disabled?: boolean; ariaLabel: string},
+	opts: {cls?: string; count?: number; ariaLabel: string},
 ): HTMLButtonElement {
 	const btn = container.createEl("button", {
 		cls: "whisper-cal-smart" + (opts.cls ? " " + opts.cls : ""),
@@ -243,7 +243,6 @@ function renderSmartBtn(
 	if (opts.count !== undefined && opts.count > 0) {
 		btn.createSpan({cls: "whisper-cal-smart-count", text: String(opts.count)});
 	}
-	if (opts.disabled) btn.disabled = true;
 	return btn;
 }
 
@@ -1433,28 +1432,28 @@ function renderCardDynamic(
 				})();
 			});
 		}
-	} else if (states.speakers === "running") {
-		// 3 — speaker-tag job running.
-		renderSmartBtn(actions, "users-round", "Tagging speakers…", {cls: "whisper-cal-smart-busy", disabled: true, ariaLabel: "Tagging speakers"});
-	} else if (states.summary === "running") {
-		// 4 — summarize job running.
-		renderSmartBtn(actions, "sparkles", "Summarizing…", {cls: "whisper-cal-smart-busy", disabled: true, ariaLabel: "Summarizing"});
+	} else if (states.speakers === "running" || states.summary === "running") {
+		// 3 — an LLM job owns the pipeline. No button: the gutter badge already
+		//     names the running job (and its model) and the rail segment pulses,
+		//     so a disabled busy button would only say the same thing a third
+		//     time. The branch stays so the later stages' buttons can't surface
+		//     mid-run.
 	} else if (llmOn && states.speakersCandidatesReady && opts.onReviewSpeakerCandidates) {
-		// 5 — cached speaker candidates await review.
+		// 4 — cached speaker candidates await review.
 		const count = countCachedProposals(app, states.transcriptPath);
 		const reviewBtn = renderSmartBtn(actions, "user-round-check", "Review speakers", {cls: "whisper-cal-smart-review", count, ariaLabel: "Review speakers"});
 		reviewBtn.addEventListener("click", () => { opts.onReviewSpeakerCandidates?.(notePath); });
 	} else if (llmOn && !states.speakersCandidatesReady && states.speakers === "incomplete" && onTagSpeakers && states.transcriptFile) {
-		// 6 — speakers incomplete: manual Tag speakers step.
+		// 5 — speakers incomplete: manual Tag speakers step.
 		const tf = states.transcriptFile;
 		const tagBtn = renderSmartBtn(actions, "user-round-plus", "Tag speakers…", {ariaLabel: "Tag speakers"});
 		tagBtn.addEventListener("click", () => runTagSpeakers(tf));
 	} else if (llmOn && states.speakers === "complete" && states.summary === "incomplete" && onSummarize) {
-		// 7 — speakers done, summary pending: manual Summarize step.
+		// 6 — speakers done, summary pending: manual Summarize step.
 		const sumBtn = renderSmartBtn(actions, "sparkles", "Summarize meeting…", {ariaLabel: "Summarize meeting"});
 		sumBtn.addEventListener("click", () => runSummarize(false));
 	}
-	// 8 — pipeline complete (or LLM off with a linked transcript): no button.
+	// 7 — pipeline complete (or LLM off with a linked transcript): no button.
 
 	// ⋯ mini — opens the secondary-actions menu; also bound to right-click on
 	// the card body. Always available (its items adapt to state, and Open note/
