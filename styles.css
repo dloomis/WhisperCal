@@ -1158,18 +1158,20 @@
    that don't change with the pipeline stage. Absolutely positioned against the
    rail so its row is level with the rail's four segments by construction (both
    are --wc-card-btn-h tall, and top:0 lines up their tops) regardless of what
-   the action row below is showing. Horizontal math: the rail's left edge sits at
-   gutter width (92px) + gutter border (3px) + content padding (12px) = 107px
-   from the card's left edge; anchoring the slot's right edge 25px left of the
-   rail and giving it the gutter's inner width (72px) lines it up with the
-   gutter's 10px padding box. Wraps so the timer and the badge take lines of
-   their own below the row (each carries an order so it lands there regardless
-   of DOM order). */
+   the action row below is showing. Horizontal math: the gutter is border-box, so
+   its 92px covers the 3px right border and the 10px side padding — its inner
+   column runs 10px→79px and the rail's left edge sits at 92px + the content's
+   12px padding = 104px from the card's left edge. Anchoring the slot's right
+   edge 25px left of the rail lands it on 79px, and the gutter's inner width
+   (69px) carries its left edge back to 10px — so the capture button, the ⋯ menu
+   and the timer all start on the same line as the gutter's time and duration.
+   Wraps so the timer and the badge take lines of their own below the row (each
+   carries an order so it lands there regardless of DOM order). */
 .whisper-cal-card-gutter-record {
 	position: absolute;
 	top: 0;
 	right: calc(100% + 25px);
-	width: 72px;
+	width: 69px;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
@@ -1180,19 +1182,20 @@
    the LLM model name on a second line. Shown while a job runs; replaces the old
    verbose status line. A child of the action row, absolutely positioned leftward
    into the time gutter so it sits exactly level with whatever button shares that
-   row. Horizontal math: the rail's left edge sits at gutter width (92px) + gutter
-   border (3px) + content padding (12px) = 107px from the card's left edge, and
-   the action row's own padding box starts 3px left of that; anchoring the badge's
-   right edge 22px left of the row and giving it the gutter's inner width (72px)
-   lines it up with the gutter's 10px padding box. top/bottom:0 + centered content
-   keeps its lines vertically centered on the button beside it, whether it has one
-   line or two. */
+   row. Horizontal math: the rail's left edge sits at the border-box gutter width
+   (92px, border and padding included) + the content's 12px padding = 104px from
+   the card's left edge, and the action row's own padding box starts 3px left of
+   that; anchoring the badge's right edge 22px left of the row lands it on the
+   gutter's inner right edge (79px), and the gutter's inner width (69px) carries
+   its left edge back to 10px — flush with the gutter's text and with the control
+   slot above it. top/bottom:0 + centered content keeps its lines vertically
+   centered on the button beside it, whether it has one line or two. */
 .whisper-cal-card-actions .whisper-cal-rail-badge {
 	position: absolute;
 	top: 0;
 	bottom: 0;
 	right: calc(100% + 22px);
-	width: 72px;
+	width: 69px;
 	line-height: 1.3;
 	display: flex;
 	flex-direction: column;
@@ -1470,7 +1473,7 @@
 	line-height: 1;
 }
 
-/* Gutter capture button — icon only, since the gutter's 72px inner column has
+/* Gutter capture button — icon only, since the gutter's 69px inner column has
    no room for a label; the aria-label carries the name as a hover tooltip. Takes
    whatever width the ⋯ button beside it leaves (min-width:0 lets it shrink past
    its icon's intrinsic size) at the smart button's standard 30px height, so it
@@ -1493,7 +1496,8 @@
 
 /* Elapsed counter — the icon-only Stop button has nowhere to put it, so it
    rides on its own line under the control row, tinted to match the button and
-   left-aligned so it starts on the Stop button's left edge. order:1 puts it
+   left-aligned, so it starts on the Stop button's left edge — which is the
+   gutter's text column, level with the time and duration above. order:1 puts it
    after the row (it is created before the ⋯ button) and the 100% basis forces
    the wrap onto its own line. */
 .whisper-cal-gutter-elapsed {
