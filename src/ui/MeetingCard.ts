@@ -599,15 +599,18 @@ export function renderMeetingCard(
 
 	renderMetadata(content, event, opts);
 
-	// Organizer row
+	// Organizer row — always rendered. An organizer-less meeting (an ad hoc
+	// recording, an imported event) gets a "No organizer" placeholder rather
+	// than a missing row, so every card keeps the same shape; mirrors the
+	// "No location" placeholder in the metadata row above.
+	const orgRow = content.createDiv({cls: "whisper-cal-card-meta"});
+	const orgEl = orgRow.createSpan({cls: "whisper-cal-card-meta-item"});
+	const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
+
 	if (event.organizerName) {
-		const orgRow = content.createDiv({cls: "whisper-cal-card-meta"});
 		const personInfo = opts.peopleMatchService
 			? opts.peopleMatchService.matchOneInfo(event.organizerName, event.organizerEmail)
 			: null;
-
-		const orgEl = orgRow.createSpan({cls: "whisper-cal-card-meta-item"});
-		const orgIcon = orgEl.createSpan({cls: "whisper-cal-card-icon"});
 		const typeIcon = personInfo ? personnelTypeIcon(personInfo.personnelType) : null;
 		setIcon(orgIcon, typeIcon ?? "user");
 
@@ -625,6 +628,9 @@ export function renderMeetingCard(
 		} else {
 			orgEl.createSpan({text: event.organizerName});
 		}
+	} else {
+		setIcon(orgIcon, "user");
+		orgEl.createSpan({text: "No organizer"});
 	}
 
 	// Top-level unscheduled placeholder — mirrors the rail concept instead of a
