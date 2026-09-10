@@ -1,4 +1,4 @@
-import {Modal, App, TFolder, TFile, Notice, setIcon, normalizePath} from "obsidian";
+import {Modal, App, TFolder, TFile, Notice, setIcon, setTooltip, normalizePath} from "obsidian";
 import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import type {ProposedSpeakerMapping} from "../services/SpeakerTagParser";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
@@ -82,8 +82,11 @@ export class SpeakerTagModal extends Modal {
 	private seekingForSnippet = false;
 	/** Curated attendee names (from meeting_invitees) shown first in the dropdown. */
 	private meetingInvitees: string[];
+	/** Auto-tag confidence floor, or 0 when auto-tagging is off. A voiceprint match landing
+	 *  under it is flagged in the row — that speaker is why the modal opened at all. */
+	private autoTagFloor: number;
 
-	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0, meetingInvitees: string[] = []) {
+	constructor(app: App, mappings: ProposedSpeakerMapping[], title: string, subtitle: string, peopleFolderPath: string, transcriptContent: string, audioFile: TFile | null = null, clipSeconds = 0, meetingInvitees: string[] = [], autoTagFloor = 0) {
 		super(app);
 		// Keep original index order so speakers appear in transcript sequence.
 		// Show every speaker — including any the LLM proposed as the microphone user — so the
@@ -99,6 +102,7 @@ export class SpeakerTagModal extends Modal {
 		this.clipSeconds = clipSeconds;
 		// Dedupe while preserving order.
 		this.meetingInvitees = [...new Set(meetingInvitees.filter(Boolean))];
+		this.autoTagFloor = autoTagFloor;
 	}
 
 	/** Parse transcript body into per-speaker blocks (with audio spans) for the excerpt panel. */
@@ -334,6 +338,15 @@ export class SpeakerTagModal extends Modal {
 					cls: "whisper-cal-speaker-tag-evidence",
 					text: mapping.confidence ? ` \u00B7 ${mapping.evidence}` : mapping.evidence,
 				});
+			}
+			// Matched a voiceprint, but under the auto-tag floor — the modal opened because of
+			// this speaker. Subtle: a muted badge next to the cosine, details on hover.
+			if (this.autoTagFloor > 0 && mapping.matchCosine !== undefined && mapping.matchCosine < this.autoTagFloor) {
+				const under = detail.createSpan({
+					cls: "whisper-cal-speaker-tag-badge whisper-cal-badge-underfloor",
+					text: "under floor",
+				});
+				setTooltip(under, `Voiceprint matched at ${mapping.matchCosine.toFixed(3)}, below the auto-tag confidence floor (${this.autoTagFloor}) — needs your confirmation`);
 			}
 			if (!mapping.confidence && !mapping.evidence) {
 				detail.createSpan({

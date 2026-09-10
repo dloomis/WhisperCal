@@ -22,6 +22,10 @@ export interface ProposedSpeakerMapping {
 	/** Best voiceprint library below the confident-match bar — surfaced in the modal as a
 	 *  "closest match" hint. Informational only: never pre-fills the name. */
 	nearMatch?: {name: string; cosine: number};
+	/** Cosine of the accepted voiceprint match. Set only when the match was confident enough
+	 *  to pre-fill the name, so the modal can flag hits that still fell short of the
+	 *  (stricter) auto-tag confidence floor. */
+	matchCosine?: number;
 }
 
 interface ParseResult {

@@ -1450,7 +1450,7 @@ export default class WhisperCalPlugin extends Plugin {
 					.filter((v): v is string => typeof v === "string")
 					.map(v => stripWikiLink(v))
 					.filter(Boolean);
-				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile, this.settings.speakerTagClipSeconds, meetingInvitees).prompt();
+				const decisions = await new SpeakerTagModal(this.app, mappings, title, subtitle, this.settings.peopleFolderPath, transcriptContent, audioFile, this.settings.speakerTagClipSeconds, meetingInvitees, this.settings.voiceprintAutoTagSkipModal ? this.settings.voiceprintAutoTagFloor : 0).prompt();
 				if (!decisions) {
 					clearProgressStatus();
 					return;

@@ -125,6 +125,7 @@ export async function matchVoiceprints(
 			m.confidence = "CERTAIN";
 			m.source = "cache";
 			m.evidence = `cosine ${best.toFixed(3)}`;
+			m.matchCosine = best;
 			result.set(m.originalName, {name: bestName, cosine: best});
 		} else if (best >= NEAR_MATCH_FLOOR && bestName) {
 			// Didn't clear the confident-match bar (below the floor, or too close to a runner-up),

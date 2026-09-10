@@ -2113,6 +2113,13 @@
 	color: var(--text-muted);
 }
 
+/* Voiceprint match that landed under the auto-tag confidence floor — the reason this
+   speaker still needs confirming. Deliberately quiet: a warning tint at low strength. */
+.whisper-cal-badge-underfloor {
+	background: color-mix(in srgb, var(--text-warning) 12%, transparent);
+	color: var(--text-muted);
+}
+
 /* Sub-threshold voiceprint "closest match" hint — accent-tinted but muted to read as
    tentative, distinct from the confident "cache" badge. */
 .whisper-cal-badge-nearmatch {
