@@ -1032,6 +1032,21 @@ function renderCardDynamic(
 				}));
 		}
 
+		// The inverse — drops the mark (whoever wrote it) and puts the meeting
+		// back in the processors' queue. Offered whenever the mark is present, so
+		// a premature skip, or a review worth redoing, is undoable from the card.
+		if (noteFile && states.kanbanReviewed) {
+			menu.addItem((item) => item
+				.setTitle("Unmark kanban reviewed")
+				.setIcon("square-kanban")
+				.onClick(() => {
+					void (async () => {
+						await removeFrontmatterKeys(app, noteFile.path, [FM.KANBAN_REVIEWED]);
+						new Notice("Kanban review mark cleared");
+					})();
+				}));
+		}
+
 		// No Re-record… item: the gutter's capture button covers it at every
 		// pipeline stage (and carries the same confirm modal), so a menu copy
 		// would be a second door onto the same destructive action.
