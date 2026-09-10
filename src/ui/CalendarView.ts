@@ -1690,7 +1690,7 @@ export class CalendarView extends ItemView {
 	/** Keys from frontmatter that affect card rendering. */
 	private static readonly FM_KEYS = [
 		FM.MACWHISPER_SESSION_ID, FM.TRANSCRIPT, FM.PIPELINE_STATE, FM.CALENDAR_EVENT_ID,
-		"research_notes", FM.RESEARCH_STATE, FM.MERGED_INTO,
+		"research_notes", FM.RESEARCH_STATE, FM.MERGED_INTO, FM.KANBAN_REVIEWED,
 	] as const;
 
 	/** Build a stable string from card-relevant frontmatter values. */

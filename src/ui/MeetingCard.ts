@@ -2,7 +2,7 @@ import {App, Menu, Notice, TFile, normalizePath, setIcon, setTooltip} from "obsi
 import type {CalendarEvent} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
-import {formatTime, formatRecordingDuration, formatElapsed} from "../utils/time";
+import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOffset} from "../utils/time";
 import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
 import {closeMeetingApp} from "../services/MeetingAppCloser";
 import {resolveWikiLink} from "../utils/vault";
@@ -118,6 +118,8 @@ interface PillStates {
 	summary: PillState;
 	/** Cached speaker proposals await review — morphs the transcript pill into "Review speakers". */
 	speakersCandidatesReady: boolean;
+	/** The note carries a `kanban-reviewed` mark — drives the gutter's kanban icon. */
+	kanbanReviewed: boolean;
 	transcriptFile: TFile | null;
 	transcriptPath: string;
 	pipelineState: string | undefined;
@@ -461,7 +463,12 @@ function computePillStates(
 		: jobs.has("summarize", notePath) ? "running"
 		: "incomplete";
 
-	return {note, research, transcript, record, speakers, summary, speakersCandidatesReady, transcriptFile, transcriptPath, pipelineState};
+	// Presence, not value: the vault's kanban processors stamp a timestamp (and
+	// sometimes a parenthetical skip reason), and either way the meeting is out
+	// of the triage queue.
+	const kanbanReviewed = noteFm[FM.KANBAN_REVIEWED] !== undefined;
+
+	return {note, research, transcript, record, speakers, summary, speakersCandidatesReady, kanbanReviewed, transcriptFile, transcriptPath, pipelineState};
 }
 
 /**
@@ -857,6 +864,28 @@ function renderCardDynamic(
 
 	}
 
+	// Kanban-review icon — joins the gutter's static status icons (organizer,
+	// important, merged), but its state lives in the note's frontmatter, so it's
+	// (re)built here rather than in renderGutter. Shown only once a note exists:
+	// without one there is nothing for the kanban processors to review. Dimmed
+	// while the mark is absent, accented once it lands.
+	const iconRow = cardEl.querySelector(".whisper-cal-card-gutter-icons");
+	if (iconRow instanceof HTMLElement) {
+		iconRow.querySelector(".whisper-cal-card-gutter-kanban")?.remove();
+		if (states.note === "complete") {
+			const kanbanEl = iconRow.createDiv({
+				cls: "whisper-cal-card-gutter-kanban"
+					+ (states.kanbanReviewed ? " whisper-cal-card-gutter-kanban-reviewed" : ""),
+				attr: {
+					"aria-label": states.kanbanReviewed
+						? "Reviewed against kanban"
+						: "Not yet reviewed against kanban",
+				},
+			});
+			setIcon(kanbanEl, "square-kanban");
+		}
+	}
+
 	const recordingApiBaseUrl = opts.recordingApiBaseUrl;
 	const llmOn = opts.llmEnabled !== false;
 	const {cardUi} = opts;
@@ -982,6 +1011,24 @@ function renderCardDynamic(
 				.setTitle("Pull Teams meeting chat")
 				.setIcon("messages-square")
 				.onClick(() => { onPullMeetingChat(noteFile.path); }));
+		}
+
+		// Skip kanban processing — stamps the same `kanban-reviewed` mark the
+		// vault's Meeting → Kanban processors write, which is what drops a
+		// meeting out of their queue. Offered only on an unmarked note: once the
+		// mark is there (however it got there) there is nothing left to skip.
+		if (noteFile && !states.kanbanReviewed) {
+			menu.addItem((item) => item
+				.setTitle("Skip kanban processing")
+				.setIcon("square-kanban")
+				.onClick(() => {
+					void (async () => {
+						const stamp = formatDateTimeWithOffset(new Date(), timezone).replace(" ", "T");
+						await updateFrontmatter(app, noteFile.path, FM.KANBAN_REVIEWED,
+							`${stamp} (manually skipped)`);
+						new Notice("Marked as kanban reviewed");
+					})();
+				}));
 		}
 
 		// No Re-record… item: the gutter's capture button covers it at every

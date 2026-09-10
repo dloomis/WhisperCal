@@ -299,6 +299,22 @@
 	stroke-width: 2.5px;
 }
 
+.whisper-cal-card-gutter-kanban {
+	color: var(--text-faint);
+	display: flex;
+	align-items: center;
+}
+
+.whisper-cal-card-gutter-kanban-reviewed {
+	color: var(--text-success);
+}
+
+.whisper-cal-card-gutter-kanban .svg-icon {
+	width: 16px;
+	height: 16px;
+	stroke-width: 2.5px;
+}
+
 /* Gutter status shading — bar darkens to match */
 .whisper-cal-card-gutter-warning {
 	--wc-category-color: var(--text-warning);

@@ -76,6 +76,14 @@ export const FM = {
 	// pipeline_state, which would otherwise be clobbered by later transcript/
 	// summary writes. Set to "research-done" by the plugin on a successful run.
 	RESEARCH_STATE: "research_state",
+	/**
+	 * Written by the vault's Meeting → Kanban processors once a summarized
+	 * meeting's action items have been triaged onto the board (an ISO 8601
+	 * local-time stamp, optionally with a parenthetical skip reason). WhisperCal
+	 * only reads it for presence — and writes it for "Skip kanban processing",
+	 * which opts a meeting out of that triage queue.
+	 */
+	KANBAN_REVIEWED: "kanban-reviewed",
 } as const;
 
 /** Valid values written to `pipeline_state` across the pipeline. */
