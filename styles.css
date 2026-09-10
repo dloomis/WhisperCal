@@ -300,13 +300,9 @@
 }
 
 .whisper-cal-card-gutter-kanban {
-	color: var(--text-faint);
+	color: var(--text-success);
 	display: flex;
 	align-items: center;
-}
-
-.whisper-cal-card-gutter-kanban-reviewed {
-	color: var(--text-success);
 }
 
 .whisper-cal-card-gutter-kanban .svg-icon {

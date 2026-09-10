@@ -872,21 +872,16 @@ function renderCardDynamic(
 
 	// Kanban-review icon — joins the gutter's static status icons (organizer,
 	// important, merged), but its state lives in the note's frontmatter, so it's
-	// (re)built here rather than in renderGutter. Shown only once a note exists:
-	// without one there is nothing for the kanban processors to review. Dimmed
-	// while the mark is absent, accented once it lands.
+	// (re)built here rather than in renderGutter. Present-only, like its
+	// siblings: an unreviewed meeting shows nothing rather than a dim icon, so
+	// the row stays quiet until there's something to report.
 	const iconRow = cardEl.querySelector(".whisper-cal-card-gutter-icons");
 	if (iconRow instanceof HTMLElement) {
 		iconRow.querySelector(".whisper-cal-card-gutter-kanban")?.remove();
-		if (states.note === "complete") {
+		if (states.kanbanReviewed) {
 			const kanbanEl = iconRow.createDiv({
-				cls: "whisper-cal-card-gutter-kanban"
-					+ (states.kanbanReviewed ? " whisper-cal-card-gutter-kanban-reviewed" : ""),
-				attr: {
-					"aria-label": states.kanbanReviewed
-						? "Reviewed against kanban"
-						: "Not yet reviewed against kanban",
-				},
+				cls: "whisper-cal-card-gutter-kanban",
+				attr: {"aria-label": "Reviewed against kanban"},
 			});
 			setIcon(kanbanEl, "square-kanban");
 		}
