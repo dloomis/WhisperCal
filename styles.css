@@ -227,10 +227,13 @@
 	padding: 12px 10px;
 	width: 92px;
 	flex-shrink: 0;
-	--wc-category-color: var(--wc-subtle);
-	--wc-gutter-bg: var(--background-primary-alt);
+	/* Both tinted by the meeting's Outlook/Google category — the same colour as
+	   the card's left rail. The background is a light wash so it reads behind
+	   the time rather than as a second colour block; the divider takes a much
+	   heavier dose of the same hue so it stays a crisp darker edge against it. */
+	--wc-gutter-bg: color-mix(in srgb, var(--wc-cat-color) 20%, var(--background-primary-alt));
 	background: var(--wc-gutter-bg);
-	border-right: 3px solid color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg));
+	border-right: 3px solid color-mix(in srgb, var(--wc-cat-color) 65%, var(--background-primary-alt));
 	position: relative;
 }
 
@@ -311,25 +314,13 @@
 	stroke-width: 2.5px;
 }
 
-/* Gutter status shading — bar darkens to match */
-.whisper-cal-card-gutter-warning {
-	--wc-category-color: var(--text-warning);
-	--wc-gutter-bg: color-mix(in srgb, var(--text-warning) 10%, var(--background-primary));
-}
-
-.whisper-cal-card-gutter-done {
-	--wc-category-color: var(--interactive-accent);
-	--wc-gutter-bg: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
-	border-right-color: color-mix(in srgb, var(--interactive-accent) 40%, var(--wc-gutter-bg));
-}
-
 /* Dashed border for not-accepted meetings — gaps show primary background */
 .whisper-cal-card-gutter-tentative {
-	border-right: 3px dashed var(--wc-category-color);
+	border-right: 3px dashed var(--wc-cat-color);
 	border-image: repeating-linear-gradient(
 		to bottom,
-		color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg)) 0px,
-		color-mix(in srgb, var(--wc-category-color) 40%, var(--wc-gutter-bg)) 6px,
+		color-mix(in srgb, var(--wc-cat-color) 65%, var(--background-primary-alt)) 0px,
+		color-mix(in srgb, var(--wc-cat-color) 65%, var(--background-primary-alt)) 6px,
 		var(--background-primary) 6px,
 		var(--background-primary) 12px
 	) 4;

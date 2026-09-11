@@ -255,8 +255,6 @@ function renderGutter(card: HTMLElement, event: CalendarEvent, timezone: string,
 		: "whisper-cal-card-gutter";
 	const gutter = card.createDiv({cls: gutterCls});
 
-	// Category color is shown via the grid icon only; the vertical bar mirrors gutter state
-
 	let timeDivRef: HTMLElement | null = null;
 
 	// Top row — time + merge checkbox, level with the meeting title line
@@ -855,19 +853,6 @@ function renderCardDynamic(
 			mergeCb.checked = false;
 			opts.onToggleMergeSelect?.(false);
 		}
-	}
-
-	// Update gutter highlight classes
-	const gutter = cardEl.querySelector(".whisper-cal-card-gutter");
-	if (gutter instanceof HTMLElement) {
-		gutter.removeClass("whisper-cal-card-gutter-done");
-		gutter.removeClass("whisper-cal-card-gutter-warning");
-		if (states.summary === "complete") {
-			gutter.addClass("whisper-cal-card-gutter-done");
-		} else if (states.note === "complete") {
-			gutter.addClass("whisper-cal-card-gutter-warning");
-		}
-
 	}
 
 	// Kanban-review icon — joins the gutter's static status icons (organizer,
