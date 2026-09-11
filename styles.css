@@ -394,8 +394,10 @@
 	position: relative;
 }
 
+/* The card whose note is open in the editor — a light accent wash, so the
+   selected meeting reads as selected rather than merely hovered. */
 .whisper-cal-card-note-open .whisper-cal-card-content {
-	background: var(--background-modifier-hover);
+	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-primary-alt));
 }
 
 /* Content — right column. A flex column so the dynamic zone (and the expand
@@ -1755,7 +1757,7 @@
 }
 
 .whisper-cal-unlinked-card.whisper-cal-card-note-open {
-	background: var(--background-modifier-hover);
+	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-primary-alt));
 }
 
 .whisper-cal-unlinked-title {
