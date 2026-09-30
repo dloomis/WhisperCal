@@ -4,6 +4,7 @@ import type {PeopleMatchResult} from "./PeopleMatchService";
 import {formatDate, formatTimeForFrontmatter} from "../utils/time";
 import {parseDisplayName} from "../utils/nameParser";
 import {yamlEscape} from "../utils/sanitize";
+import {stripJoinBlock} from "../utils/meetingBody";
 
 /**
  * Build a map of all template variables from a CalendarEvent.
@@ -14,6 +15,7 @@ export function buildVariableMap(
 	peopleMatch?: PeopleMatchResult,
 	organizerNotePath?: string | null,
 	noteCreated?: Date,
+	options?: {stripJoinBlock?: boolean},
 ): Record<string, string> {
 	const date = formatDate(event.startTime, timezone);
 	// Frontmatter-bound (meeting_start/meeting_end come from these variables) —
@@ -72,7 +74,7 @@ export function buildVariableMap(
 		onlineMeetingUrl: event.onlineMeetingUrl || "",
 		isAllDay: String(event.isAllDay),
 		isRecurring: String(event.isRecurring),
-		description: event.body,
+		description: options?.stripJoinBlock ? stripJoinBlock(event.body) : event.body,
 		noteCreated: (noteCreated ?? new Date()).toISOString(),
 	};
 }

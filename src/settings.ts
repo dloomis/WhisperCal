@@ -23,6 +23,7 @@ export interface WhisperCalSettings {
 	noteFolderPath: string;
 	noteFilenameTemplate: string;
 	noteTemplatePath: string;
+	stripJoinBlock: boolean;
 	// Provider auth config (tenant/clientId/cloud, Google id/secret) moved to
 	// WhisperCore in the C3 cutover — no longer stored or edited here.
 	peopleFolderPath: string;
@@ -130,6 +131,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	noteFolderPath: "Meetings",
 	noteFilenameTemplate: "{{date}} - {{subject}}",
 	noteTemplatePath: "",
+	stripJoinBlock: false,
 	peopleFolderPath: "",
 	transcriptFolderPath: "Transcripts",
 	seriesNotesFolderPath: "",
@@ -612,6 +614,14 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			get: () => this.plugin.settings.noteTemplatePath,
 			set: v => { this.plugin.settings.noteTemplatePath = v; },
 			suggest: "file",
+		});
+
+		this.addToggleSetting({
+			container: containerEl,
+			name: "Remove online-meeting join details from note body",
+			desc: "Strip the Teams/Zoom join block (join link, meeting ID, passcode, dial-in) from a new note, leaving only the agenda. Existing notes are never modified.",
+			get: () => this.plugin.settings.stripJoinBlock,
+			set: v => { this.plugin.settings.stripJoinBlock = v; },
 		});
 
 		this.addTextSetting({

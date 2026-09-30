@@ -5,26 +5,7 @@
  */
 import {shell} from "electron";
 import {debug} from "./debug";
-
-/**
- * Teams join-link hosts across clouds: commercial (teams.microsoft.com,
- * incl. GCC), personal (teams.live.com), US government GCC High/DoD
- * (gov/dod.teams.microsoft.us), and China 21Vianet (teams.microsoftonline.cn).
- */
-const TEAMS_HOSTS = [
-	"teams.microsoft.com",
-	"teams.live.com",
-	"teams.microsoft.us",
-	"teams.microsoftonline.cn",
-];
-
-/** Zoom join-link hosts: commercial (zoom.us) and government (zoomgov.com). */
-const ZOOM_HOSTS = ["zoom.us", "zoomgov.com"];
-
-/** True when hostname is the base domain or any subdomain of it. */
-function hostMatches(hostname: string, bases: string[]): boolean {
-	return bases.some(base => hostname === base || hostname.endsWith(`.${base}`));
-}
+import {TEAMS_HOSTS, ZOOM_HOSTS, hostMatches} from "./meetingHosts";
 
 /**
  * The desktop app a join URL launches. Used to close that app when a
