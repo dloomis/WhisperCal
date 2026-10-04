@@ -24,10 +24,9 @@ export interface AutoSpeakerTaggerDeps {
 	app: App;
 	getSettings: () => WhisperCalSettings;
 	jobs: JobTracker;
-	/** True when another LLM process can start (activeLlmCount < Core's maxConcurrent). */
+	/** True when another LLM process can start (activeLlmCount < llmMaxConcurrent). */
 	canStartLlm: () => boolean;
-	/** LLM debug mode (opens a terminal) — owned by WhisperCore, read via
-	 *  getLlmConfig(). Auto-tagging is skipped while it's on. */
+	/** LLM debug mode (opens a terminal). Auto-tagging is skipped while it's on. */
 	isLlmDebugMode: () => boolean;
 	/** Kick off a background speaker-tagging run (doTagSpeakers with auto=true).
 	 *  A returned promise lets the tagger un-mark the file on an unexpected crash. */

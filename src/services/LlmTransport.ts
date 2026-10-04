@@ -6,10 +6,9 @@ import process from "process";
 import {Platform} from "obsidian";
 
 /**
- * Generic LLM CLI transport (DESIGN C5, WhisperCore DESIGN D3).
+ * Generic LLM CLI transport.
  *
- * This layer is the future WhisperCore API v2 `runLlmPrompt` primitive, staged
- * inside WhisperCal. It knows how to run a CLI: process spawn and process-tree
+ * It knows how to run a CLI: process spawn and process-tree
  * kills, Windows PowerShell UTF-8 quoting, timeouts, MCP-config plumbing, the
  * machine-wide concurrency slot counter, and the system-prompt/user-message
  * delivery mechanics per platform.

@@ -6,8 +6,6 @@ A desktop-only Obsidian plugin that puts your calendar in a sidebar (Microsoft 3
 
 > **Noncommercial license** — WhisperCal is released under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and share it for personal, hobby, research, nonprofit, educational, and government purposes. **Commercial use requires a separate license from the author.** See [License](#license).
 
-> **Requires WhisperCore** — WhisperCal depends on the companion [WhisperCore](https://github.com/dloomis/WhisperCore) plugin, which holds your calendar sign-in (provider credentials, OAuth tokens, cloud config) and the shared LLM engine settings (CLI command, flags, API key, timeout, concurrency). Install and enable WhisperCore **first** — without it, WhisperCal shows an install gate in place of your calendar and refuses to run LLM actions. See [WhisperCore (required companion plugin)](#whispercore-required-companion-plugin).
-
 **Speaker tagging modal with per-speaker transcript excerpts:**
 
 ![Speaker tagging modal with per-speaker transcript excerpts and calendar sidebar](docs/screenshot-transcript.png)
@@ -37,7 +35,6 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - [Platform Support](#platform-support)
 - [Prerequisites](#prerequisites)
   - [Obsidian plugins](#obsidian-plugins)
-- [WhisperCore (Required Companion Plugin)](#whispercore-required-companion-plugin)
 - [Installation](#installation)
 - [Setup](#setup)
   - [Choosing a Calendar Provider](#choosing-a-calendar-provider)
@@ -154,8 +151,7 @@ MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and 
 
 ## Prerequisites
 
-- **Obsidian** 1.9.0 or later (desktop only — macOS or Windows). WhisperCal itself needs only 1.6.0, but the required WhisperCore plugin needs 1.9.0.
-- The **[WhisperCore](https://github.com/dloomis/WhisperCore)** plugin, installed and enabled — a hard prerequisite that owns calendar auth and the shared LLM engine config (see [WhisperCore (required companion plugin)](#whispercore-required-companion-plugin))
+- **Obsidian** 1.6.0 or later (desktop only — macOS or Windows)
 - A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
 - For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
@@ -164,9 +160,7 @@ MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and 
 
 ### Obsidian plugins
 
-One Obsidian plugin **is** required: **[WhisperCore](#whispercore-required-companion-plugin)**, the companion that holds calendar auth and the shared LLM engine config. It isn't in the community directory — install it alongside WhisperCal (see [Installation](#installation)).
-
-Beyond WhisperCore, WhisperCal uses only Obsidian's native APIs, so **no *community-directory* plugin is required for it to run** — the calendar sidebar, meeting notes, the full pipeline, and the speaker-tagging clip player all work out of the box. A few plugins make WhisperCal's *outputs* nicer to live with, but each is optional:
+WhisperCal uses only Obsidian's native APIs, so **no community plugin is required for it to run** — the calendar sidebar, meeting notes, the full pipeline, and the speaker-tagging clip player all work out of the box. A few plugins make WhisperCal's *outputs* nicer to live with, but each is optional:
 
 | Plugin | What it adds | Do you need it? |
 |--------|--------------|-----------------|
@@ -179,50 +173,9 @@ None of these touch the core pipeline. MacWhisper and the Recording API app (Tom
 
 ---
 
-## WhisperCore (Required Companion Plugin)
-
-WhisperCal does not manage credentials or sign-in itself. Those responsibilities live in **[WhisperCore](https://github.com/dloomis/WhisperCore)**, a separate, free companion plugin that acts as shared plumbing for the Whisper family of plugins. WhisperCore is a **hard prerequisite** — there is no built-in fallback if it's missing.
-
-### What WhisperCore owns
-
-| Concern | Details |
-|---------|---------|
-| **Calendar authentication** | Provider OAuth (Microsoft 365 and Google), the access/refresh **token cache**, and the sign-in / sign-out flow. |
-| **Provider configuration** | Microsoft **Tenant ID / Client ID / Cloud instance**, Google **Client ID / Client secret**, and the login/endpoint URLs. |
-| **Shared LLM engine** | The **CLI command**, base **additional flags**, **Anthropic API key** (for model discovery), shared **prompt folder**, **timeout**, **max concurrency**, and the **debug mode / debug logging** toggles. |
-
-WhisperCal keeps everything *specific to the meeting workflow* — notes, templates, the pipeline, recording sources, prompts, voiceprints, per-prompt model/flag choices, and the **Enable LLM features** / **Automatic mode** toggles. It reads the shared config back from WhisperCore at runtime and never stores those credentials itself.
-
-### The install gate
-
-If WhisperCore is **absent, disabled, out of date, or still loading**, WhisperCal detects it and:
-
-- The **calendar sidebar** shows a **"WhisperCore required"** gate ("Install and enable the WhisperCore plugin to connect your calendar") instead of your schedule.
-- **LLM actions** (speaker tagging, summarization, research) refuse to start with a notice pointing you to install WhisperCore.
-- The WhisperCal settings tabs show a **"Managed in WhisperCore"** card with an **Open WhisperCore settings** button in place of the provider and LLM-engine fields.
-
-The gate clears automatically the moment WhisperCore finishes loading — no reload of WhisperCal needed. WhisperCal also verifies the WhisperCore **API version** matches; if the two plugins drift apart, update both to compatible versions.
-
-### One-time migration (upgrading from a standalone WhisperCal)
-
-If you're upgrading from a version of WhisperCal that stored its own sign-in and LLM credentials, there's **nothing to re-enter**. The first time WhisperCore is present and ready, WhisperCal performs a one-time hand-off: it copies your existing provider config, OAuth tokens, and LLM credentials from WhisperCal's `data.json` into WhisperCore, **filling only empty slots** (it never overwrites anything you've already set in Core). You stay signed in — no re-login. After the hand-off, those settings are edited in WhisperCore going forward.
-
-### Installing WhisperCore
-
-Install it the same way you install WhisperCal (see [Installation](#installation) below):
-
-- **BRAT:** add the beta plugin `dloomis/WhisperCore`, then enable **WhisperCore** in **Settings > Community plugins**.
-- **Manual:** download `main.js`, `manifest.json`, and `styles.css` from the [WhisperCore releases](https://github.com/dloomis/WhisperCore/releases/latest) into `<your-vault>/.obsidian/plugins/whispercore/`, then enable it.
-
-Enable **WhisperCore before WhisperCal** so the gate never appears, then configure your provider credentials and LLM engine in WhisperCore's settings tab.
-
----
-
 ## Installation
 
 > **Note:** WhisperCal is not yet available in the Obsidian community plugin directory. Install using BRAT or manually from GitHub releases.
-
-> **Install WhisperCore too.** WhisperCal requires the [WhisperCore](#whispercore-required-companion-plugin) companion plugin. Install it the same way (BRAT beta id `dloomis/WhisperCore`, or manually into `.obsidian/plugins/whispercore/`) and enable it **before** WhisperCal.
 
 ### Using BRAT (recommended)
 
@@ -239,6 +192,14 @@ BRAT automatically downloads new releases and keeps the plugin up to date.
 2. Create a folder at `<your-vault>/.obsidian/plugins/whisper-cal/`.
 3. Copy the three files into that folder.
 4. Open **Settings > Community plugins** and enable **WhisperCal**.
+
+### Upgrading from 0.8.x (WhisperCore no longer required)
+
+WhisperCal 0.8.x kept your calendar sign-in and LLM engine settings in a separate **WhisperCore** plugin. WhisperCal now holds them itself again, so new installs need only this one plugin.
+
+If you are upgrading, **update WhisperCal before you uninstall WhisperCore**. On its first load, the new version copies your provider credentials, sign-in tokens, and LLM engine settings out of WhisperCore's data file (`.obsidian/plugins/whispercore/data.json`), so there is nothing to re-enter and no need to sign in again. It never changes WhisperCore's file. If you remove WhisperCore first, that file is gone and you will need to re-enter your provider credentials and sign in again.
+
+Once WhisperCal shows your calendar, you can uninstall WhisperCore — unless you also use WhisperOrg, which still needs it for now.
 
 ---
 
@@ -267,7 +228,7 @@ WhisperCal connects to your calendar through the Microsoft Graph API. You need t
 8. Add **Calendars.Read** and **offline_access**.
 9. Click **Grant admin consent** (if required by your organization).
 
-Then in **WhisperCore** settings (these credentials live in WhisperCore, not WhisperCal — open them via **Managed in WhisperCore > Open WhisperCore settings** from WhisperCal's Calendar tab):
+Then in WhisperCal settings:
 - Paste the **Client ID** into the corresponding field. **Tenant ID** is optional — leave it empty to auto-detect from your account at sign-in, or paste a specific tenant ID to restrict sign-in to one organization.
 - Select your **Cloud instance** (most users should leave this on "Public").
 
@@ -285,25 +246,25 @@ WhisperCal connects to Google Calendar through the Google Calendar API. You need
 6. Click **Create** and copy the **Client ID** and **Client secret**.
 7. If your app will be used by more than 100 users, complete the [OAuth consent screen verification](https://support.google.com/cloud/answer/7454865). For personal use this is not required.
 
-Then in **WhisperCore** settings (open them via **Managed in WhisperCore > Open WhisperCore settings** from WhisperCal's Calendar tab):
+Then in WhisperCal settings:
 - Paste the **Client ID** and **Client secret** into the corresponding fields under "Google account".
 
 ### Signing In
 
-Both providers use an **OAuth2 Authorization Code flow with PKCE**, run by WhisperCore. The experience is the same:
+Both providers use an **OAuth2 Authorization Code flow with PKCE**. The experience is the same:
 
-1. Click **Sign in** in the calendar sidebar's inline sign-in banner (or in **WhisperCore** settings). WhisperCal's own settings tab doesn't offer sign-in — it shows the current connection read-only and delegates the flow to WhisperCore.
+1. Click **Sign in** in the WhisperCal settings panel (or in the calendar sidebar's inline sign-in banner).
 2. Your default browser opens to the provider's sign-in page.
-3. Sign in and grant access to your calendar.
+3. Sign in and grant WhisperCal access to your calendar.
 4. The browser redirects to a localhost page confirming success. You can close the tab and return to Obsidian.
 
 If you don't complete sign-in within 5 minutes, the flow times out and you can try again.
 
-For both providers, tokens are stored locally by **WhisperCore** in its own `data.json` (`.obsidian/plugins/whispercore/data.json`), not WhisperCal's. Access tokens refresh automatically; you should rarely need to sign in again. To sign out, click **Sign out** in WhisperCore settings.
+For both providers, tokens are stored locally in the plugin's `data.json` file within your vault. Access tokens refresh automatically; you should rarely need to sign in again. To sign out, click **Sign out** in settings.
 
 ### Cloud Instances (Microsoft)
 
-If your organization uses a government or sovereign cloud, select the appropriate instance in **WhisperCore** settings (cloud config lives there):
+If your organization uses a government or sovereign cloud, select the appropriate instance in settings:
 
 | Instance | Authority | Graph API | Who uses it |
 |----------|-----------|-----------|-------------|
@@ -648,10 +609,10 @@ The log is verbatim and LLM-free: each message shows its author, local time, and
 
 ### Granting the permission
 
-Reading chat needs the delegated **`Chat.Read`** Graph scope, which WhisperCore requests as part of its Microsoft sign-in. Two one-time steps:
+Reading chat needs the delegated **`Chat.Read`** Graph scope, which WhisperCal requests as part of its Microsoft sign-in. Two one-time steps:
 
 1. In the Azure portal, open your app registration → **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → **Chat.Read**, then grant consent.
-2. In WhisperCore's settings, **sign out and sign back in** to Microsoft. Core sends its full scope set on every token refresh, so an existing session keeps refreshing against the old consent until it is re-established. (If your tenant grants *admin* consent for `Chat.Read`, the next refresh picks it up silently and you can skip this step — but signing out and back in is the reliable path either way.)
+2. In WhisperCal's settings (**Calendar** tab), **sign out and sign back in** to Microsoft. WhisperCal sends its full scope set on every token refresh, so an existing session keeps refreshing against the old consent until it is re-established. (If your tenant grants *admin* consent for `Chat.Read`, the next refresh picks it up silently and you can skip this step — but signing out and back in is the reliable path either way.)
 
 Until both are done, the automatic pull stays quiet and the card shows *"Meeting chat unavailable — check the Chat.Read permission"* after a recording; the manual pull explains the same thing in a notice.
 
@@ -1094,7 +1055,7 @@ The series note is matched to an occurrence by its `series_id` (durable), then b
 
 Each LLM prompt (Speaker Tagging, Summarizer, Research) has its own **model selector** dropdown. This lets you use a more capable model for summarization while using a faster model for speaker tagging, for example.
 
-Model options are populated from the Anthropic API using WhisperCore's Anthropic key — the explicit key in WhisperCore's LLM engine settings, or the `ANTHROPIC_API_KEY` environment variable as a fallback. If no key is available (or WhisperCore isn't ready), only "Default" (whatever the CLI tool defaults to) is shown.
+Model options are populated from the Anthropic API using the **Anthropic API key** setting, or the `ANTHROPIC_API_KEY` environment variable as a fallback. If no API key is available, only "Default" (whatever the CLI tool defaults to) is shown.
 
 ### How Invocation Works
 
@@ -1122,8 +1083,6 @@ If any check fails, an Obsidian notice explains the problem.
 
 ### LLM Settings
 
-> **Shared engine lives in WhisperCore.** The rows marked **(WhisperCore)** below — CLI command, base additional flags, Anthropic API key, timeout, concurrency, and the debug toggles — are configured in WhisperCore and shared across the Whisper plugins. WhisperCal reads them at runtime and shows them read-only under a **Managed in WhisperCore** card on its LLM engine tab. Everything else in this table (the enable/automatic toggles, prompts, per-prompt models, voiceprints, microphone user) stays in WhisperCal.
-
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
@@ -1132,8 +1091,8 @@ If any check fails, an Obsidian notice explains the problem.
 | **Auto-tag when all speakers match** | Off | Skip the speaker-tagging modal and apply tags automatically when *every* speaker is a voiceprint match at/above the confidence floor below. Silent auto-tags **never** enroll or correct a voiceprint library (the drift guard) — only confirming in the modal does. Works with **Automatic mode** to decide whether the trigger is a **Review speakers** click or a fully background run. |
 | **Auto-tag confidence floor** | `0.80` | Minimum cosine similarity (0–1) *every* speaker must reach for the modal to be skipped. Only shown/used when "Auto-tag when all speakers match" is on. Kept high so unattended tagging stays strict. |
 | **Ignore minor speakers** | `0.05` | Max share of transcript lines (0–1) below which an unmatched speaker (crosstalk, stray utterances) no longer blocks an auto-tag — it's left untagged, as you would in the modal. At least one speaker must still genuinely match. `0` requires every speaker to match. Only shown/used when "Auto-tag when all speakers match" is on. |
-| **CLI command** *(WhisperCore)* | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
-| **Additional flags** *(WhisperCore)* | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
+| **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
+| **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
 | **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
 | **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the prompt that fixes transcription + diarization errors and proposes names for speakers voiceprints didn't match (vault-relative, absolute, or `~/`-relative). Leave empty to disable the LLM pass. |
 | **Transcript post-processing model** | *(default)* | Claude model to use for transcript post-processing. |
@@ -1142,11 +1101,11 @@ If any check fails, an Obsidian notice explains the problem.
 | **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your meeting research prompt file. |
 | **Research model** | *(default)* | Claude model to use for meeting research. |
 | **Meeting series notes folder** | *(empty)* | Vault folder of per-series notes for recurring meetings. Each note holds default context notes (`research_notes`) and bespoke instructions (under a `## Research instructions` heading) that pre-fill the Research modal for that series. Leave empty to disable. See [Recurring Meetings & Series Prep](#recurring-meetings--series-prep). |
-| **LLM timeout (minutes)** *(WhisperCore)* | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
-| **Max concurrent LLM processes** *(WhisperCore)* | `2` | Maximum number of LLM processes that can run at the same time. |
+| **LLM timeout (minutes)** | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
+| **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
 | **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the smart action button becomes **Review speakers** when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
 | **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
-| **Debug mode** *(WhisperCore)* | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
+| **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
 ---
 
@@ -1203,9 +1162,7 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Cache future days** | `5` | Number of upcoming days to pre-fetch. |
 | **Cache retention** | `30` days | How long past calendar data is kept locally. |
 
-**Provider credentials — managed in WhisperCore.** The provider account fields below are configured in **WhisperCore**, not WhisperCal. WhisperCal's Calendar tab shows them read-only under a **Managed in WhisperCore** card with an **Open WhisperCore settings** button; edit them there.
-
-**Microsoft account** (WhisperCore, shown when the provider is Microsoft 365):
+**Microsoft account** (shown when the provider is Microsoft 365):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -1213,7 +1170,7 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Client ID** | *(empty)* | Application (client) ID from your Azure AD app registration. |
 | **Cloud instance** | Public | Microsoft cloud environment. |
 
-**Google account** (WhisperCore, shown when the provider is Google Calendar):
+**Google account** (shown when the provider is Google Calendar):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -1275,44 +1232,37 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 
 ### LLM engine
 
-WhisperCal's own LLM engine tab holds only the two workflow toggles below (plus the Automatic-mode catch-up window). The shared engine — CLI, flags, key, timeout, concurrency, and debug toggles — is **managed in WhisperCore** and mirrored here read-only under a **Managed in WhisperCore** card with an **Open WhisperCore settings** button.
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. *(WhisperCal)* |
-| **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. *(WhisperCal)* |
-| **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). *(WhisperCal)* |
-| **CLI command** | `claude` | LLM CLI executable name or path. *(WhisperCore)* |
-| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). *(WhisperCore)* |
-| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. *(WhisperCore)* |
-| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). *(WhisperCore)* |
-| **Max concurrent** | `2` | Maximum simultaneous LLM processes. *(WhisperCore)* |
-| **Debug mode** | Off | Open LLM commands in Terminal instead of background (macOS only). *(WhisperCore)* |
-| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I`). Off by default to avoid leaking meeting content. *(WhisperCore)* |
+| **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. |
+| **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. |
+| **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
+| **CLI command** | `claude` | LLM CLI executable name or path. |
+| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
+| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files. |
+| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
+| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
+| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
+| **Debug mode** | Off | Open LLM commands in Terminal instead of background (macOS only). |
+| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I`). Off by default to avoid leaking meeting content. |
 
 ---
 
 ## Disclosures
 
 - **Remote services:** This plugin connects to the **Microsoft Graph API** or the **Google Calendar API** (depending on your chosen provider) to fetch calendar events. Both providers use OAuth 2.0 Authorization Code flow with PKCE via a localhost redirect.
-- **OAuth token storage:** Refresh and access tokens for Microsoft 365 and Google are stored by **WhisperCore** in *its* `data.json` file inside your vault (`.obsidian/plugins/whispercore/data.json`) — not WhisperCal's. They are **not encrypted at rest**. If your vault is synced (Obsidian Sync, iCloud, Dropbox, git, etc.) or backed up, those tokens travel with it — anyone who can read the file can act as you against the calendar provider until the tokens are revoked. To clear them, click **Sign out** in WhisperCore settings; to invalidate them server-side, revoke access in your provider's account portal (Microsoft 365 or Google account → security → app permissions).
-- **Other secrets in WhisperCore's `data.json`:** the same unencrypted WhisperCore `data.json` also holds the optional **Anthropic API key** (used only to populate model dropdowns) and, for the Google provider, your **Google OAuth client secret**. Like the tokens above, these are stored in plaintext and travel with a synced or backed-up vault. Treat the file as sensitive. (If you're upgrading from a standalone WhisperCal, the one-time hand-off copies these into WhisperCore and then **removes** the provider config, token caches, and LLM credentials from WhisperCal's own `data.json`.)
+- **OAuth token storage:** Refresh and access tokens for Microsoft 365 and Google are stored in the plugin's `data.json` file inside your vault (`.obsidian/plugins/whisper-cal/data.json`). They are **not encrypted at rest**. If your vault is synced (Obsidian Sync, iCloud, Dropbox, git, etc.) or backed up, those tokens travel with it — anyone who can read the file can act as you against the calendar provider until the tokens are revoked. To clear them, click **Sign out** in settings; to invalidate them server-side, revoke access in your provider's account portal (Microsoft 365 or Google account → security → app permissions).
+- **Other secrets in `data.json`:** the same unencrypted `data.json` also holds the optional **Anthropic API key** (used only to populate model dropdowns) and, for the Google provider, your **Google OAuth client secret**. Like the tokens above, these are stored in plaintext and travel with a synced or backed-up vault. Treat the file as sensitive.
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
 - **Recording API:** When using the Recording API source, WhisperCal communicates with a localhost REST API to start/stop recordings and poll transcription status. All communication is local.
 - **LLM invocation:** When you use the speaker tagging, summarization, or research features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
 - **LLM trust boundary:** The default **Additional flags** value is `--dangerously-skip-permissions`, which lets the CLI read and write files without interactive approval — necessary because the LLM runs headlessly with no terminal to answer prompts. The catch: the content sent to the LLM includes **third-party-controlled text** — transcribed audio, calendar attendee names, and invite subjects from people outside your control. A crafted meeting name or spoken sentence is a potential prompt-injection vector that, combined with skip-permissions, could drive the CLI to take file or shell actions rooted at your vault. Only run these features against meetings and an LLM CLI you trust. To reduce the blast radius, replace the default flag with a scoped `--allowedTools` set (or remove it and approve actions another way) at the cost of headless convenience.
-- **LLM model discovery:** Model lists for the per-prompt selectors are fetched from the Anthropic API by **WhisperCore**, using the Anthropic key configured in WhisperCore (or the `ANTHROPIC_API_KEY` environment variable as a fallback). No other data is sent, and the key is never passed to the CLI.
+- **LLM model discovery:** If an Anthropic API key is configured (the **Anthropic API key** setting, or the `ANTHROPIC_API_KEY` environment variable), WhisperCal fetches available Claude models from the Anthropic API to populate per-prompt model selectors. No other data is sent.
 - **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
 
 ---
 
 ## Troubleshooting
-
-### "WhisperCore required" gate in the sidebar (or LLM actions won't start)
-WhisperCal shows this when it can't reach a ready [WhisperCore](#whispercore-required-companion-plugin):
-- Confirm **WhisperCore** is installed and enabled in **Settings > Community plugins**.
-- If you just enabled it, give it a moment — the gate clears automatically once Core finishes loading.
-- Check the developer console (`Cmd+Option+I`) for a `[WhisperCal] WhisperCore API version mismatch` warning. If present, update both plugins to compatible versions.
 
 ### "Client ID is required" (Microsoft)
 The Client ID must be filled in before you can sign in. Tenant ID is optional. See [Microsoft 365 Setup](#microsoft-365-setup).
@@ -1324,7 +1274,7 @@ Both fields must be filled in before you can sign in. See [Google Calendar Setup
 The sign-in flow is valid for 5 minutes. If it times out before you complete sign-in in the browser, click **Sign in** again.
 
 ### Calendar shows "Offline" with no events
-- Check that you're signed in — WhisperCal's Calendar tab shows the connection status under the **Managed in WhisperCore** card, or open **WhisperCore** settings directly.
+- Check that you're signed in (**Settings > WhisperCal > Calendar** should show "Signed in" under **Provider**).
 - Try clicking the refresh button in the calendar header.
 - Verify your Azure AD app has the **Calendars.Read** permission.
 
@@ -1334,9 +1284,9 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 - MacWhisper must have completed transcription before a transcript file can be created.
 
 ### LLM job fails immediately
-- Verify the **CLI command** setting (in **WhisperCore**) matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
+- Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
 - Ensure your **Transcript post-processing prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
-- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail. Turn on **Debug logging** (in WhisperCore settings) for verbose diagnostics (LLM commands and stdout, speaker tagging, and voiceprint enrollment), filterable by the `[WhisperCal:` prefix.
+- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail. Turn on **Debug logging** in settings for verbose diagnostics (LLM commands and stdout, speaker tagging, and voiceprint enrollment), filterable by the `[WhisperCal:` prefix.
 
 ### Speaker tagging modal shows no AI suggestions
 - The LLM's stdout must contain a fenced JSON code block with the expected schema (see [Required LLM Output Format](#required-llm-output-format)). If parsing fails, speakers are shown without proposals.
@@ -1357,10 +1307,10 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 - This is by design. Silent auto-tags (skipped modal) **never** enroll or correct a library, to prevent drift. To intentionally update a library, review that recording in the modal and apply it there.
 
 ### "LLM concurrency limit reached"
-- The default limit is 2 simultaneous LLM processes. Wait for a running job to finish, or increase **Max concurrent LLM processes** in WhisperCore settings.
+- The default limit is 2 simultaneous LLM processes. Wait for a running job to finish, or increase **Max concurrent LLM processes** in settings.
 
 ### LLM process timed out
-- The default timeout is 10 minutes. For long transcripts, increase the **LLM timeout** setting (in WhisperCore). Set to `0` to disable the timeout entirely.
+- The default timeout is 10 minutes. For long transcripts, increase the **LLM timeout** setting. Set to `0` to disable the timeout entirely.
 
 ### Status rail segments are grayed out
 A rail segment stays neutral (and isn't clickable) until its stage's artifact exists — the pipeline advances left to right:

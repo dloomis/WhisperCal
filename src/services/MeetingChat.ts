@@ -331,7 +331,7 @@ export function noticeForOutcome(outcome: MeetingChatOutcome): void {
 	case "error":
 		new Notice(
 			outcome.kind === "forbidden"
-				? "Could not read the meeting chat — sign out and back in from WhisperCore so the token includes the Chat.Read permission"
+				? "Could not read the meeting chat — sign out and back in so the token includes the Chat.Read permission"
 				: `Could not read the meeting chat: ${outcome.reason}`,
 			10000,
 		);

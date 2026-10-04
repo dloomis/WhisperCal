@@ -1,4 +1,4 @@
-import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile} from "obsidian";
+import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, normalizePath} from "obsidian";
 import {execFile} from "child_process";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, COMMAND_PULL_MEETING_CHAT, FM, SPLIT_MARKER} from "./constants";
@@ -26,9 +26,11 @@ import type {AuthState} from "./services/CalendarAuth";
 import type {CalendarAuth} from "./services/CalendarAuth";
 import type {CalendarProvider, CalendarProviderType} from "./types";
 import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
-import {createCalendarStack} from "./services/CalendarProviderFactory";
-import {getWhisperCoreApi} from "./services/CoreBridge";
-import type {CoreImportBundle, LlmConfigDto} from "./types/whispercore";
+import type {AuthCallbacks} from "./services/auth/BaseCalendarAuth";
+import type {TokenCache} from "./services/auth/AuthTypes";
+import {CLOUD_INSTANCE_OPTIONS} from "./services/auth/AuthTypes";
+import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFactory";
+import type {LlmConfigDto} from "./types/whispercore";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
 import {createUnlinkedProvider} from "./services/UnlinkedProviderFactory";
@@ -47,9 +49,9 @@ import {AutoSpeakerTagger, LLM_SLOT_POLL_MS, LLM_SLOT_MAX_WAIT_MS} from "./servi
 import {planSplit, splitMeeting, hasSplitMarker, removeSplitMarker} from "./services/MeetingSplitter";
 import {SplitConfirmModal} from "./ui/SplitConfirmModal";
 
-/** LLM credential/config keys that moved to WhisperCore. Only safe to drop from
- *  WhisperCal's data.json once the C3 hand-off has imported them into Core. */
-const LEGACY_LLM_KEYS = ["anthropicApiKey", "llmCli", "llmExtraFlags"];
+/** WhisperCore's data file, relative to the vault's config dir. Read once by
+ *  importFromWhisperCore; never written. */
+const WHISPERCORE_DATA_PATH = "plugins/whispercore/data.json";
 
 /** Derive a short display name from an LLM model ID.
  *  Claude IDs in every shape: "claude-opus-4-6" → "Opus 4.6", "claude-sonnet-5" →
@@ -120,12 +122,29 @@ function distinctSpeakerLabels(content: string): number {
 	return new Set(findSpeakerLabels(transcriptBody(content)).map(l => l.name)).size;
 }
 
-/** Legacy per-provider token cache shape, read only during the one-time
- *  WhisperCore hand-off (DESIGN §8.3); tokens now live in Core's data.json. */
-interface LegacyTokenCache {
-	accessToken: string;
-	refreshToken: string;
-	expiresAt: number;
+interface PluginData extends WhisperCalSettings {
+	// Legacy single token cache (predates the per-provider split; treated as Microsoft)
+	tokenCache?: TokenCache | null;
+	// Per-provider token caches — top-level keys in data.json, outside `settings`
+	microsoftTokenCache?: TokenCache | null;
+	googleTokenCache?: TokenCache | null;
+}
+
+/** Coerce a persisted numeric setting to a finite value at or above `min`,
+ *  falling back to `fallback` for missing/garbage values. */
+function sanitizeNumber(value: unknown, fallback: number, min: number): number {
+	return typeof value === "number" && Number.isFinite(value) ? Math.max(min, value) : fallback;
+}
+
+/** Validate a persisted token cache; a malformed one (hand-edit, version skew)
+ *  is treated as signed-out rather than fed to the auth engine. */
+function sanitizeTokenCache(tc: unknown): TokenCache | null {
+	if (!tc || typeof tc !== "object") return null;
+	const c = tc as Record<string, unknown>;
+	if (typeof c.refreshToken !== "string" || c.refreshToken === "") return null;
+	if (typeof c.accessToken !== "string") return null;
+	if (typeof c.expiresAt !== "number" || !Number.isFinite(c.expiresAt)) return null;
+	return {accessToken: c.accessToken, refreshToken: c.refreshToken, expiresAt: c.expiresAt};
 }
 
 export default class WhisperCalPlugin extends Plugin {
@@ -139,10 +158,11 @@ export default class WhisperCalPlugin extends Plugin {
 	private cachedProvider: CachedCalendarProvider | null = null;
 	private viewCallbacks!: CalendarViewCallbacks;
 	private authStateListeners: Array<(state: AuthState) => void> = [];
+	private microsoftTokenCache: TokenCache | null = null;
+	private googleTokenCache: TokenCache | null = null;
 	private activeProviderType: CalendarProviderType = "microsoft";
 	private unlinkedProvider!: UnlinkedRecordingProvider;
 	private autoTagger!: AutoSpeakerTagger;
-	private coreHandoffInFlight = false;
 	/**
 	 * The transcript currently open for "Split transcript…", if any. Transient
 	 * (never persisted): split mode is a single interaction — place a marker,
@@ -153,6 +173,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		await this.importFromWhisperCore();
 		resetApiRecordingWatchers();
 		resetLinkRecordingWatchers();
 		// In-flight recording bookkeeping (SESSION_GUID_DESIGN.md §7): the
@@ -191,8 +212,8 @@ export default class WhisperCalPlugin extends Plugin {
 			app: this.app,
 			getSettings: () => this.settings,
 			jobs: this.jobs,
-			canStartLlm: () => activeLlmCount() < this.coreLlm().maxConcurrent,
-			isLlmDebugMode: () => this.coreLlm().debugMode,
+			canStartLlm: () => activeLlmCount() < this.llmConfig().maxConcurrent,
+			isLlmDebugMode: () => this.llmConfig().debugMode,
 			runAutoTag: (file, fm, notePath) =>
 				this.doTagSpeakers(file, fm, notePath, undefined, {auto: true}),
 			onSlotWait: (notePath, retryAt) => this.showLlmWaitStatus(notePath, retryAt),
@@ -215,33 +236,12 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(this.settings.calendarProvider, this.app);
+		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks());
 		this.auth = stack.auth;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
 		this.auth.initialize();
 
-		// WhisperCore is a hard prerequisite (DESIGN §4.9 exception, D2). Bridge
-		// its auth-state changes into WhisperCal's existing listener chain so the
-		// sidebar banner + settings status re-render on every sign-in/out/refresh,
-		// and re-render the calendar (which shows the install gate when Core is
-		// absent) when Core finishes loading.
-		this.registerEvent(
-			this.app.workspace.on("whispercore:auth-changed" as never, () => {
-				this.notifyAuthStateListeners(this.auth.getState());
-			}),
-		);
-		this.registerEvent(
-			this.app.workspace.on("whispercore:ready" as never, () => {
-				void this.runCoreHandoff();
-				// Drive the settings status block; the calendar view re-renders its
-				// own gate via its own whispercore:ready subscription.
-				this.notifyAuthStateListeners(this.auth.getState());
-			}),
-		);
-		// One-time credential/token hand-off if Core is already present at load
-		// (§8.3). If Core isn't ready yet, the whispercore:ready handler retries.
-		void this.runCoreHandoff();
 
 		this.cachedProvider = new CachedCalendarProvider(
 			this.app,
@@ -577,7 +577,7 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.cachedProvider?.clear();
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(this.settings.calendarProvider, this.app);
+		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks());
 		this.auth = stack.auth;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
@@ -601,8 +601,8 @@ export default class WhisperCalPlugin extends Plugin {
 		// A synced settings change from another machine may switch the calendar
 		// provider — rebuild the stack before propagating config to live components.
 		await this.rebuildProviderStackIfChanged();
-		// Propagate updated settings to live components. Provider auth config now
-		// lives in WhisperCore, so there is nothing to push into `this.auth` here.
+		// Propagate updated settings to live components (same as saveSettings does)
+		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
 			this.settings.cacheRetentionDays,
@@ -628,8 +628,21 @@ export default class WhisperCalPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const data = await this.loadData() as Partial<WhisperCalSettings> | null;
+		const data = await this.loadData() as Partial<PluginData> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+
+		// Token caches persist as top-level keys beside the settings, never inside
+		// the settings object. The legacy single tokenCache predates the
+		// per-provider split — treat it as Microsoft.
+		this.microsoftTokenCache = sanitizeTokenCache(data?.microsoftTokenCache ?? data?.tokenCache);
+		this.googleTokenCache = sanitizeTokenCache(data?.googleTokenCache);
+		for (const k of ["tokenCache", "microsoftTokenCache", "googleTokenCache"]) {
+			delete (this.settings as unknown as Record<string, unknown>)[k];
+		}
+		// A bad persisted cloud (hand-edit, version skew) would select no endpoints.
+		if (!CLOUD_INSTANCE_OPTIONS.includes(this.settings.cloudInstance)) {
+			this.settings.cloudInstance = DEFAULT_SETTINGS.cloudInstance;
+		}
 
 		// Migrate old importantOrganizerEmails (string[]) to importantOrganizers ({name, email}[])
 		const legacy = data as Record<string, unknown> | null;
@@ -646,15 +659,10 @@ export default class WhisperCalPlugin extends Plugin {
 			if (!this.settings.summarizerModel) this.settings.summarizerModel = old;
 			if (!this.settings.researchModel) this.settings.researchModel = old;
 		}
-		// LLM CLI command, shared flags, and Anthropic API key moved to WhisperCore
-		// (C4). Drop leftover copies only once the C3 hand-off has actually run —
-		// until then they are the sole surviving source for the migration, and any
-		// persistData() before Core is installed would erase them for good.
-		if (this.settings.coreMigrationDone) {
-			for (const k of LEGACY_LLM_KEYS) {
-				delete (this.settings as unknown as Record<string, unknown>)[k];
-			}
-		}
+		// A bad persisted numeric (hand-edit, version skew) must not reach the LLM
+		// spawn path as NaN/negative.
+		this.settings.llmTimeoutMinutes = sanitizeNumber(this.settings.llmTimeoutMinutes, DEFAULT_SETTINGS.llmTimeoutMinutes, 0);
+		this.settings.llmMaxConcurrent = sanitizeNumber(this.settings.llmMaxConcurrent, DEFAULT_SETTINGS.llmMaxConcurrent, 1);
 		// Migrate legacy autoRecordOnLaunch → automateMeetingRecording (the toggle
 		// now also closes the meeting app when recording is stopped from WhisperCal).
 		if (typeof legacy?.autoRecordOnLaunch === "boolean" && data?.automateMeetingRecording === undefined) {
@@ -711,33 +719,34 @@ export default class WhisperCalPlugin extends Plugin {
 			})();
 		}
 		setTimeFormat(this.settings.timeFormat);
-		setDebugLogging(this.coreLlm().debugLogging);
+		setDebugLogging(this.llmConfig().debugLogging);
 	}
 
-	/**
-	 * Core-owned LLM runtime config (prompt dir, timeout, concurrency cap, debug
-	 * toggles) — migrated out of WhisperCal's settings into WhisperCore, read via
-	 * getLlmConfig(). Fetched FRESH per the consumer rules (never cached across an
-	 * await). Falls back to Core's documented defaults when Core is absent/not-ready
-	 * so a stray read can't produce NaN/undefined; the actual LLM spawn is still
-	 * gated on the real Core config in runLlmJob (DESIGN §8.4).
-	 */
-	coreLlm(): LlmConfigDto {
-		return getWhisperCoreApi(this.app)?.getLlmConfig() ?? {
-			cli: "", extraFlags: "", anthropicApiKey: null,
-			promptDir: "", timeoutMinutes: 10, maxConcurrent: 2,
-			debugMode: false, debugLogging: false,
+	/** Snapshot of the LLM engine config (CLI, flags, key, timeout, concurrency
+	 *  cap, debug toggles) from settings. */
+	llmConfig(): LlmConfigDto {
+		const s = this.settings;
+		return {
+			cli: s.llmCli,
+			extraFlags: s.llmExtraFlags,
+			anthropicApiKey: s.anthropicApiKey ? s.anthropicApiKey : null,
+			promptDir: s.llmPromptDir,
+			timeoutMinutes: s.llmTimeoutMinutes,
+			maxConcurrent: s.llmMaxConcurrent,
+			debugMode: s.llmDebugMode,
+			debugLogging: s.llmDebugLogging,
 		};
 	}
 
 	async saveSettings() {
 		await this.persistData();
-		setDebugLogging(this.coreLlm().debugLogging);
+		setDebugLogging(this.llmConfig().debugLogging);
 
 		// If provider type changed, rebuild the entire stack
 		await this.rebuildProviderStackIfChanged();
 
-		// Provider auth config lives in WhisperCore now — nothing to push here.
+		// Update auth config (e.g. client ID/secret changed)
+		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
 		// Update cache config
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
@@ -775,102 +784,122 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
+	private authCallbacks(): AuthCallbacks {
+		return {
+			loadTokenCache: () => this.activeProviderType === "google"
+				? this.googleTokenCache
+				: this.microsoftTokenCache,
+			saveTokenCache: async (cache) => {
+				if (this.activeProviderType === "google") {
+					this.googleTokenCache = cache;
+				} else {
+					this.microsoftTokenCache = cache;
+				}
+				await this.persistData();
+			},
+			onStateChange: (state) => this.notifyAuthStateListeners(state),
+		};
+	}
+
+	/** Single writer for data.json: settings + both token caches together. */
 	private async persistData(): Promise<void> {
-		await this.saveData(this.settings);
+		await this.saveData({
+			...this.settings,
+			microsoftTokenCache: this.microsoftTokenCache,
+			googleTokenCache: this.googleTokenCache,
+		});
 	}
 
 	/**
-	 * One-time hand-off of provider config + tokens + LLM config to WhisperCore
-	 * (DESIGN §8.3). Runs when Core is present+ready and WhisperCal's data.json
-	 * still carries legacy keys. Core fills empty slots only (never overwrites),
-	 * so a signed-in Core keeps its own tokens and WhisperCal's stale copy is
-	 * skipped. After a successful import WhisperCal deletes the moved AUTH keys,
-	 * token caches, and LLM keys from its own data.json — deleting them any earlier
-	 * would destroy the only copy while Core is still absent. Idempotent via
-	 * `coreMigrationDone`; if Core is absent, this is a no-op that retries on a
-	 * later load / whispercore:ready.
+	 * One-time import of provider config, OAuth tokens, and LLM config from the
+	 * WhisperCore plugin, which held them during the 0.8.x releases. Reads Core's
+	 * data.json directly (its API never exposes refresh tokens, and the file is
+	 * readable whether Core is enabled, disabled, or not yet loaded) and never
+	 * writes to it, so a downgrade still finds Core's data intact.
 	 *
-	 * The onload call and the whispercore:ready handler can both reach this while
-	 * the first is still awaiting loadData, so an in-flight guard backs up the
-	 * `coreMigrationDone` check — two concurrent imports would race on data.json.
+	 * When this install handed its config off to Core (`coreMigrationDone`), Core
+	 * is the source of truth and its values replace WhisperCal's stale leftovers.
+	 * Otherwise WhisperCal's own values win and Core only fills fields still at
+	 * their default. A token cache is adopted only when the resulting identity
+	 * config equals Core's — a token refreshed under a different client id dies
+	 * invalid_grant. A read/parse failure leaves the flag unset so the next load
+	 * retries. Must run before the auth stack is built.
 	 */
-	private async runCoreHandoff(): Promise<void> {
-		if (this.settings.coreMigrationDone || this.coreHandoffInFlight) return;
-		const api = getWhisperCoreApi(this.app);
-		if (!api) return; // Core absent/not-ready — retry later
-
-		this.coreHandoffInFlight = true;
+	private async importFromWhisperCore(): Promise<void> {
+		if (this.settings.coreImportDone) return;
+		const path = normalizePath(`${this.app.vault.configDir}/${WHISPERCORE_DATA_PATH}`);
+		let core: Record<string, unknown> | null = null;
 		try {
-			await this.doCoreHandoff(api);
+			if (await this.app.vault.adapter.exists(path)) {
+				const parsed: unknown = JSON.parse(await this.app.vault.adapter.read(path));
+				if (!parsed || typeof parsed !== "object") throw new Error("unexpected file shape");
+				core = parsed as Record<string, unknown>;
+			}
 		} catch (e) {
-			// importConfig throws only "not ready" (a race with disable); a persistData
-			// disk error lands here too. Leave coreMigrationDone false so a later load
-			// retries rather than surfacing an unhandled rejection from the voided call.
-			console.warn("[WhisperCal] WhisperCore hand-off deferred:", e instanceof Error ? e.message : String(e));
-		} finally {
-			this.coreHandoffInFlight = false;
+			console.warn("[WhisperCal] WhisperCore import deferred:", e instanceof Error ? e.message : String(e));
+			return;
 		}
-	}
-
-	private async doCoreHandoff(api: NonNullable<ReturnType<typeof getWhisperCoreApi>>): Promise<void> {
-		const raw = await this.loadData() as Record<string, unknown> | null;
-		if (!raw) return;
-
-		const str = (k: string): string | undefined => {
-			const v = raw[k];
-			return typeof v === "string" && v.length > 0 ? v : undefined;
-		};
-		const tok = (k: string): LegacyTokenCache | undefined => {
-			const v = raw[k] as Partial<LegacyTokenCache> | null | undefined;
-			return v && typeof v.accessToken === "string" && typeof v.refreshToken === "string" && typeof v.expiresAt === "number"
-				? {accessToken: v.accessToken, refreshToken: v.refreshToken, expiresAt: v.expiresAt}
-				: undefined;
-		};
-
-		// Legacy single tokenCache predates the per-provider split — treat as Microsoft.
-		const msToken = tok("microsoftTokenCache") ?? tok("tokenCache");
-		const bundle: CoreImportBundle = {};
-		const ms: NonNullable<CoreImportBundle["microsoft"]> = {};
-		if (str("tenantId") !== undefined) ms.tenantId = str("tenantId");
-		if (str("clientId") !== undefined) ms.clientId = str("clientId");
-		if (str("cloudInstance") !== undefined) ms.cloudInstance = str("cloudInstance");
-		if (msToken) ms.tokenCache = msToken;
-		if (Object.keys(ms).length > 0) bundle.microsoft = ms;
-
-		const gToken = tok("googleTokenCache");
-		const g: NonNullable<CoreImportBundle["google"]> = {};
-		if (str("googleClientId") !== undefined) g.clientId = str("googleClientId");
-		if (str("googleClientSecret") !== undefined) g.clientSecret = str("googleClientSecret");
-		if (gToken) g.tokenCache = gToken;
-		if (Object.keys(g).length > 0) bundle.google = g;
-
-		const llm: NonNullable<CoreImportBundle["llm"]> = {};
-		if (str("anthropicApiKey") !== undefined) llm.anthropicApiKey = str("anthropicApiKey");
-		if (str("llmCli") !== undefined) llm.cli = str("llmCli");
-		if (str("llmExtraFlags") !== undefined) llm.extraFlags = str("llmExtraFlags");
-		if (Object.keys(llm).length > 0) bundle.llm = llm;
-
-		const hasLegacy = bundle.microsoft || bundle.google || bundle.llm;
-		if (!hasLegacy) {
-			// Nothing to migrate (fresh install) — mark done so we stop probing.
-			this.settings.coreMigrationDone = true;
+		if (!core) {
+			// Core was never installed (or its folder is gone) — nothing to import.
+			this.settings.coreImportDone = true;
 			await this.persistData();
 			return;
 		}
 
-		const result = await api.importConfig(bundle);
-		// Remove the moved AUTH config + token caches from WhisperCal's own
-		// data.json (tokens are obsolete whether adopted or skipped). The LLM keys
-		// go in the same pass — they are only safe to drop once Core has them, and
-		// WhisperCal now reads them back through getLlmConfig().
-		const AUTH_KEYS = ["tenantId", "clientId", "cloudInstance", "googleClientId", "googleClientSecret",
-			"microsoftTokenCache", "googleTokenCache", "tokenCache"];
-		for (const k of [...AUTH_KEYS, ...LEGACY_LLM_KEYS]) {
-			delete (this.settings as unknown as Record<string, unknown>)[k];
+		const s = this.settings;
+		const coreIsAuthoritative = s.coreMigrationDone;
+		const adopt = <K extends keyof WhisperCalSettings>(key: K, value: WhisperCalSettings[K] | undefined): void => {
+			if (value === undefined) return;
+			if (coreIsAuthoritative || s[key] === DEFAULT_SETTINGS[key]) s[key] = value;
+		};
+		const str = (k: string): string | undefined => {
+			const v = core[k];
+			return typeof v === "string" ? v : undefined;
+		};
+		const num = (k: string, min: number): number | undefined => {
+			const v = core[k];
+			return typeof v === "number" && Number.isFinite(v) ? Math.max(min, v) : undefined;
+		};
+		const bool = (k: string): boolean | undefined => {
+			const v = core[k];
+			return typeof v === "boolean" ? v : undefined;
+		};
+		const coreCloud = CLOUD_INSTANCE_OPTIONS.find(c => c === core["cloudInstance"]);
+
+		adopt("tenantId", str("tenantId"));
+		adopt("clientId", str("clientId"));
+		adopt("cloudInstance", coreCloud);
+		adopt("googleClientId", str("googleClientId"));
+		adopt("googleClientSecret", str("googleClientSecret"));
+		// Core's CLI default was empty (meaning "claude"); keep WhisperCal's default then.
+		adopt("llmCli", str("llmCli") || undefined);
+		adopt("llmExtraFlags", str("llmExtraFlags"));
+		adopt("anthropicApiKey", str("anthropicApiKey"));
+		adopt("llmPromptDir", str("llmPromptDir"));
+		adopt("llmTimeoutMinutes", num("llmTimeoutMinutes", 0));
+		adopt("llmMaxConcurrent", num("llmMaxConcurrent", 1));
+		adopt("llmDebugMode", bool("llmDebugMode"));
+		adopt("llmDebugLogging", bool("llmDebugLogging"));
+
+		if (!this.microsoftTokenCache
+			&& s.clientId !== ""
+			&& s.clientId === str("clientId")
+			&& s.tenantId === (str("tenantId") ?? "")
+			&& s.cloudInstance === (coreCloud ?? "Public")) {
+			this.microsoftTokenCache = sanitizeTokenCache(core["microsoftTokenCache"]);
 		}
-		this.settings.coreMigrationDone = true;
+		if (!this.googleTokenCache
+			&& s.googleClientId !== ""
+			&& s.googleClientId === str("googleClientId")
+			&& s.googleClientSecret === (str("googleClientSecret") ?? "")) {
+			this.googleTokenCache = sanitizeTokenCache(core["googleTokenCache"]);
+		}
+
+		s.coreImportDone = true;
 		await this.persistData();
-		console.debug(`[WhisperCal] WhisperCore hand-off complete — adopted: [${result.adopted.join(", ")}], skipped: [${result.skipped.join(", ")}]`);
+		setDebugLogging(s.llmDebugLogging);
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
+		new Notice("WhisperCal imported your calendar sign-in and LLM settings from WhisperCore and no longer needs it. You can uninstall WhisperCore unless you use WhisperOrg.", 15000);
 	}
 
 	private resolveTagSpeakersContext(
@@ -981,7 +1010,7 @@ export default class WhisperCalPlugin extends Plugin {
 				this.clearLlmWaitStatus(notePath);
 				return false;
 			}
-			if (activeLlmCount() < this.coreLlm().maxConcurrent) {
+			if (activeLlmCount() < this.llmConfig().maxConcurrent) {
 				claimLlmSlot();
 				this.clearLlmWaitStatus(notePath);
 				return true;
@@ -1063,7 +1092,7 @@ export default class WhisperCalPlugin extends Plugin {
 		const runLlm = this.settings.llmEnabled && !!this.settings.speakerTaggingPromptPath && !singleSourceNoHint;
 		let slotClaimed = false;
 		if (runLlm) {
-			if (activeLlmCount() >= this.coreLlm().maxConcurrent) {
+			if (activeLlmCount() >= this.llmConfig().maxConcurrent) {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				if (!auto) new Notice("LLM concurrency limit reached — try again when a running job finishes");
 				return;
@@ -2125,7 +2154,7 @@ export default class WhisperCalPlugin extends Plugin {
 		filePath: string;
 		label: string;
 		promptPath?: string;
-		/** `llm` is the gate's Core-config snapshot — use it (not a fresh coreLlm())
+		/** `llm` is the gate's config snapshot — use it (not a fresh llmConfig())
 		 *  so spawn behavior and the post-run debugMode branch can't disagree when
 		 *  the user toggles debug mid-validation. */
 		spawnOpts: (vaultPath: string, llm: LlmConfigDto) => Omit<Parameters<typeof spawnLlmPrompt>[0], "pluginDir" | "llmCli" | "llmExtraFlags">;
@@ -2157,17 +2186,7 @@ export default class WhisperCalPlugin extends Plugin {
 			releaseClaim();
 			return;
 		}
-		// LLM credentials/config come from WhisperCore (C4). Gate the same way as
-		// calendar features when Core is absent/disabled/not-ready (DESIGN §8.4).
-		const llmConfig = getWhisperCoreApi(this.app)?.getLlmConfig();
-		if (!llmConfig) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
-			new Notice("WhisperCore required — install and enable the WhisperCore plugin to run LLM actions.");
-			releaseClaim();
-			return;
-		}
-		// Core's llmCli defaults to empty; fall back to the historical "claude" so a
-		// not-yet-configured Core still spawns (matches the old WhisperCal default).
+		const llmConfig = this.llmConfig();
 		const llmCli = llmConfig.cli || "claude";
 		const llmExtraFlags = llmConfig.extraFlags;
 		if (this.jobs.has(jobKind, filePath)) {
@@ -2216,7 +2235,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 				if (!await validateLlmCli(llmCli)) {
 					 
-					new Notice(`LLM CLI '${llmCli}' not found — check the CLI command in WhisperCore settings`);
+					new Notice(`LLM CLI '${llmCli}' not found — check the CLI command in settings`);
 					return;
 				}
 

@@ -1,20 +1,11 @@
-/**
- * Auth state consumed by WhisperCal's UI (sidebar banner, settings status).
- * Formerly in AuthTypes.ts; that file's cloud-endpoint/token types moved to
- * WhisperCore in the C3 cutover, but AuthState is a WhisperCal-internal shape
- * (the CalendarAuth contract's state), so it lives with the interface.
- */
-export type AuthState =
-	| { status: "signed-out" }
-	| { status: "signing-in"; message?: string }
-	| { status: "signed-in" }
-	| { status: "error"; message: string };
+import type {AuthState, AuthErrorCode} from "./auth/AuthTypes";
+
+export type {AuthState} from "./auth/AuthTypes";
 
 /**
- * Provider-agnostic authentication interface. Since the C3 cutover the sole
- * implementation is CoreCalendarAuth, which delegates to the WhisperCore API;
- * GraphApiProvider / GoogleCalendarProvider / the people-search providers still
- * depend only on this contract.
+ * Provider-agnostic authentication interface, implemented by MsalAuth
+ * (Microsoft) and GoogleAuth. GraphApiProvider / GoogleCalendarProvider / the
+ * people-search providers depend only on this contract.
  */
 export interface CalendarAuth {
 	initialize(): void;
@@ -27,14 +18,15 @@ export interface CalendarAuth {
 	/** Microsoft Graph base URL for the configured cloud (GCC High aware).
 	 *  Google implementations return "" — their providers never call it. */
 	getGraphBaseUrl(): string;
+	updateConfig(config: Record<string, string>): void;
 }
 
 export class AuthError extends Error {
 	// NETWORK marks a transient transport failure (offline, DNS, VPN flap): the
 	// refresh token is still valid, so the caller must NOT sign the user out.
-	code: "NOT_AUTHENTICATED" | "AUTH_FAILED" | "NETWORK";
+	code: AuthErrorCode;
 
-	constructor(message: string, code: "NOT_AUTHENTICATED" | "AUTH_FAILED" | "NETWORK") {
+	constructor(message: string, code: AuthErrorCode) {
 		super(message);
 		this.name = "AuthError";
 		this.code = code;
