@@ -1,5 +1,6 @@
 import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, normalizePath} from "obsidian";
 import {execFile} from "child_process";
+import {createHash} from "crypto";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
 import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, COMMAND_PULL_MEETING_CHAT, FM, SPLIT_MARKER} from "./constants";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
@@ -29,7 +30,7 @@ import type {PeopleSearchProvider} from "./services/PeopleSearchProvider";
 import type {AuthCallbacks} from "./services/auth/BaseCalendarAuth";
 import type {TokenCache} from "./services/auth/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/auth/AuthTypes";
-import {createCalendarStack, getAuthConfig} from "./services/CalendarProviderFactory";
+import {createCalendarStack} from "./services/CalendarProviderFactory";
 import type {LlmConfigDto} from "./types/whispercore";
 import {CachedCalendarProvider} from "./services/CalendarCache";
 import type {UnlinkedRecordingProvider} from "./services/UnlinkedRecordingProvider";
@@ -161,6 +162,9 @@ export default class WhisperCalPlugin extends Plugin {
 	private microsoftTokenCache: TokenCache | null = null;
 	private googleTokenCache: TokenCache | null = null;
 	private activeProviderType: CalendarProviderType = "microsoft";
+	private updateAuthConfig!: (settings: WhisperCalSettings) => void;
+	/** Bumped per auth stack built, so a superseded auth's state changes are dropped. */
+	private authGeneration = 0;
 	private unlinkedProvider!: UnlinkedRecordingProvider;
 	private autoTagger!: AutoSpeakerTagger;
 	/**
@@ -236,8 +240,9 @@ export default class WhisperCalPlugin extends Plugin {
 		});
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks());
+		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks(this.settings.calendarProvider));
 		this.auth = stack.auth;
+		this.updateAuthConfig = stack.updateAuthConfig;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
 		this.auth.initialize();
@@ -577,8 +582,9 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.cachedProvider?.clear();
 
 		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks());
+		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks(this.settings.calendarProvider));
 		this.auth = stack.auth;
+		this.updateAuthConfig = stack.updateAuthConfig;
 		this.upstream = stack.provider;
 		this.peopleSearch = stack.peopleSearch;
 		this.auth.initialize();
@@ -602,7 +608,10 @@ export default class WhisperCalPlugin extends Plugin {
 		// provider — rebuild the stack before propagating config to live components.
 		await this.rebuildProviderStackIfChanged();
 		// Propagate updated settings to live components (same as saveSettings does)
-		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
+		this.updateAuthConfig(this.settings);
+		// loadSettings replaced the token caches from disk — bring the live auth in
+		// line (a sign-in or sign-out synced from another machine).
+		this.auth.reloadTokenCache();
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
 			this.settings.cacheRetentionDays,
@@ -746,7 +755,7 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.rebuildProviderStackIfChanged();
 
 		// Update auth config (e.g. client ID/secret changed)
-		this.auth.updateConfig(getAuthConfig(this.activeProviderType, this.settings));
+		this.updateAuthConfig(this.settings);
 		// Update cache config
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
@@ -784,20 +793,29 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 	}
 
-	private authCallbacks(): AuthCallbacks {
+	/**
+	 * Callbacks for one auth instance, bound to its provider's token slot. An auth
+	 * orphaned by a provider switch can still finish a request in flight: its
+	 * token goes to its own slot (never the new provider's) and its state changes
+	 * no longer reach the UI.
+	 */
+	private authCallbacks(type: CalendarProviderType): AuthCallbacks {
+		const generation = ++this.authGeneration;
 		return {
-			loadTokenCache: () => this.activeProviderType === "google"
+			loadTokenCache: () => type === "google"
 				? this.googleTokenCache
 				: this.microsoftTokenCache,
 			saveTokenCache: async (cache) => {
-				if (this.activeProviderType === "google") {
+				if (type === "google") {
 					this.googleTokenCache = cache;
 				} else {
 					this.microsoftTokenCache = cache;
 				}
 				await this.persistData();
 			},
-			onStateChange: (state) => this.notifyAuthStateListeners(state),
+			onStateChange: (state) => {
+				if (generation === this.authGeneration) this.notifyAuthStateListeners(state);
+			},
 		};
 	}
 
@@ -823,7 +841,9 @@ export default class WhisperCalPlugin extends Plugin {
 	 * their default. A token cache is adopted only when the resulting identity
 	 * config equals Core's — a token refreshed under a different client id dies
 	 * invalid_grant. A read/parse failure leaves the flag unset so the next load
-	 * retries. Must run before the auth stack is built.
+	 * retries; if the user changes any imported setting or signs in before that
+	 * retry succeeds, their values win over Core's. Must run before the auth
+	 * stack is built.
 	 */
 	private async importFromWhisperCore(): Promise<void> {
 		if (this.settings.coreImportDone) return;
@@ -837,17 +857,30 @@ export default class WhisperCalPlugin extends Plugin {
 			}
 		} catch (e) {
 			console.warn("[WhisperCal] WhisperCore import deferred:", e instanceof Error ? e.message : String(e));
+			// Remember what the settings looked like at the first deferral, so the
+			// retry can tell whether the user has changed them since.
+			if (!this.settings.coreImportDeferredFingerprint) {
+				this.settings.coreImportDeferredFingerprint = this.coreImportFingerprint();
+				await this.persistData();
+			}
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
+			new Notice("WhisperCal could not read WhisperCore's settings to import them. It will retry the next time Obsidian starts; anything you set up here in the meantime is kept.", 15000);
 			return;
 		}
 		if (!core) {
 			// Core was never installed (or its folder is gone) — nothing to import.
 			this.settings.coreImportDone = true;
+			this.settings.coreImportDeferredFingerprint = "";
 			await this.persistData();
 			return;
 		}
 
 		const s = this.settings;
-		const coreIsAuthoritative = s.coreMigrationDone;
+		// Settings entered (or a sign-in done) after a deferred import are newer
+		// than Core's copy, so Core only fills what is still at its default.
+		const editedSinceDeferral = s.coreImportDeferredFingerprint !== ""
+			&& s.coreImportDeferredFingerprint !== this.coreImportFingerprint();
+		const coreIsAuthoritative = s.coreMigrationDone && !editedSinceDeferral;
 		const adopt = <K extends keyof WhisperCalSettings>(key: K, value: WhisperCalSettings[K] | undefined): void => {
 			if (value === undefined) return;
 			if (coreIsAuthoritative || s[key] === DEFAULT_SETTINGS[key]) s[key] = value;
@@ -873,7 +906,9 @@ export default class WhisperCalPlugin extends Plugin {
 		adopt("googleClientSecret", str("googleClientSecret"));
 		// Core's CLI default was empty (meaning "claude"); keep WhisperCal's default then.
 		adopt("llmCli", str("llmCli") || undefined);
-		adopt("llmExtraFlags", str("llmExtraFlags"));
+		// Same for the flags: Core's default was empty, and WhisperCal's default
+		// flag is required for non-interactive runs.
+		adopt("llmExtraFlags", str("llmExtraFlags") || undefined);
 		adopt("anthropicApiKey", str("anthropicApiKey"));
 		adopt("llmPromptDir", str("llmPromptDir"));
 		adopt("llmTimeoutMinutes", num("llmTimeoutMinutes", 0));
@@ -896,10 +931,23 @@ export default class WhisperCalPlugin extends Plugin {
 		}
 
 		s.coreImportDone = true;
+		s.coreImportDeferredFingerprint = "";
 		await this.persistData();
 		setDebugLogging(s.llmDebugLogging);
 		// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
 		new Notice("WhisperCal imported your calendar sign-in and LLM settings from WhisperCore and no longer needs it. You can uninstall WhisperCore unless you use WhisperOrg.", 15000);
+	}
+
+	/** Hash of everything the WhisperCore import can overwrite, plus whether each
+	 *  provider is signed in. Hashed because it covers the client secret and API key. */
+	private coreImportFingerprint(): string {
+		const s = this.settings;
+		return createHash("sha256").update(JSON.stringify([
+			s.tenantId, s.clientId, s.cloudInstance, s.googleClientId, s.googleClientSecret,
+			s.llmCli, s.llmExtraFlags, s.anthropicApiKey, s.llmPromptDir,
+			s.llmTimeoutMinutes, s.llmMaxConcurrent, s.llmDebugMode, s.llmDebugLogging,
+			this.microsoftTokenCache !== null, this.googleTokenCache !== null,
+		])).digest("hex");
 	}
 
 	private resolveTagSpeakersContext(

@@ -18,7 +18,8 @@ export interface CalendarAuth {
 	/** Microsoft Graph base URL for the configured cloud (GCC High aware).
 	 *  Google implementations return "" — their providers never call it. */
 	getGraphBaseUrl(): string;
-	updateConfig(config: Record<string, string>): void;
+	/** Re-read the persisted token cache after data.json changed on disk. */
+	reloadTokenCache(): void;
 }
 
 export class AuthError extends Error {

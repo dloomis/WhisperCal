@@ -33,25 +33,6 @@ export function resolveAnthropicKey(explicit: string): string {
 	return explicit || globalThis.process?.env?.["ANTHROPIC_API_KEY"] || "";
 }
 
-/**
- * Stable, non-reversible fingerprint of a resolved key. The settings tab persists
- * the fingerprint of the last successfully-validated key and, on each open,
- * restores the "validated" state when the current effective key still matches —
- * so a validated key no longer reads as "not validated" across restarts (and we
- * avoid a network round-trip just to redraw that state). FNV-1a plus the length:
- * Node-free, so it runs on mobile too. NOT a security primitive — the explicit
- * key already lives in `data.json` in plaintext; this only detects key changes.
- */
-export function fingerprintAnthropicKey(key: string): string {
-	if (!key) return "";
-	let h = 0x811c9dc5;
-	for (let i = 0; i < key.length; i++) {
-		h ^= key.charCodeAt(i);
-		h = Math.imul(h, 0x01000193);
-	}
-	return (h >>> 0).toString(16) + ":" + key.length;
-}
-
 interface ModelEntry { id?: unknown; display_name?: unknown }
 
 /**

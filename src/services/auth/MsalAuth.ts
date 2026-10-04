@@ -4,30 +4,15 @@ import type {
 } from "./AuthTypes";
 import {CLOUD_ENDPOINTS} from "./AuthTypes";
 import {AuthError} from "../CalendarAuth";
-import {BaseCalendarAuth, type AuthCallbacks, type SignInFlow} from "./BaseCalendarAuth";
+import {BaseCalendarAuth, type SignInFlow} from "./BaseCalendarAuth";
 
-interface MsalAuthConfig {
+export interface MsalAuthConfig {
 	tenantId: string;
 	clientId: string;
 	cloudInstance: CloudInstance;
 }
 
-export class MsalAuth extends BaseCalendarAuth {
-	private config: MsalAuthConfig;
-
-	constructor(config: MsalAuthConfig, callbacks: AuthCallbacks) {
-		super(callbacks);
-		this.config = config;
-	}
-
-	updateConfig(config: Record<string, string>): void {
-		this.config = {
-			tenantId: config["tenantId"] ?? "",
-			clientId: config["clientId"] ?? "",
-			cloudInstance: (config["cloudInstance"] ?? "Public") as CloudInstance,
-		};
-	}
-
+export class MsalAuth extends BaseCalendarAuth<MsalAuthConfig> {
 	getGraphBaseUrl(): string {
 		return this.endpoints().graphBaseUrl;
 	}

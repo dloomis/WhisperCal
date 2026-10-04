@@ -1,6 +1,6 @@
 import type {TokenCache} from "./AuthTypes";
 import {AuthError} from "../CalendarAuth";
-import {BaseCalendarAuth, type AuthCallbacks, type SignInFlow} from "./BaseCalendarAuth";
+import {BaseCalendarAuth, type SignInFlow} from "./BaseCalendarAuth";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -10,26 +10,12 @@ const SCOPES = [
 	"https://www.googleapis.com/auth/contacts.readonly",
 ].join(" ");
 
-interface GoogleAuthConfig {
+export interface GoogleAuthConfig {
 	clientId: string;
 	clientSecret: string;
 }
 
-export class GoogleAuth extends BaseCalendarAuth {
-	private config: GoogleAuthConfig;
-
-	constructor(config: GoogleAuthConfig, callbacks: AuthCallbacks) {
-		super(callbacks);
-		this.config = config;
-	}
-
-	updateConfig(config: Record<string, string>): void {
-		this.config = {
-			clientId: config["clientId"] ?? "",
-			clientSecret: config["clientSecret"] ?? "",
-		};
-	}
-
+export class GoogleAuth extends BaseCalendarAuth<GoogleAuthConfig> {
 	protected configFingerprint(): string {
 		return `${this.config.clientId}|${this.config.clientSecret}`;
 	}

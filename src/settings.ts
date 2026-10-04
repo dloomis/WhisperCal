@@ -131,6 +131,9 @@ export interface WhisperCalSettings {
 	/** Set once the one-time import of provider config, tokens, and LLM config
 	 *  from WhisperCore's data.json has run. Internal flag, not user-facing. */
 	coreImportDone: boolean;
+	/** Fingerprint of the importable settings taken when the WhisperCore import
+	 *  was first deferred (unreadable data.json); empty otherwise. Internal. */
+	coreImportDeferredFingerprint: string;
 	/**
 	 * In-flight API recording bookkeeping, keyed by session guid
 	 * (SESSION_GUID_DESIGN.md §7). Not a user setting — persisted here because
@@ -203,6 +206,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	voiceprintAutoTagMinorMaxShare: 0.05,
 	coreMigrationDone: false,
 	coreImportDone: false,
+	coreImportDeferredFingerprint: "",
 	activeApiRecordings: [],
 };
 
@@ -267,6 +271,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	private activeTab: SettingsTabId = "calendar";
 	/** Model dropdowns rendered by the active tab, keyed for refreshModels(). */
 	private modelSelects: {sel: HTMLSelectElement; key: "speakerTagModel" | "summarizerModel" | "researchModel"}[] = [];
+	private modelRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Sequence number of the latest refreshModels() call; older responses are dropped. */
+	private modelRefreshSeq = 0;
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
 		super(app, plugin);
@@ -1145,7 +1152,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.anthropicApiKey = value.trim();
 						this.debouncedSave();
-						void this.refreshModels();
+						// Debounced so a key being typed isn't sent one character at a time.
+						if (this.modelRefreshTimer) clearTimeout(this.modelRefreshTimer);
+						this.modelRefreshTimer = setTimeout(() => {
+							this.modelRefreshTimer = null;
+							void this.refreshModels();
+						}, 500);
 					});
 			});
 
@@ -1248,7 +1260,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 
 	/** Populate all registered model dropdowns from the API. */
 	private async refreshModels(): Promise<void> {
+		const seq = ++this.modelRefreshSeq;
 		const models = await this.fetchAnthropicModels();
+		// A newer refresh started while this one was in flight — let it win.
+		if (seq !== this.modelRefreshSeq) return;
 		// A failed fetch returns [] — leave the seeded ["Default", current] options
 		// alone rather than repopulate, which would drop the configured model from
 		// its own dropdown and silently overwrite the setting on any interaction.
@@ -1276,6 +1291,10 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		if (this.searchTimer !== null) {
 			window.clearTimeout(this.searchTimer);
 			this.searchTimer = null;
+		}
+		if (this.modelRefreshTimer) {
+			clearTimeout(this.modelRefreshTimer);
+			this.modelRefreshTimer = null;
 		}
 		// Flush any pending debounced save so settings aren't lost
 		if (this.saveTimer) {

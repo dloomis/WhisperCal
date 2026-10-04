@@ -36,7 +36,8 @@ export interface SignInFlow {
  * interactive loopback sign-in flow. Subclasses supply provider URLs/params via
  * `SignInFlow` and implement `doRefreshToken()` (built on `postTokenRequest`).
  */
-export abstract class BaseCalendarAuth implements CalendarAuth {
+export abstract class BaseCalendarAuth<C> implements CalendarAuth {
+	protected config: C;
 	protected callbacks: AuthCallbacks;
 	protected tokenCache: TokenCache | null = null;
 	protected state: AuthState = {status: "signed-out"};
@@ -49,8 +50,17 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 	 *  A mismatch at refresh time means the config was edited since sign-in, so a
 	 *  refresh failure is attributable to the edit, not a dead grant (finding 1). */
 	private tokenConfigFingerprint: string | null = null;
+	/** Set once a refresh has failed under an edited identity config: the held
+	 *  token is kept (the edit may be half-typed) but the state reads as an error
+	 *  so the UI prompts a re-auth instead of showing a healthy session. */
+	private configMismatch = false;
+	/** Bumped whenever the session is replaced (sign-out, fresh sign-in, reload
+	 *  from disk). An in-flight refresh or code exchange that started under an
+	 *  older epoch must not write its token back. */
+	private sessionEpoch = 0;
 
-	constructor(callbacks: AuthCallbacks) {
+	constructor(config: C, callbacks: AuthCallbacks) {
+		this.config = config;
 		this.callbacks = callbacks;
 	}
 
@@ -62,7 +72,31 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 		this.setState(this.stateFromCache());
 	}
 
-	abstract updateConfig(config: Record<string, string>): void;
+	updateConfig(config: C): void {
+		this.config = config;
+		// Editing the config back to what the token was minted under makes the
+		// held session good again.
+		if (this.configMismatch && !this.configChangedSinceMint()) {
+			this.configMismatch = false;
+			this.setState(this.stateFromCache());
+		}
+	}
+
+	/** Re-read the persisted cache after data.json changed underneath us (a sync
+	 *  from another machine), so the live session matches what is on disk. */
+	reloadTokenCache(): void {
+		const cache = this.callbacks.loadTokenCache();
+		const held = this.tokenCache;
+		if (cache?.refreshToken === held?.refreshToken
+			&& cache?.accessToken === held?.accessToken
+			&& cache?.expiresAt === held?.expiresAt) return;
+		this.invalidateInFlight();
+		this.tokenCache = cache;
+		this.tokenConfigFingerprint = cache ? this.configFingerprint() : null;
+		this.configMismatch = false;
+		// An interactive sign-in owns the state until it settles.
+		if (this.state.status !== "signing-in") this.setState(this.stateFromCache());
+	}
 
 	/** Microsoft overrides with the configured cloud's Graph base URL; Google's
 	 *  providers never call this. */
@@ -83,7 +117,11 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 			throw new AuthError("Not signed in.", "NOT_AUTHENTICATED");
 		}
 
-		if (Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
+		// A token is only good under the config it was minted for (a cloud change
+		// would send it to another cloud's Graph host), so an edited config forces
+		// a refresh under the new one.
+		if (!this.configChangedSinceMint()
+			&& Date.now() < this.tokenCache.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
 			return this.tokenCache.accessToken;
 		}
 
@@ -92,8 +130,10 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 
 	async signOut(): Promise<void> {
 		this.cancelSignIn();
+		this.invalidateInFlight();
 		this.tokenCache = null;
 		this.tokenConfigFingerprint = null;
+		this.configMismatch = false;
 		await this.callbacks.saveTokenCache(null);
 		this.setState({status: "signed-out"});
 	}
@@ -111,12 +151,26 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 	 *  signed-out. Used to restore a live session after a cancelled/failed re-auth
 	 *  so `isSignedIn()` (cache-based) and `getState()` never disagree (finding 8). */
 	protected stateFromCache(): AuthState {
-		return this.tokenCache ? {status: "signed-in"} : {status: "signed-out"};
+		if (!this.tokenCache) return {status: "signed-out"};
+		if (this.configMismatch) {
+			return {
+				status: "error",
+				message: "Provider settings changed since sign-in. Sign in again, or restore the previous settings.",
+				code: "AUTH_FAILED",
+			};
+		}
+		return {status: "signed-in"};
+	}
+
+	private invalidateInFlight(): void {
+		this.sessionEpoch++;
+		this.refreshPromise = null;
 	}
 
 	protected async saveToken(cache: TokenCache): Promise<void> {
 		this.tokenCache = cache;
 		this.tokenConfigFingerprint = this.configFingerprint();
+		this.configMismatch = false;
 		await this.callbacks.saveTokenCache(cache);
 	}
 
@@ -152,6 +206,7 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 		const codeVerifier = randomBytes(32).toString("base64url");
 		const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
 		const oauthState = randomBytes(16).toString("base64url");
+		const epoch = this.sessionEpoch;
 
 		try {
 			const {port, code: codePromise} = await this.loopback.start(oauthState);
@@ -168,7 +223,7 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 			} catch {
 				// No browser to complete in: keep a live session (finding 8), else error.
 				this.setState(this.tokenCache
-					? {status: "signed-in"}
+					? this.stateFromCache()
 					: {status: "error", message: "Failed to open browser — Electron not available"});
 				return;
 			}
@@ -180,7 +235,7 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 				// token is still cached, restore signed-in (finding 8). Only surface a
 				// terminal error/signed-out state when there is no session to preserve.
 				if (this.tokenCache) {
-					this.setState({status: "signed-in"});
+					this.setState(this.stateFromCache());
 				} else if (this.loopback.timedOut) {
 					const mins = Math.round(LoopbackOAuthServer.TIMEOUT_MS / 60000);
 					this.setState({
@@ -194,15 +249,20 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 			}
 
 			const cache = await flow.exchangeCode(authCode, codeVerifier, redirectUri);
+			// Signed out (or the session was replaced) while the exchange was in
+			// flight — the user discarded this sign-in, so drop its token.
+			if (epoch !== this.sessionEpoch) return;
+			this.invalidateInFlight();
 			await this.saveToken(cache);
 			this.setState({status: "signed-in"});
 		} catch (e) {
+			if (epoch !== this.sessionEpoch) return;
 			// A failed authorization-code exchange does not invalidate an existing
 			// refresh token, so a failed re-auth over a live session restores
 			// signed-in (findings 5 & 8). Only a fresh sign-in surfaces the error —
 			// carrying the machine-readable code for api.startSignIn to classify.
 			if (this.tokenCache) {
-				this.setState({status: "signed-in"});
+				this.setState(this.stateFromCache());
 			} else if (e instanceof AuthError) {
 				this.setState({status: "error", message: e.message, code: e.code});
 			} else {
@@ -216,10 +276,11 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 
 	/**
 	 * Shared OAuth token endpoint call for both the code exchange and the refresh.
-	 * Owns requestUrl + NETWORK/AUTH_FAILED classification (C1): a transport
-	 * rejection or 5xx/malformed body is NETWORK (transient — keep the grant); an
-	 * explicit OAuth error body or a 4xx is AUTH_FAILED (grant bad). Returns a
-	 * response guaranteed to carry both `access_token` and `expires_in`.
+	 * Owns requestUrl + NETWORK/AUTH_FAILED classification (C1): only an explicit
+	 * OAuth error body is AUTH_FAILED (grant bad). A transport rejection, 5xx,
+	 * throttling (408/429), or a 4xx with no OAuth error (proxy / captive-portal
+	 * HTML) is NETWORK (transient — keep the grant). Returns a response
+	 * guaranteed to carry both `access_token` and `expires_in`.
 	 */
 	protected async postTokenRequest(url: string, body: Record<string, string>): Promise<TokenResponse> {
 		let response;
@@ -241,17 +302,17 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 		let token: TokenResponse | undefined;
 		try { token = response.json as TokenResponse; } catch { token = undefined; }
 
-		// Explicit OAuth error body or a 4xx means the grant/request is actually bad.
-		if (token?.error || (response.status >= 400 && response.status < 500)) {
-			throw new AuthError(
-				token?.error_description ?? token?.error ?? `Token request failed (HTTP ${response.status})`,
-				"AUTH_FAILED",
-			);
+		// Only an explicit OAuth error body means the grant/request is actually bad.
+		// Throttling and timeouts are transient whatever the body says.
+		const throttled = response.status === 408 || response.status === 429;
+		if (token?.error && !throttled && response.status < 500) {
+			throw new AuthError(token.error_description ?? token.error, "AUTH_FAILED");
 		}
-		// 5xx, missing access token, or missing expiry — transient, not a credential
-		// failure. Guarding expires_in here keeps expiresAt from becoming NaN, which
-		// would force a refresh on every subsequent getAccessToken (C1).
-		if (!token?.access_token || token.expires_in === undefined) {
+		// Any other error status, missing access token, or missing expiry —
+		// transient, not a credential failure. Guarding expires_in here keeps
+		// expiresAt from becoming NaN, which would force a refresh on every
+		// subsequent getAccessToken (C1).
+		if (response.status >= 400 || !token?.access_token || token.expires_in === undefined) {
 			throw new AuthError(`Token request returned no usable token (HTTP ${response.status})`, "NETWORK");
 		}
 
@@ -265,11 +326,12 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 		// Deduplicate concurrent refresh calls — if a refresh is already in-flight,
 		// return the same promise to avoid rotating the refresh token multiple times.
 		if (this.refreshPromise) return this.refreshPromise;
-		this.refreshPromise = this.doRefresh();
+		const refresh = this.doRefresh();
+		this.refreshPromise = refresh;
 		try {
-			return await this.refreshPromise;
+			return await refresh;
 		} finally {
-			this.refreshPromise = null;
+			if (this.refreshPromise === refresh) this.refreshPromise = null;
 		}
 	}
 
@@ -279,11 +341,20 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 			throw new AuthError("No refresh token. Please sign in again.", "NOT_AUTHENTICATED");
 		}
 
+		const epoch = this.sessionEpoch;
+		const stale = () => new AuthError("Session changed during token refresh.", "NOT_AUTHENTICATED");
 		try {
 			const newCache = await this.doRefreshToken(this.tokenCache.refreshToken);
+			// Signed out (or the session was replaced) while the refresh was in
+			// flight — writing the token back would undo that.
+			if (epoch !== this.sessionEpoch) throw stale();
+			const recovered = this.configMismatch;
 			await this.saveToken(newCache);
+			if (recovered) this.setState(this.stateFromCache());
 			return newCache.accessToken;
 		} catch (e) {
+			// A stale refresh must not sign out the session that replaced it either.
+			if (epoch !== this.sessionEpoch) throw stale();
 			if (e instanceof AuthError) {
 				// A NETWORK failure is transient — leave the cached refresh token intact
 				// so the next attempt (once connectivity returns) can succeed. Signing
@@ -293,8 +364,13 @@ export abstract class BaseCalendarAuth implements CalendarAuth {
 				// AUTH_FAILED normally means the grant is dead (signed out below). But if
 				// the identity config was edited since this token was minted, the 4xx is
 				// far more likely the half-typed config than a revoked grant — reclassify
-				// as transient so the valid refresh token survives the edit (finding 1).
+				// as transient so the valid refresh token survives the edit (finding 1),
+				// and surface an error state so the user is prompted to re-authenticate.
 				if (e.code === "AUTH_FAILED" && this.configChangedSinceMint()) {
+					if (!this.configMismatch) {
+						this.configMismatch = true;
+						this.setState(this.stateFromCache());
+					}
 					throw new AuthError(
 						"Provider configuration changed since sign-in — not signing out. Re-check settings and retry.",
 						"NETWORK",
