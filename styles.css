@@ -689,98 +689,11 @@
 	padding: 32px 16px;
 }
 
-/* Settings — version label */
-.whisper-cal-settings-version {
-	text-align: right;
-	font-size: var(--font-ui-smaller);
-	color: var(--text-faint);
-}
-
-/* Settings modal — the tab bar needs more horizontal room than the stock
-   settings width leaves it (at the default, "LLM engine" wraps to a second
-   row). Widened only while WhisperCal's tab is the one on screen: Obsidian
-   swaps the tab container on every settings-tab switch, so :has() goes false
-   the moment another plugin's page replaces ours and no other settings page
-   is affected. */
-.modal.mod-settings:has(.whisper-cal-settings) {
-	--modal-width: 96vw;
-	--modal-max-width: 1200px;
-	width: var(--modal-width);
-	max-width: var(--modal-max-width);
-}
-
 /* Settings — wider text inputs (1.5x default) */
 .whisper-cal-settings input[type="text"],
 .whisper-cal-settings input[type="password"],
 .whisper-cal-settings select {
 	min-width: 300px;
-}
-
-/* Settings — tab bar grouping the settings by pipeline stage. Plain buttons
-   (Obsidian has no native settings-tab API); the active tab is accent-filled.
-   Scoped selectors out-rank Obsidian's `button:not(.clickable-icon)` styles. */
-.whisper-cal-settings .whisper-cal-settings-tabbar {
-	display: flex;
-	/* One row, always — the widened modal above buys the room for it. On a
-	   window too narrow even for that, the row scrolls sideways rather than
-	   wrapping (a second row shifts every pane's content down by 38px). */
-	flex-wrap: nowrap;
-	overflow-x: auto;
-	scrollbar-width: thin;
-	gap: 4px;
-	margin-bottom: 16px;
-	padding-bottom: 10px;
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab {
-	height: 28px;
-	/* Never squeezed narrower than its label — flex items shrink by default. */
-	flex-shrink: 0;
-	white-space: nowrap;
-	padding: 0 12px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-s);
-	background: transparent;
-	color: var(--text-muted);
-	box-shadow: none;
-	cursor: pointer;
-	font-size: var(--font-ui-small);
-	font-weight: 500;
-}
-
-.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab:hover {
-	background: var(--background-modifier-hover);
-	color: var(--text-normal);
-}
-
-.whisper-cal-settings .whisper-cal-settings-tabbar .whisper-cal-settings-tab.whisper-cal-settings-tab-active {
-	background: var(--interactive-accent);
-	border-color: var(--interactive-accent);
-	color: var(--text-on-accent);
-}
-
-/* The first heading inside a tab pane doesn't need Obsidian's big top gap —
-   the tab bar already separates it from the chrome above. */
-.whisper-cal-settings .whisper-cal-settings-pane > .setting-item:first-child {
-	border-top: none;
-	padding-top: 0;
-}
-
-/* Settings — lighter sub-section label nested under a top-level heading.
-   Distinguished from the section heading: smaller, muted, uppercased. */
-.whisper-cal-settings .setting-item-heading.whisper-cal-subheading {
-	border-top: none;
-	padding-top: 18px;
-	padding-bottom: 2px;
-}
-
-.whisper-cal-settings .setting-item-heading.whisper-cal-subheading .setting-item-name {
-	font-size: var(--font-ui-small);
-	font-weight: var(--font-semibold);
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	color: var(--text-muted);
 }
 
 /* Auth settings UI */
@@ -793,16 +706,6 @@
 	font-size: var(--font-ui-small);
 	margin: 12px 0;
 	line-height: 1.45;
-}
-
-.whisper-cal-auth-status {
-	margin-top: 8px;
-}
-
-.whisper-cal-auth-section {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
 }
 
 .whisper-cal-auth-label {
@@ -2422,12 +2325,6 @@
 
 .whisper-cal-research-error.is-hidden {
 	display: none;
-}
-
-/* Invalid numeric/timezone settings input — signals the value was not accepted. */
-.whisper-cal-setting-invalid {
-	border-color: var(--text-error) !important;
-	box-shadow: 0 0 0 1px var(--text-error);
 }
 
 /* Merge meeting cards */

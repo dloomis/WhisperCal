@@ -1,17 +1,17 @@
-import {App, Modal, Notice, Platform, PluginSettingTab, Setting, TextComponent, normalizePath} from "obsidian";
+import {App, Modal, Notice, Platform, PluginSettingTab, Setting, normalizePath} from "obsidian";
+import type {SettingDefinitionGroup, SettingDefinitionItem, SettingGroupItem} from "obsidian";
 import type WhisperCalPlugin from "./main";
 import type {CalendarProviderType} from "./types";
 import type {CloudInstance} from "./services/auth/AuthTypes";
 import {CLOUD_INSTANCE_OPTIONS} from "./services/auth/AuthTypes";
 import type {AuthState} from "./services/CalendarAuth";
 import {listAnthropicModels, resolveAnthropicKey} from "./services/AnthropicModels";
+import type {AnthropicModel} from "./services/AnthropicModels";
 import {MACWHISPER_DB_PATH} from "./constants";
 import {addActivateOnKey} from "./utils/a11y";
 import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import type {PersistedApiRecording} from "./services/ApiRecording";
 import {FileSuggest} from "./ui/FileSuggest";
-import {FolderSuggest} from "./ui/FolderSuggest";
-import {FolderSelectModal} from "./ui/FolderSelectModal";
 import type {PeopleSearchResult} from "./services/PeopleSearchProvider";
 
 export interface ImportantOrganizer {
@@ -259,20 +259,48 @@ class LlmConsentModal extends Modal {
 	}
 }
 
-type SettingsTabId = "calendar" | "notes" | "recording" | "speakers" | "summary" | "llm";
+type SettingKey = keyof WhisperCalSettings;
+type KeysOfType<T> = {[P in SettingKey]: WhisperCalSettings[P] extends T ? P : never}[SettingKey];
+type Row = SettingGroupItem<SettingKey>;
+type ModelKey = "speakerTagModel" | "summarizerModel" | "researchModel";
 
+interface RowOpts {
+	name: string;
+	desc?: string;
+	aliases?: string[];
+	visible?: () => boolean;
+}
+
+const OAUTH_TOKEN_WARNING = "OAuth tokens are stored unencrypted in this vault's plugin data folder. Avoid syncing the data file to untrusted services; revoke access from the provider's account portal if the file is exposed.";
+
+/** Folder settings: a stray trailing slash or "./" would break consumers like
+ *  `startsWith(folder + "/")`. Empty stays empty — for folder settings that
+ *  means "disabled", which normalizePath would otherwise turn into "/". */
+const normalizeFolder = (v: string): string => v.trim() ? normalizePath(v) : "";
+const trim = (v: string): string => v.trim();
+
+/**
+ * Declarative settings tab (Obsidian 1.13+). `getSettingDefinitions()` describes
+ * the settings; Obsidian renders them, indexes them for settings search, and
+ * handles sub-page navigation. Rows that need side effects or custom DOM
+ * (consent flow, auth status, model dropdowns, the organizer chip field) use
+ * `render` and save themselves.
+ */
 export class WhisperCalSettingTab extends PluginSettingTab {
 	plugin: WhisperCalPlugin;
-	private authUnsubscribe: (() => void) | null = null;
-	private authStatusEl: HTMLElement | null = null;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 	private searchTimer: number | null = null;
-	/** Active settings tab; persists across re-renders for the session. */
-	private activeTab: SettingsTabId = "calendar";
-	/** Model dropdowns rendered by the active tab, keyed for refreshModels(). */
-	private modelSelects: {sel: HTMLSelectElement; key: "speakerTagModel" | "summarizerModel" | "researchModel"}[] = [];
-	private modelRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-	/** Sequence number of the latest refreshModels() call; older responses are dropped. */
+	/** Free-text keys and how to normalize what was typed before storing it.
+	 *  Membership also means "save debounced" — these fire on every keystroke. */
+	private textKeys = new Map<string, (v: string) => string>();
+	/** Repaints the Connection row; set only while that row is on screen. */
+	private repaintAuth: (() => void) | null = null;
+	/** Model dropdowns currently on screen, repopulated when the model list loads. */
+	private modelSelects: {sel: HTMLSelectElement; key: ModelKey}[] = [];
+	private models: AnthropicModel[] = [];
+	/** API key the model list was (or is being) fetched with; null = not fetched. */
+	private modelsFetchedFor: string | null = null;
+	/** Sequence number of the latest model fetch; older responses are dropped. */
 	private modelRefreshSeq = 0;
 
 	constructor(app: App, plugin: WhisperCalPlugin) {
@@ -289,1012 +317,41 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		}, 500);
 	}
 
-	/**
-	 * Add a lightweight sub-section heading. Visually lighter than `setHeading()`
-	 * at the top level (see `.whisper-cal-subheading` in styles.css) so nested
-	 * groups read as children of the section above them, not as peer sections.
-	 */
-	private addSubHeading(container: HTMLElement, name: string): void {
-		new Setting(container)
-			.setName(name)
-			.setHeading()
-			.settingEl.addClass("whisper-cal-subheading");
+	/** Untyped write for keys only known at runtime (or generic over the key). */
+	private store(key: string, value: unknown): void {
+		(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+	}
+
+	getControlValue(key: string): unknown {
+		return (this.plugin.settings as unknown as Record<string, unknown>)[key];
 	}
 
 	/**
-	 * Create a text-input setting bound to a getter/setter. Uses debouncedSave.
-	 * For non-trivial onChange logic (validation, side effects, dependent UI),
-	 * keep using `new Setting(...)` directly.
+	 * Every `control` row writes through here. Must not fall through to the
+	 * default implementation: that calls `saveData(settings)`, which would
+	 * replace data.json with the bare settings object and drop the token caches
+	 * (`persistData()` in main.ts is the single writer).
 	 */
-	private addTextSetting(opts: {
-		container: HTMLElement;
-		name: string;
-		desc: string;
-		placeholder?: string;
-		get: () => string;
-		set: (v: string) => void;
-		/** When true, store `value.trim()` instead of `value`. */
-		trim?: boolean;
-		/** Mount a FileSuggest or FolderSuggest on the input element. */
-		suggest?: "file" | "folder";
-		/** Add a "Browse" button that opens a vault-folder picker. */
-		browse?: boolean;
-	}): Setting {
-		const s = new Setting(opts.container).setName(opts.name).setDesc(opts.desc);
-		// Path inputs (suggest set) are normalized so a stray trailing slash or "./"
-		// doesn't break consumers like `startsWith(folder + "/")` (which a trailing
-		// slash silently defeats) or un-normalized path concatenation. Empty stays
-		// empty — for folder settings that means "disabled", which normalizePath
-		// would otherwise turn into "/".
-		const normalize = (v: string): string => {
-			if (opts.suggest) return v.trim() ? normalizePath(v) : "";
-			return opts.trim ? v.trim() : v;
-		};
-		let textComp: TextComponent | null = null;
-		s.addText(text => {
-			textComp = text;
-			if (opts.placeholder) text.setPlaceholder(opts.placeholder);
-			text.setValue(opts.get())
-				.onChange((value) => {
-					opts.set(normalize(value));
-					this.debouncedSave();
-				});
-			if (opts.suggest === "folder") new FolderSuggest(this.app, text.inputEl);
-			else if (opts.suggest === "file") new FileSuggest(this.app, text.inputEl);
-		});
-		if (opts.browse) {
-			s.addButton(btn => btn
-				.setButtonText("Browse")
-				.setTooltip("Choose a vault folder")
-				.onClick(async () => {
-					const folder = await new FolderSelectModal(this.app).pick();
-					if (folder !== null) {
-						const v = normalize(folder);
-						opts.set(v);
-						textComp?.setValue(v);
-						this.debouncedSave();
-					}
-				}));
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		const normalize = this.textKeys.get(key);
+		if (normalize && typeof value === "string") {
+			this.store(key, normalize(value));
+			this.debouncedSave();
+			return;
 		}
-		return s;
+		this.store(key, value);
+		await this.plugin.saveSettings();
+		// The save rebuilt the provider stack — show the new provider's auth state.
+		if (key === "calendarProvider") this.repaintAuth?.();
 	}
-
-	/**
-	 * Create a toggle setting bound to a boolean getter/setter. Saves immediately
-	 * via `plugin.saveSettings()`. For toggles with custom side effects (consent
-	 * flows, dependent UI rerenders), keep `new Setting(...)` direct.
-	 */
-	private addToggleSetting(opts: {
-		container: HTMLElement;
-		name: string;
-		desc: string;
-		get: () => boolean;
-		set: (v: boolean) => void;
-	}): Setting {
-		return new Setting(opts.container)
-			.setName(opts.name)
-			.setDesc(opts.desc)
-			.addToggle(toggle => toggle
-				.setValue(opts.get())
-				.onChange(async (value) => {
-					opts.set(value);
-					await this.plugin.saveSettings();
-				}));
-	}
-
-	/**
-	 * Create a numeric text-input setting. Parses input as int and only writes
-	 * when the value satisfies `min <= value` (default min=1). Uses debouncedSave.
-	 */
-	private addNumberSetting(opts: {
-		container: HTMLElement;
-		name: string;
-		desc: string;
-		placeholder?: string;
-		min?: number;
-		get: () => number;
-		set: (v: number) => void;
-	}): Setting {
-		const min = opts.min ?? 1;
-		// Strict integer: parseInt would accept "5x". Show invalid input instead of
-		// silently ignoring it, and revert to the stored value on blur.
-		const valid = (v: string) => /^\d+$/.test(v.trim()) && Number(v.trim()) >= min;
-		return new Setting(opts.container)
-			.setName(opts.name)
-			.setDesc(opts.desc)
-			.addText(text => {
-				text.setPlaceholder(opts.placeholder ?? String(min)).setValue(String(opts.get()));
-				text.onChange((value) => {
-					if (valid(value)) {
-						text.inputEl.removeClass("whisper-cal-setting-invalid");
-						opts.set(Number(value.trim()));
-						this.debouncedSave();
-					} else {
-						text.inputEl.addClass("whisper-cal-setting-invalid");
-					}
-				});
-				text.inputEl.addEventListener("blur", () => {
-					if (!valid(text.inputEl.value)) {
-						text.setValue(String(opts.get()));
-						text.inputEl.removeClass("whisper-cal-setting-invalid");
-					}
-				});
-			});
-	}
-
-	/**
-	 * Create a float text-input setting bounded to [min, max]. Like
-	 * addNumberSetting, shows invalid input and reverts to the stored value on blur
-	 * instead of silently ignoring it.
-	 */
-	private addFloatSetting(opts: {
-		container: HTMLElement;
-		name: string;
-		desc: string;
-		placeholder?: string;
-		min: number;
-		max: number;
-		get: () => number;
-		set: (v: number) => void;
-	}): Setting {
-		const valid = (v: string) => {
-			const t = v.trim();
-			if (!/^\d*\.?\d+$/.test(t)) return false;
-			const n = Number(t);
-			return n >= opts.min && n <= opts.max;
-		};
-		return new Setting(opts.container)
-			.setName(opts.name)
-			.setDesc(opts.desc)
-			.addText(text => {
-				text.setPlaceholder(opts.placeholder ?? String(opts.min)).setValue(String(opts.get()));
-				text.onChange((value) => {
-					if (valid(value)) {
-						text.inputEl.removeClass("whisper-cal-setting-invalid");
-						opts.set(Number(value.trim()));
-						this.debouncedSave();
-					} else {
-						text.inputEl.addClass("whisper-cal-setting-invalid");
-					}
-				});
-				text.inputEl.addEventListener("blur", () => {
-					if (!valid(text.inputEl.value)) {
-						text.setValue(String(opts.get()));
-						text.inputEl.removeClass("whisper-cal-setting-invalid");
-					}
-				});
-			});
-	}
-
-	display(): void {
-		// Unsubscribe any previous auth listener to prevent stacking on re-render.
-		// The connection status block only exists while the Calendar tab is rendered.
-		this.authUnsubscribe?.();
-		this.authUnsubscribe = null;
-		// Model dropdowns re-register with whichever tab renders them.
-		this.modelSelects = [];
-
-		const {containerEl} = this;
-		containerEl.empty();
-		containerEl.addClass("whisper-cal-settings");
-
-		containerEl.createEl("div", {
-			cls: "whisper-cal-settings-version",
-			text: `v${this.plugin.manifest.version}`,
-		});
-
-		// Tab bar — settings grouped by pipeline stage. Obsidian has no native
-		// tab API for plugin settings, so this is a plain button row; the active
-		// tab persists on the instance for the session.
-		const tabs: {id: SettingsTabId; label: string}[] = [
-			{id: "calendar", label: "Calendar"},
-			{id: "llm", label: "LLM engine"},
-			{id: "notes", label: "Notes & people"},
-			{id: "recording", label: "Recording"},
-			{id: "speakers", label: "Speakers"},
-			{id: "summary", label: "Summary & research"},
-		];
-		const tabBar = containerEl.createDiv({cls: "whisper-cal-settings-tabbar"});
-		for (const tab of tabs) {
-			const btn = tabBar.createEl("button", {
-				cls: "whisper-cal-settings-tab" + (tab.id === this.activeTab ? " whisper-cal-settings-tab-active" : ""),
-				text: tab.label,
-			});
-			btn.addEventListener("click", () => {
-				if (this.activeTab === tab.id) return;
-				this.activeTab = tab.id;
-				this.display();
-			});
-		}
-
-		const pane = containerEl.createDiv({cls: "whisper-cal-settings-pane"});
-		switch (this.activeTab) {
-			case "calendar": this.renderCalendarTab(pane); break;
-			case "notes": this.renderNotesTab(pane); break;
-			case "recording": this.renderRecordingTab(pane); break;
-			case "speakers": this.renderSpeakersTab(pane); break;
-			case "summary": this.renderSummaryTab(pane); break;
-			case "llm": this.renderLlmTab(pane); break;
-		}
-
-		// Populate any model dropdowns the active tab registered.
-		void this.refreshModels();
-	}
-
-	/** Calendar tab — provider + credentials, display options, refresh/cache. */
-	private renderCalendarTab(containerEl: HTMLElement): void {
-		this.addSubHeading(containerEl, "Provider");
-
-		new Setting(containerEl)
-			.setName("Calendar provider")
-			.setDesc("Which calendar service to connect to")
-			.addDropdown(dropdown => {
-				dropdown.addOption("microsoft", "Microsoft 365");
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- product names
-				dropdown.addOption("google", "Google Calendar");
-				dropdown.setValue(this.plugin.settings.calendarProvider);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.calendarProvider = value as CalendarProviderType;
-					await this.plugin.saveSettings();
-					this.display(); // Re-render to swap auth sections
-				});
-			});
-
-		// Provider-specific credentials + auth status (colocated with the provider dropdown)
-		if (this.plugin.settings.calendarProvider === "microsoft") {
-			this.renderMicrosoftAuthSettings(containerEl);
-		} else {
-			this.renderGoogleAuthSettings(containerEl);
-		}
-
-		containerEl.createEl("div", {
-			cls: "whisper-cal-settings-warning",
-			// eslint-disable-next-line obsidianmd/ui/sentence-case -- "OAuth" is a product term
-			text: "OAuth tokens are stored unencrypted in this vault's plugin data folder. Avoid syncing the data file to untrusted services; revoke access from the provider's account portal if the file is exposed.",
-		});
-
-		this.authStatusEl = containerEl.createDiv({cls: "whisper-cal-auth-status"});
-		this.renderAuthStatus(this.plugin.auth.getState());
-		this.authUnsubscribe = this.plugin.onAuthStateChange((state) => {
-			this.renderAuthStatus(state);
-		});
-
-		// General calendar settings (apply to both providers).
-		this.addSubHeading(containerEl, "General");
-
-		new Setting(containerEl)
-			.setName("Timezone")
-			.setDesc("IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)")
-			.addText(text => {
-				const validTz = (v: string) => {
-					try { Intl.DateTimeFormat(undefined, {timeZone: v.trim()}); return true; }
-					catch { return false; }
-				};
-				text
-					// eslint-disable-next-line obsidianmd/ui/sentence-case
-					.setPlaceholder("America/New_York")
-					.setValue(this.plugin.settings.timezone)
-					.onChange((value) => {
-						if (validTz(value)) {
-							text.inputEl.removeClass("whisper-cal-setting-invalid");
-							this.plugin.settings.timezone = value.trim();
-							this.debouncedSave();
-						} else {
-							// Show the invalid input instead of silently keeping the old value.
-							text.inputEl.addClass("whisper-cal-setting-invalid");
-						}
-					});
-				text.inputEl.addEventListener("blur", () => {
-					if (!validTz(text.inputEl.value)) {
-						text.setValue(this.plugin.settings.timezone);
-						text.inputEl.removeClass("whisper-cal-setting-invalid");
-					}
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Time format")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system")
-			.addDropdown(dropdown => {
-				dropdown.addOption("auto", "Auto");
-				dropdown.addOption("12h", "12-hour");
-				dropdown.addOption("24h", "24-hour");
-				dropdown.setValue(this.plugin.settings.timeFormat);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.timeFormat = value as "auto" | "12h" | "24h";
-					await this.plugin.saveSettings();
-				});
-			});
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Show all-day events",
-			desc: "Display all-day events in the calendar view",
-			get: () => this.plugin.settings.showAllDayEvents,
-			set: v => { this.plugin.settings.showAllDayEvents = v; },
-		});
-
-		this.renderImportantOrganizers(containerEl);
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Refresh interval (minutes)",
-			desc: "How often to refresh the calendar view",
-			placeholder: "5",
-			get: () => this.plugin.settings.refreshIntervalMinutes,
-			set: v => { this.plugin.settings.refreshIntervalMinutes = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Cache future days",
-			desc: "Number of upcoming days to pre-fetch for offline access",
-			placeholder: "5",
-			min: 0,
-			get: () => this.plugin.settings.cacheFutureDays,
-			set: v => { this.plugin.settings.cacheFutureDays = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Cache retention (days)",
-			desc: "How many days of past calendar data to keep in the local cache",
-			placeholder: "30",
-			get: () => this.plugin.settings.cacheRetentionDays,
-			set: v => { this.plugin.settings.cacheRetentionDays = v; },
-		});
-	}
-
-	/** Notes & people tab — where notes land and how they're templated. */
-	private renderNotesTab(containerEl: HTMLElement): void {
-		this.addSubHeading(containerEl, "Meeting notes");
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Notes folder",
-			desc: "Vault folder where meeting notes are created",
-			placeholder: "Meetings",
-			get: () => this.plugin.settings.noteFolderPath,
-			set: v => { this.plugin.settings.noteFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Note filename template",
-			desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
-			placeholder: "{{date}} {{time}} - {{subject}}",
-			get: () => this.plugin.settings.noteFilenameTemplate,
-			set: v => { this.plugin.settings.noteFilenameTemplate = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Note template",
-			desc: "Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and set the path here.",
-			placeholder: "Templates/WhisperCal Meeting.md",
-			get: () => this.plugin.settings.noteTemplatePath,
-			set: v => { this.plugin.settings.noteTemplatePath = v; },
-			suggest: "file",
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Unscheduled note subject",
-			desc: "Subject used for ad-hoc meeting notes not tied to a calendar event",
-			placeholder: "Unscheduled Meeting",
-			get: () => this.plugin.settings.unscheduledSubject,
-			set: v => { this.plugin.settings.unscheduledSubject = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Transcripts folder",
-			desc: "Vault folder where transcript files are created when linking recordings",
-			placeholder: "Transcripts",
-			get: () => this.plugin.settings.transcriptFolderPath,
-			set: v => { this.plugin.settings.transcriptFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		new Setting(containerEl)
-			.setName("Word replacement file")
-			.setDesc("Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)")
-			.addText(text => {
-				text.setPlaceholder("Prompts/Word Replacements.md")
-					.setValue(this.plugin.settings.replacementFilePath)
-					.onChange((value) => {
-						this.plugin.settings.replacementFilePath = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			})
-			.addButton(button => button
-				.setButtonText("Open")
-				.onClick(async () => {
-					const filePath = this.plugin.settings.replacementFilePath;
-					if (!filePath) {
-						return;
-					}
-					if (!this.app.vault.getAbstractFileByPath(filePath)) {
-						await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
-					}
-					void this.app.workspace.openLinkText(filePath, "", false);
-				}));
-
-		this.addSubHeading(containerEl, "People");
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "People folder",
-			desc: "Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.",
-			placeholder: "People",
-			get: () => this.plugin.settings.peopleFolderPath,
-			set: v => { this.plugin.settings.peopleFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Auto-create people notes",
-			desc: "Automatically create people notes for meeting organizers without one (requires a people template). Newly-tagged speakers always get a note so voiceprints stay aligned.",
-			get: () => this.plugin.settings.autoCreatePeopleNotes,
-			set: v => { this.plugin.settings.autoCreatePeopleNotes = v; },
-		});
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "People template",
-			desc: "Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}",
-			placeholder: "Templates/Person.md",
-			get: () => this.plugin.settings.peopleTemplatePath,
-			set: v => { this.plugin.settings.peopleTemplatePath = v; },
-			suggest: "file",
-		});
-	}
-
-	/** Recording tab — capture source and its source-specific knobs. */
-	private renderRecordingTab(containerEl: HTMLElement): void {
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		const macwhisperSettings = containerEl.createDiv();
-		const apiSettings = containerEl.createDiv();
-		const updateRecordingVisibility = () => {
-			const isMacWhisper = this.plugin.settings.recordingSource === "macwhisper";
-			macwhisperSettings.toggle(isMacWhisper);
-			apiSettings.toggle(!isMacWhisper);
-		};
-
-		const sourceSetting = new Setting(containerEl)
-			.setName("Source")
-			.setDesc("Choose how meeting recordings are captured")
-			.addDropdown(dropdown => {
-				if (Platform.isMacOS) {
-					dropdown.addOption("macwhisper", "MacWhisper");
-				}
-				dropdown
-					.addOption("api", "Recording API")
-					.setValue(this.plugin.settings.recordingSource)
-					.onChange((value: string) => {
-						this.plugin.settings.recordingSource = value as "macwhisper" | "api";
-						this.debouncedSave();
-						updateRecordingVisibility();
-					});
-			});
-		// Move Source dropdown above the sub-setting containers
-		containerEl.insertBefore(sourceSetting.settingEl, macwhisperSettings);
-		/* eslint-enable obsidianmd/ui/sentence-case */
-
-		// MacWhisper sub-settings
-		new Setting(macwhisperSettings)
-			.setName("Database path")
-			.setDesc(MACWHISPER_DB_PATH)
-			.setDisabled(true);
-
-		this.addNumberSetting({
-			container: macwhisperSettings,
-			name: "Recording match window (minutes)",
-			desc: "How close a recording start must be to the scheduled meeting time to be matched automatically (manual linking offers the whole day)",
-			placeholder: "10",
-			get: () => this.plugin.settings.recordingWindowMinutes,
-			set: v => { this.plugin.settings.recordingWindowMinutes = v; },
-		});
-
-		this.addNumberSetting({
-			container: macwhisperSettings,
-			name: "Unlinked lookback (days)",
-			desc: "How far back to check for unlinked recordings",
-			placeholder: "30",
-			get: () => this.plugin.settings.unlinkedLookbackDays,
-			set: v => { this.plugin.settings.unlinkedLookbackDays = v; },
-		});
-
-		// Recording API sub-settings
-		new Setting(apiSettings)
-			.setName("Base URL")
-			.setDesc("REST API base URL (e.g. http://127.0.0.1:8080/api/v1). Expects /health, /start, /stop, /status endpoints.")
-			.addText(text => text
-				.setPlaceholder("http://127.0.0.1:8080/api/v1")
-				.setValue(this.plugin.settings.recordingApiBaseUrl)
-				.onChange((value) => {
-					this.plugin.settings.recordingApiBaseUrl = value.replace(/\/+$/, "");
-					this.debouncedSave();
-				}));
-
-		new Setting(apiSettings)
-			.setName("Test API")
-			.setDesc("Check that the recording app is reachable by querying its status endpoint")
-			.addButton(button => button
-				.setButtonText("Test API")
-				.onClick(async () => {
-					const baseUrl = resolveRecordingApiBaseUrl(this.plugin.settings.recordingApiBaseUrl);
-					if (!baseUrl) {
-						new Notice("Recording API is not configured. Set a base URL or start the recording app.");
-						return;
-					}
-					button.setDisabled(true);
-					const original = button.buttonEl.textContent;
-					button.setButtonText("Testing…");
-					try {
-						const status = await recordingStatus(baseUrl);
-						new Notice(`Recording app is available (state: ${status.state}).`);
-					} catch (e) {
-						const msg = e instanceof Error ? e.message : String(e);
-						new Notice(`Recording API test failed: ${msg}`);
-					} finally {
-						button.setDisabled(false);
-						button.setButtonText(original ?? "Test API");
-					}
-				}));
-
-		new Setting(apiSettings)
-			.setName("Automate meeting recording")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Clicking a meeting's join link on its calendar card starts recording automatically, and stopping that recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the call.")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.automateMeetingRecording)
-				.onChange(value => {
-					this.plugin.settings.automateMeetingRecording = value;
-					this.debouncedSave();
-				}));
-
-		new Setting(apiSettings)
-			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product name
-			.setName("Pull Teams meeting chat")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case -- product/permission names
-			.setDesc("When a recording finishes, add the meeting's Teams chat to the meeting note under a \"Meeting Chat\" heading. Microsoft calendars only, and your sign-in must include the Chat.Read permission — sign out and back in after granting it. Re-pull any time from a card's ⋯ menu.")
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.pullMeetingChat)
-				.onChange(value => {
-					this.plugin.settings.pullMeetingChat = value;
-					this.debouncedSave();
-				}));
-
-		updateRecordingVisibility();
-	}
-
-	/** Speakers tab — voiceprint matching, the LLM fallback prompt, and modal knobs. */
-	private renderSpeakersTab(containerEl: HTMLElement): void {
-		 
-		this.addTextSetting({
-			container: containerEl,
-			name: "Speaker voiceprints folder",
-			desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
-			placeholder: "Caches/Voiceprints",
-			get: () => this.plugin.settings.voiceprintFolderPath,
-			set: v => { this.plugin.settings.voiceprintFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-
-		this.addFloatSetting({
-			container: containerEl,
-			name: "Voiceprint match floor",
-			desc: "Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
-				"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
-				"Default 0.50. Solo-library matches always use at least 0.55.",
-			placeholder: "0.50",
-			min: 0,
-			max: 1,
-			get: () => this.plugin.settings.voiceprintMatchFloor,
-			set: v => { this.plugin.settings.voiceprintMatchFloor = v; },
-		});
-
-		// Auto-tag (skip the modal) — silently apply tags when every speaker is a confident
-		// voiceprint match. The confidence-floor sub-setting is only shown while the feature is
-		// on. Drift guard: silent auto-tags never enroll or update a library; that only happens
-		// when you confirm in the modal.
-		const autoTagSkipSub = containerEl.createDiv();
-		const autoTagSkipSetting = new Setting(containerEl)
-			.setName("Auto-tag when all speakers match")
-			.setDesc(
-				"Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
-				"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
-				"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
-			)
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.voiceprintAutoTagSkipModal)
-				.onChange(async (value) => {
-					this.plugin.settings.voiceprintAutoTagSkipModal = value;
-					await this.plugin.saveSettings();
-					autoTagSkipSub.toggle(value);
-				}));
-		// Move the toggle above its sub-setting container.
-		containerEl.insertBefore(autoTagSkipSetting.settingEl, autoTagSkipSub);
-
-		this.addFloatSetting({
-			container: autoTagSkipSub,
-			name: "Auto-tag confidence floor",
-			desc: "Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
-				"Keep it high so unattended tagging stays strict. Default 0.80.",
-			placeholder: "0.80",
-			min: 0,
-			max: 1,
-			get: () => this.plugin.settings.voiceprintAutoTagFloor,
-			set: v => { this.plugin.settings.voiceprintAutoTagFloor = v; },
-		});
-
-		this.addFloatSetting({
-			container: autoTagSkipSub,
-			name: "Ignore minor speakers",
-			desc: "Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
-				"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
-				"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
-				"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
-			placeholder: "0.05",
-			min: 0,
-			max: 1,
-			get: () => this.plugin.settings.voiceprintAutoTagMinorMaxShare,
-			set: v => { this.plugin.settings.voiceprintAutoTagMinorMaxShare = v; },
-		});
-		autoTagSkipSub.toggle(this.plugin.settings.voiceprintAutoTagSkipModal);
-
-		this.addPromptGroup(
-			containerEl,
-			"Transcript post-processing",
-			"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
-			"Prompts/Transcript Post-Processing Prompt.md",
-			"speakerTaggingPromptPath",
-			"speakerTagModel",
-			"speakerTagFlags",
-		);
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Microphone user",
-			desc: "Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts",
-			placeholder: "Full name",
-			get: () => this.plugin.settings.microphoneUser,
-			set: v => { this.plugin.settings.microphoneUser = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Roster enrichment cap",
-			desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
-			get: () => this.plugin.settings.rosterMaxEnriched,
-			set: v => { this.plugin.settings.rosterMaxEnriched = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Speaker clip length (seconds)",
-			desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
-			placeholder: "5",
-			min: 0,
-			get: () => this.plugin.settings.speakerTagClipSeconds,
-			set: v => { this.plugin.settings.speakerTagClipSeconds = v; },
-		});
-		 
-	}
-
-	/** Summary & research tab — the two note-producing prompts and their inputs. */
-	private renderSummaryTab(containerEl: HTMLElement): void {
-		 
-		this.addPromptGroup(
-			containerEl,
-			"Summarizer",
-			"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
-			"Prompts/Meeting Summarizer.md",
-			"summarizerPromptPath",
-			"summarizerModel",
-			"summarizerFlags",
-		);
-
-		this.addPromptGroup(
-			containerEl,
-			"Research",
-			"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
-			"Prompts/Meeting Research.md",
-			"researchPromptPath",
-			"researchModel",
-			"researchFlags",
-		);
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Meeting series notes folder",
-			desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
-			placeholder: "Meeting Series",
-			get: () => this.plugin.settings.seriesNotesFolderPath,
-			set: v => { this.plugin.settings.seriesNotesFolderPath = v; },
-			suggest: "folder",
-			browse: true,
-		});
-		 
-	}
-
-	/** LLM engine tab — the shared plumbing every prompt runs on. */
-	private renderLlmTab(containerEl: HTMLElement): void {
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		new Setting(containerEl)
-			.setName("Enable LLM features")
-			.setDesc("Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.")
-			.addToggle(toggle => {
-				let handling = false;
-				toggle.setValue(this.plugin.settings.llmEnabled);
-				toggle.onChange(async (value) => {
-					if (handling) {
-						// A click while the consent modal is pending already flipped the
-						// DOM — snap it back to the stored setting so they can't desync.
-						// (Guarded so the nested onChange from setValue can't recurse.)
-						if (toggle.getValue() !== this.plugin.settings.llmEnabled) {
-							toggle.setValue(this.plugin.settings.llmEnabled);
-						}
-						return;
-					}
-					handling = true;
-					try {
-						if (value) {
-							toggle.setValue(false);
-							const accepted = await new LlmConsentModal(this.app).prompt();
-							if (accepted) {
-								this.plugin.settings.llmEnabled = true;
-								toggle.setValue(true);
-								await this.plugin.saveSettings();
-							}
-						} else {
-							this.plugin.settings.llmEnabled = false;
-							await this.plugin.saveSettings();
-						}
-					} finally {
-						handling = false;
-					}
-				});
-			});
-
-		// Automatic mode — repurposes the autoSummarizeAfterTagging key (same
-		// key, existing installs keep their value) as the switch for the whole
-		// automatic workflow: background auto-tag + auto-summarize after apply.
-		const autoTagSubSettings = containerEl.createDiv();
-		const autoModeSetting = new Setting(containerEl)
-			.setName("Automatic mode")
-			.setDesc(
-				"Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
-				"tag speakers in the background and cache the candidates (the card's action button turns into " +
-				"\"Review speakers\" when they're ready — tags are never applied without your confirmation), then " +
-				"start summarization after you apply them. Single-mic recordings are skipped. " +
-				"Off = the card's action button steps through each stage (Tag speakers, Summarize) manually.",
-			)
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoSummarizeAfterTagging)
-				.onChange(async (value) => {
-					this.plugin.settings.autoSummarizeAfterTagging = value;
-					await this.plugin.saveSettings();
-					autoTagSubSettings.toggle(value);
-				}));
-		// Move the toggle above its sub-setting container
-		containerEl.insertBefore(autoModeSetting.settingEl, autoTagSubSettings);
-
-		this.addNumberSetting({
-			container: autoTagSubSettings,
-			name: "Auto-tag catch-up window (hours)",
-			desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
-			placeholder: "48",
-			min: 0,
-			get: () => this.plugin.settings.autoTagLookbackHours,
-			set: v => { this.plugin.settings.autoTagLookbackHours = v; },
-		});
-		autoTagSubSettings.toggle(this.plugin.settings.autoSummarizeAfterTagging);
-
-		// ── LLM engine: shared invocation settings that apply to every prompt ──
-		this.addSubHeading(containerEl, "LLM engine");
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Prompt directory",
-			desc: "Vault folder holding your LLM prompt files",
-			placeholder: "Prompts",
-			suggest: "folder",
-			get: () => this.plugin.settings.llmPromptDir,
-			set: v => { this.plugin.settings.llmPromptDir = v; },
-		});
-
-		// CLI command has a "fall back to claude on empty" rule — keep direct.
-		new Setting(containerEl)
-			.setName("CLI command")
-			.setDesc("Command used to invoke the LLM (default: claude)")
-			.addText(text => text
-				.setPlaceholder("claude")
-				.setValue(this.plugin.settings.llmCli)
-				.onChange((value) => {
-					this.plugin.settings.llmCli = value.trim() || "claude";
-					this.debouncedSave();
-				}));
-
-		this.addTextSetting({
-			container: containerEl,
-			name: "Additional flags (all prompts)",
-			desc: "Extra CLI flags appended to every LLM command. " +
-				"⚠️ The default --dangerously-skip-permissions is required for " +
-				"non-interactive LLM usage — removing it will break speaker tagging " +
-				"and summarization. Trust boundary: with this flag the CLI can read " +
-				"and write files with no confirmation, and prompts include third-party " +
-				"content (transcribed audio, attendee names, invite subjects) that could " +
-				"contain injection attempts. Only run against meetings and an LLM you trust. " +
-				"Use the per-prompt flags for task-specific options.",
-			placeholder: "--dangerously-skip-permissions",
-			get: () => this.plugin.settings.llmExtraFlags,
-			set: v => { this.plugin.settings.llmExtraFlags = v; },
-		});
-
-		new Setting(containerEl)
-			.setName("Anthropic API key")
-			.setDesc("Used to populate model dropdowns. Not sent to the CLI — the CLI uses its own auth.")
-			.addText(text => {
-				text.inputEl.type = "password";
-				text.setPlaceholder("sk-ant-...")
-					.setValue(this.plugin.settings.anthropicApiKey)
-					.onChange((value) => {
-						this.plugin.settings.anthropicApiKey = value.trim();
-						this.debouncedSave();
-						// Debounced so a key being typed isn't sent one character at a time.
-						if (this.modelRefreshTimer) clearTimeout(this.modelRefreshTimer);
-						this.modelRefreshTimer = setTimeout(() => {
-							this.modelRefreshTimer = null;
-							void this.refreshModels();
-						}, 500);
-					});
-			});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "LLM timeout (minutes)",
-			desc: "Kill the LLM process if it runs longer than this (0 = no timeout). Transcript post-processing reads and rewrites the whole transcript, so give it headroom.",
-			min: 0,
-			get: () => this.plugin.settings.llmTimeoutMinutes,
-			set: v => { this.plugin.settings.llmTimeoutMinutes = v; },
-		});
-
-		this.addNumberSetting({
-			container: containerEl,
-			name: "Max concurrent LLM processes",
-			desc: "Maximum number of LLM processes that can run simultaneously",
-			get: () => this.plugin.settings.llmMaxConcurrent,
-			set: v => { this.plugin.settings.llmMaxConcurrent = v; },
-		});
-
-		this.addSubHeading(containerEl, "Troubleshooting");
-
-		if (Platform.isMacOS || Platform.isWin) {
-			this.addToggleSetting({
-				container: containerEl,
-				name: "Debug mode",
-				desc: "Open LLM commands in a terminal window instead of running in the background",
-				get: () => this.plugin.settings.llmDebugMode,
-				set: v => { this.plugin.settings.llmDebugMode = v; },
-			});
-		}
-
-		this.addToggleSetting({
-			container: containerEl,
-			name: "Debug logging",
-			desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I / Ctrl+Shift+I). Off by default to avoid leaking meeting content.",
-			get: () => this.plugin.settings.llmDebugLogging,
-			set: v => { this.plugin.settings.llmDebugLogging = v; },
-		});
-		/* eslint-enable obsidianmd/ui/sentence-case */
-	}
-
-	/**
-	 * Render one prompt group (Prompt path / Model / Additional flags) into a
-	 * tab. Each model select registers in modelSelects so refreshModels() can
-	 * populate it regardless of which tab is active.
-	 */
-	private addPromptGroup(
-		container: HTMLElement,
-		name: string,
-		promptDesc: string,
-		placeholder: string,
-		pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
-		modelKey: "speakerTagModel" | "summarizerModel" | "researchModel",
-		flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
-	): void {
-		 
-		this.addSubHeading(container, name);
-
-		new Setting(container)
-			.setName("Prompt")
-			.setDesc(promptDesc)
-			.addText(text => {
-				text.setPlaceholder(placeholder)
-					.setValue(this.plugin.settings[pathKey])
-					.onChange((value) => {
-						this.plugin.settings[pathKey] = value;
-						this.debouncedSave();
-					});
-				new FileSuggest(this.app, text.inputEl);
-			});
-
-		new Setting(container)
-			.setName("Model")
-			.setDesc(`Claude model for ${name.toLowerCase()}. Set the API key on the LLM engine tab to load available models.`)
-			.addDropdown(dropdown => {
-				this.modelSelects.push({sel: dropdown.selectEl, key: modelKey});
-				dropdown.addOption("", "Default");
-				const current = this.plugin.settings[modelKey];
-				if (current) {
-					dropdown.addOption(current, current);
-				}
-				dropdown.setValue(current);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings[modelKey] = value;
-					await this.plugin.saveSettings();
-				});
-			});
-
-		this.addTextSetting({
-			container,
-			name: "Additional flags",
-			desc: `Extra CLI flags for ${name.toLowerCase()} only, appended after the global flags on the LLM engine tab (e.g. --effort medium). Leave empty to use only the global flags.`,
-			placeholder: "--effort medium",
-			get: () => this.plugin.settings[flagsKey],
-			set: v => { this.plugin.settings[flagsKey] = v; },
-		});
-		 
-	}
-
-	/** Populate all registered model dropdowns from the API. */
-	private async refreshModels(): Promise<void> {
-		const seq = ++this.modelRefreshSeq;
-		const models = await this.fetchAnthropicModels();
-		// A newer refresh started while this one was in flight — let it win.
-		if (seq !== this.modelRefreshSeq) return;
-		// A failed fetch returns [] — leave the seeded ["Default", current] options
-		// alone rather than repopulate, which would drop the configured model from
-		// its own dropdown and silently overwrite the setting on any interaction.
-		if (models.length === 0) return;
-		for (const {sel, key} of this.modelSelects) {
-			const current = this.plugin.settings[key];
-			sel.replaceChildren();
-			sel.add(new Option("Default", ""));
-			for (const m of models) {
-				sel.add(new Option(m.display_name, m.id));
-			}
-			// The configured model must always be selectable, even when the fetch
-			// didn't list it (deprecated id, different key scope).
-			if (current && !models.some(m => m.id === current)) {
-				sel.add(new Option(current, current));
-			}
-			sel.value = current;
-		}
-	}
-
 
 	hide(): void {
-		this.authUnsubscribe?.();
-		this.authUnsubscribe = null;
 		if (this.searchTimer !== null) {
 			window.clearTimeout(this.searchTimer);
 			this.searchTimer = null;
 		}
-		if (this.modelRefreshTimer) {
-			clearTimeout(this.modelRefreshTimer);
-			this.modelRefreshTimer = null;
-		}
+		// Refetch the model list the next time settings are opened.
+		this.modelsFetchedFor = null;
 		// Flush any pending debounced save so settings aren't lost
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
@@ -1303,152 +360,849 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		}
 	}
 
-	private async fetchAnthropicModels(): Promise<{id: string; display_name: string}[]> {
-		// Failure of any kind (no key, bad key, offline) keeps the dropdowns usable:
-		// they offer "Default" only.
-		const key = resolveAnthropicKey(this.plugin.settings.anthropicApiKey);
-		if (!key) return [];
-		const result = await listAnthropicModels(key);
-		return result.ok ? result.models : [];
+	// ── Row builders ──────────────────────────────────────────────────────
+
+	private textRow(key: KeysOfType<string>, o: RowOpts & {
+		placeholder?: string;
+		normalize?: (v: string) => string;
+		validate?: (v: string) => string | void;
+	}): Row {
+		this.textKeys.set(key, o.normalize ?? (v => v));
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {type: "text", key, placeholder: o.placeholder, validate: o.validate},
+		};
 	}
 
-	private renderMicrosoftAuthSettings(containerEl: HTMLElement): void {
-		this.addTextSetting({
-			container: containerEl,
-			name: "Tenant ID",
-			desc: "Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.",
-			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-			get: () => this.plugin.settings.tenantId,
-			set: v => { this.plugin.settings.tenantId = v.trim(); },
-		});
+	private folderRow(key: KeysOfType<string>, o: RowOpts & {placeholder?: string}): Row {
+		this.textKeys.set(key, normalizeFolder);
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {type: "folder", key, placeholder: o.placeholder},
+		};
+	}
 
-		this.addTextSetting({
-			container: containerEl,
-			name: "Client ID",
-			desc: "Application (client) ID from your Azure AD app registration",
-			placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-			get: () => this.plugin.settings.clientId,
-			set: v => { this.plugin.settings.clientId = v.trim(); },
-		});
+	/** Vault markdown file picker (native combobox). */
+	private fileRow(key: KeysOfType<string>, o: RowOpts): Row {
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {type: "file", key, filter: file => file.extension === "md"},
+		};
+	}
 
-		new Setting(containerEl)
-			.setName("Cloud instance")
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			.setDesc("Microsoft cloud environment (Public, USGov, USGovHigh, USGovDoD, China)")
-			.addDropdown(dropdown => {
-				for (const option of CLOUD_INSTANCE_OPTIONS) {
-					dropdown.addOption(option, option);
-				}
-				dropdown.setValue(this.plugin.settings.cloudInstance);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.cloudInstance = value as CloudInstance;
-					await this.plugin.saveSettings();
+	private toggleRow(key: KeysOfType<boolean>, o: RowOpts): Row {
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {type: "toggle", key},
+		};
+	}
+
+	/** Whole number, `min <= value` (default min=1). */
+	private intRow(key: KeysOfType<number>, o: RowOpts & {placeholder?: string; min?: number}): Row {
+		const min = o.min ?? 1;
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {
+				type: "number", key, min, step: 1,
+				placeholder: o.placeholder ?? String(min),
+				defaultValue: DEFAULT_SETTINGS[key],
+				validate: v => Number.isInteger(v) ? undefined : "Enter a whole number",
+			},
+		};
+	}
+
+	/** Fraction bounded to [0, 1]. */
+	private ratioRow(key: KeysOfType<number>, o: RowOpts & {placeholder?: string}): Row {
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			control: {
+				type: "number", key, min: 0, max: 1, step: "any",
+				placeholder: o.placeholder,
+				defaultValue: DEFAULT_SETTINGS[key],
+			},
+		};
+	}
+
+	/** Masked text input. The declarative text control can't be a password field. */
+	private secretRow(key: KeysOfType<string>, o: RowOpts & {placeholder: string}): Row {
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			render: (setting) => {
+				setting.addText(text => {
+					text.inputEl.type = "password";
+					text.setPlaceholder(o.placeholder)
+						.setValue(this.plugin.settings[key])
+						.onChange((value) => {
+							this.store(key, value.trim());
+							this.debouncedSave();
+						});
 				});
-			});
+			},
+		};
 	}
 
-	private renderGoogleAuthSettings(containerEl: HTMLElement): void {
-		/* eslint-disable obsidianmd/ui/sentence-case */
-		this.addTextSetting({
-			container: containerEl,
-			name: "Client ID",
-			desc: "OAuth client ID from your Google Cloud Console desktop app credentials",
-			placeholder: "xxxxxxxxxxxx.apps.googleusercontent.com",
-			get: () => this.plugin.settings.googleClientId,
-			set: v => { this.plugin.settings.googleClientId = v.trim(); },
-		});
-
-		// Client secret needs `inputEl.type = "password"` — keep direct.
-		new Setting(containerEl)
-			.setName("Client secret")
-			.setDesc("OAuth client secret from your Google Cloud Console desktop app credentials")
-			.addText(text => {
-				text.setPlaceholder("GOCSPX-xxxxxxxxxxxxxxxxxxxx")
-					.setValue(this.plugin.settings.googleClientSecret)
-					.onChange((value) => {
-						this.plugin.settings.googleClientSecret = value.trim();
-						this.debouncedSave();
-					});
-				text.inputEl.type = "password";
-			});
-		/* eslint-enable obsidianmd/ui/sentence-case */
+	/**
+	 * Free-text path input with vault-file suggestions. Used instead of the
+	 * `file` control where the path may be absolute or name a file that doesn't
+	 * exist yet — the native picker only offers existing vault files.
+	 */
+	private pathRow(
+		key: KeysOfType<string>,
+		o: RowOpts & {placeholder: string},
+		extend?: (setting: Setting) => void,
+	): Row {
+		return {
+			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
+			render: (setting) => {
+				setting.addText(text => {
+					text.setPlaceholder(o.placeholder)
+						.setValue(this.plugin.settings[key])
+						.onChange((value) => {
+							this.store(key, value);
+							this.debouncedSave();
+						});
+					new FileSuggest(this.app, text.inputEl);
+				});
+				extend?.(setting);
+			},
+		};
 	}
 
-	private renderAuthStatus(state: AuthState): void {
-		if (!this.authStatusEl) return;
-		this.authStatusEl.empty();
+	// ── Definitions ───────────────────────────────────────────────────────
 
-		const statusContainer = this.authStatusEl.createDiv({cls: "whisper-cal-auth-section"});
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const s = () => this.plugin.settings;
+		// Sub-pages grouped by pipeline stage.
+		const pages: Row[] = [
+			{
+				type: "page",
+				name: "Calendar",
+				desc: "Provider, account, and how the calendar is displayed",
+				displayValue: () => s().calendarProvider === "microsoft" ? "Microsoft 365" : "Google Calendar",
+				status: () => {
+					const status = this.plugin.auth.getState().status;
+					return status === "signed-out" || status === "error" ? "warning" : null;
+				},
+				items: this.calendarPage(),
+			},
+			{
+				type: "page",
+				name: "LLM engine",
+				desc: "The shared plumbing every prompt runs on",
+				displayValue: () => s().llmEnabled ? "On" : "Off",
+				items: this.llmPage(),
+			},
+			{
+				type: "page",
+				name: "Notes & people",
+				desc: "Where notes land and how they're templated",
+				items: this.notesPage(),
+			},
+			{
+				type: "page",
+				name: "Recording",
+				desc: "Capture source and its options",
+				displayValue: () => s().recordingSource === "macwhisper" ? "MacWhisper" : "Recording API",
+				items: this.recordingPage(),
+			},
+			{
+				type: "page",
+				name: "Speakers",
+				desc: "Voiceprint matching and transcript post-processing",
+				items: this.speakersPage(),
+			},
+			{
+				type: "page",
+				name: "Summary & research",
+				desc: "The two note-producing prompts and their inputs",
+				items: this.summaryPage(),
+			},
+		];
+		return [
+			{type: "group", cls: "whisper-cal-settings", items: pages},
+			{
+				type: "group",
+				cls: "whisper-cal-settings",
+				items: [{name: "Version", desc: this.plugin.manifest.version, searchable: false}],
+			},
+		];
+	}
 
-		switch (state.status) {
-		case "signed-out": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label",
-				text: "Not signed in",
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn",
-				text: "Sign in",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.startSignIn();
-			});
-			break;
+	/** Calendar page — provider + credentials, display options, refresh/cache. */
+	private calendarPage(): SettingDefinitionItem<SettingKey>[] {
+		const isMicrosoft = () => this.plugin.settings.calendarProvider === "microsoft";
+		const isGoogle = () => !isMicrosoft();
+		return [
+			{
+				type: "group",
+				heading: "Provider",
+				cls: "whisper-cal-settings",
+				items: [
+					{
+						name: "Calendar provider",
+						desc: "Which calendar service to connect to",
+						control: {
+							type: "dropdown",
+							key: "calendarProvider",
+							options: {microsoft: "Microsoft 365", google: "Google Calendar"},
+						},
+					},
+					this.textRow("tenantId", {
+						name: "Tenant ID",
+						desc: "Directory (tenant) ID from Azure AD. Leave empty to auto-detect from your account.",
+						placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+						normalize: trim,
+						visible: isMicrosoft,
+					}),
+					this.textRow("clientId", {
+						name: "Client ID",
+						desc: "Application (client) ID from your Azure AD app registration",
+						placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+						normalize: trim,
+						visible: isMicrosoft,
+					}),
+					{
+						name: "Cloud instance",
+						desc: "Microsoft cloud environment (Public, USGov, USGovHigh, USGovDoD, China)",
+						visible: isMicrosoft,
+						control: {
+							type: "dropdown",
+							key: "cloudInstance",
+							options: Object.fromEntries(CLOUD_INSTANCE_OPTIONS.map(o => [o, o])),
+						},
+					},
+					this.textRow("googleClientId", {
+						name: "Client ID",
+						desc: "OAuth client ID from your Google Cloud Console desktop app credentials",
+						placeholder: "xxxxxxxxxxxx.apps.googleusercontent.com",
+						normalize: trim,
+						visible: isGoogle,
+					}),
+					this.secretRow("googleClientSecret", {
+						name: "Client secret",
+						desc: "OAuth client secret from your Google Cloud Console desktop app credentials",
+						placeholder: "GOCSPX-xxxxxxxxxxxxxxxxxxxx",
+						visible: isGoogle,
+					}),
+					this.authRow(),
+				],
+			},
+			{
+				// General calendar settings (apply to both providers).
+				type: "group",
+				heading: "General",
+				cls: "whisper-cal-settings",
+				items: [
+					this.textRow("timezone", {
+						name: "Timezone",
+						desc: "IANA timezone for displaying meeting times (e.g. America/New_York, Europe/London)",
+						placeholder: "America/New_York",
+						normalize: trim,
+						validate: (v) => {
+							try { Intl.DateTimeFormat(undefined, {timeZone: v.trim()}); return undefined; }
+							catch { return "Not a valid IANA timezone"; }
+						},
+					}),
+					{
+						name: "Time format",
+						desc: "How meeting times are displayed: 12-hour (9:00 AM), 24-hour (09:00), or auto-detect from system",
+						control: {
+							type: "dropdown",
+							key: "timeFormat",
+							options: {"auto": "Auto", "12h": "12-hour", "24h": "24-hour"},
+						},
+					},
+					this.toggleRow("showAllDayEvents", {
+						name: "Show all-day events",
+						desc: "Display all-day events in the calendar view",
+					}),
+					{
+						name: "Important organizers",
+						desc: "Meetings organized by these people show an alert icon in the gutter",
+						render: (setting) => {
+							this.renderImportantOrganizers(setting);
+							return () => {
+								if (this.searchTimer !== null) {
+									window.clearTimeout(this.searchTimer);
+									this.searchTimer = null;
+								}
+							};
+						},
+					},
+					this.intRow("refreshIntervalMinutes", {
+						name: "Refresh interval (minutes)",
+						desc: "How often to refresh the calendar view",
+						placeholder: "5",
+					}),
+					this.intRow("cacheFutureDays", {
+						name: "Cache future days",
+						desc: "Number of upcoming days to pre-fetch for offline access",
+						placeholder: "5",
+						min: 0,
+					}),
+					this.intRow("cacheRetentionDays", {
+						name: "Cache retention (days)",
+						desc: "How many days of past calendar data to keep in the local cache",
+						placeholder: "30",
+					}),
+				],
+			},
+		];
+	}
+
+	/** Sign-in status and its action button; repaints on every auth state change. */
+	private authRow(): Row {
+		return {
+			name: "Connection",
+			desc: "Sign in to or out of the selected calendar provider",
+			aliases: ["Sign in", "Sign out", "Account"],
+			render: (setting) => {
+				const paint = (state: AuthState) => {
+					setting.clear();
+					let label: string;
+					let labelCls = "";
+					let hint: string | null = null;
+					switch (state.status) {
+					case "signed-out":
+						label = "Not signed in";
+						setting.addButton(btn => btn.setButtonText("Sign in").setCta()
+							.onClick(() => { void this.plugin.auth.startSignIn(); }));
+						break;
+					case "signing-in":
+						label = state.message ?? "Signing in…";
+						hint = "Waiting for authorization…";
+						setting.addButton(btn => btn.setButtonText("Cancel")
+							.onClick(() => { this.plugin.auth.cancelSignIn(); }));
+						break;
+					case "signed-in":
+						label = "Signed in";
+						labelCls = "whisper-cal-auth-success";
+						setting.addButton(btn => btn.setButtonText("Sign out")
+							.onClick(() => { void this.plugin.auth.signOut(); }));
+						break;
+					case "error":
+						label = state.message;
+						labelCls = "whisper-cal-auth-error";
+						setting.addButton(btn => btn.setButtonText("Try again").setCta()
+							.onClick(() => { void this.plugin.auth.startSignIn(); }));
+						break;
+					}
+					const frag = document.createDocumentFragment();
+					frag.createDiv({cls: labelCls, text: label});
+					if (hint) frag.createDiv({cls: "whisper-cal-auth-hint", text: hint});
+					frag.createDiv({cls: "whisper-cal-settings-warning", text: OAUTH_TOKEN_WARNING});
+					setting.setDesc(frag);
+				};
+				this.repaintAuth = () => paint(this.plugin.auth.getState());
+				this.repaintAuth();
+				const unsubscribe = this.plugin.onAuthStateChange(paint);
+				return () => {
+					unsubscribe();
+					this.repaintAuth = null;
+				};
+			},
+		};
+	}
+
+	/** Notes & people page — where notes land and how they're templated. */
+	private notesPage(): SettingDefinitionItem<SettingKey>[] {
+		return [
+			{
+				type: "group",
+				heading: "Meeting notes",
+				cls: "whisper-cal-settings",
+				items: [
+					this.folderRow("noteFolderPath", {
+						name: "Notes folder",
+						desc: "Vault folder where meeting notes are created",
+						placeholder: "Meetings",
+					}),
+					this.textRow("noteFilenameTemplate", {
+						name: "Note filename template",
+						desc: "Template for meeting note filenames. Available: {{date}} (YYYY-MM-DD), {{time}} (HHmm, 24-hour), {{subject}}. Add {{time}} to keep two same-subject meetings on the same day in separate notes.",
+						placeholder: "{{date}} {{time}} - {{subject}}",
+					}),
+					this.fileRow("noteTemplatePath", {
+						name: "Note template",
+						desc: "Vault file used as a template for meeting note content. Copy the sample template from the plugin's samples/ folder into your vault and pick it here.",
+					}),
+					this.textRow("unscheduledSubject", {
+						name: "Unscheduled note subject",
+						desc: "Subject used for ad-hoc meeting notes not tied to a calendar event",
+						placeholder: "Unscheduled Meeting",
+					}),
+					this.folderRow("transcriptFolderPath", {
+						name: "Transcripts folder",
+						desc: "Vault folder where transcript files are created when linking recordings",
+						placeholder: "Transcripts",
+					}),
+					this.pathRow("replacementFilePath", {
+						name: "Word replacement file",
+						desc: "Vault path to a word replacement file applied to transcripts after speaker tagging (one per line: search,replace)",
+						placeholder: "Prompts/Word Replacements.md",
+					}, (setting) => { setting.addButton(button => button
+						.setButtonText("Open")
+						.onClick(async () => {
+							const filePath = this.plugin.settings.replacementFilePath;
+							if (!filePath) {
+								return;
+							}
+							if (!this.app.vault.getAbstractFileByPath(filePath)) {
+								await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
+							}
+							void this.app.workspace.openLinkText(filePath, "", false);
+						})); }),
+				],
+			},
+			{
+				type: "group",
+				heading: "People",
+				cls: "whisper-cal-settings",
+				items: [
+					this.folderRow("peopleFolderPath", {
+						name: "People folder",
+						desc: "Vault folder containing people notes. Matched attendees render as [[wiki links]] in meeting notes.",
+						placeholder: "People",
+					}),
+					this.toggleRow("autoCreatePeopleNotes", {
+						name: "Auto-create people notes",
+						desc: "Automatically create people notes for meeting organizers without one (requires a people template). Newly-tagged speakers always get a note so voiceprints stay aligned.",
+					}),
+					this.fileRow("peopleTemplatePath", {
+						name: "People template",
+						desc: "Vault file used as a template for auto-created people notes. Available: {{full_name}}, {{nickname}}, {{email}}, {{organization}}",
+					}),
+				],
+			},
+		];
+	}
+
+	/** Recording page — capture source and its source-specific knobs. */
+	private recordingPage(): SettingDefinitionItem<SettingKey>[] {
+		const isMacWhisper = () => this.plugin.settings.recordingSource === "macwhisper";
+		const isApi = () => !isMacWhisper();
+		const sources: Record<string, string> = {};
+		if (Platform.isMacOS) sources["macwhisper"] = "MacWhisper";
+		sources["api"] = "Recording API";
+		return [
+			{
+				type: "group",
+				cls: "whisper-cal-settings",
+				items: [{
+					name: "Source",
+					desc: "Choose how meeting recordings are captured",
+					aliases: ["Recording source"],
+					control: {type: "dropdown", key: "recordingSource", options: sources},
+				}],
+			},
+			{
+				type: "group",
+				heading: "MacWhisper",
+				cls: "whisper-cal-settings",
+				visible: isMacWhisper,
+				items: [
+					{name: "Database path", desc: MACWHISPER_DB_PATH, visible: isMacWhisper},
+					this.intRow("recordingWindowMinutes", {
+						name: "Recording match window (minutes)",
+						desc: "How close a recording start must be to the scheduled meeting time to be matched automatically (manual linking offers the whole day)",
+						placeholder: "10",
+						visible: isMacWhisper,
+					}),
+					this.intRow("unlinkedLookbackDays", {
+						name: "Unlinked lookback (days)",
+						desc: "How far back to check for unlinked recordings",
+						placeholder: "30",
+						visible: isMacWhisper,
+					}),
+				],
+			},
+			{
+				type: "group",
+				heading: "Recording API",
+				cls: "whisper-cal-settings",
+				visible: isApi,
+				items: [
+					this.textRow("recordingApiBaseUrl", {
+						name: "Base URL",
+						desc: "REST API base URL (e.g. http://127.0.0.1:8080/api/v1). Expects /health, /start, /stop, /status endpoints.",
+						placeholder: "http://127.0.0.1:8080/api/v1",
+						normalize: v => v.replace(/\/+$/, ""),
+						visible: isApi,
+					}),
+					{
+						name: "Test API",
+						desc: "Check that the recording app is reachable by querying its status endpoint",
+						visible: isApi,
+						render: (setting) => {
+							setting.addButton(button => button
+								.setButtonText("Test API")
+								.onClick(async () => {
+									const baseUrl = resolveRecordingApiBaseUrl(this.plugin.settings.recordingApiBaseUrl);
+									if (!baseUrl) {
+										new Notice("Recording API is not configured. Set a base URL or start the recording app.");
+										return;
+									}
+									button.setDisabled(true);
+									const original = button.buttonEl.textContent;
+									button.setButtonText("Testing…");
+									try {
+										const status = await recordingStatus(baseUrl);
+										new Notice(`Recording app is available (state: ${status.state}).`);
+									} catch (e) {
+										const msg = e instanceof Error ? e.message : String(e);
+										new Notice(`Recording API test failed: ${msg}`);
+									} finally {
+										button.setDisabled(false);
+										button.setButtonText(original ?? "Test API");
+									}
+								}));
+						},
+					},
+					this.toggleRow("automateMeetingRecording", {
+						name: "Automate meeting recording",
+						desc: "Clicking a meeting's join link on its calendar card starts recording automatically, and stopping that recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the call.",
+						visible: isApi,
+					}),
+					this.toggleRow("pullMeetingChat", {
+						name: "Pull Teams meeting chat",
+						desc: "When a recording finishes, add the meeting's Teams chat to the meeting note under a \"Meeting Chat\" heading. Microsoft calendars only, and your sign-in must include the Chat.Read permission — sign out and back in after granting it. Re-pull any time from a card's ⋯ menu.",
+						visible: isApi,
+					}),
+				],
+			},
+		];
+	}
+
+	/** Speakers page — voiceprint matching, the LLM fallback prompt, and modal knobs. */
+	private speakersPage(): SettingDefinitionItem<SettingKey>[] {
+		// Auto-tag sub-settings are only shown while the feature is on.
+		const autoTagOn = () => this.plugin.settings.voiceprintAutoTagSkipModal;
+		return [
+			{
+				type: "group",
+				heading: "Voiceprints",
+				cls: "whisper-cal-settings",
+				items: [
+					this.folderRow("voiceprintFolderPath", {
+						name: "Speaker voiceprints folder",
+						desc: "Vault folder where per-speaker voice embeddings are stored for acoustic speaker matching. Populated when you apply speaker tags to a transcript that has a voiceprint sidecar (.voiceprints.json) next to it.",
+						placeholder: "Caches/Voiceprints",
+					}),
+					this.ratioRow("voiceprintMatchFloor", {
+						name: "Voiceprint match floor",
+						desc: "Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
+							"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
+							"Default 0.50. Solo-library matches always use at least 0.55.",
+						placeholder: "0.50",
+					}),
+					// Auto-tag (skip the modal) — silently apply tags when every speaker is a
+					// confident voiceprint match. Drift guard: silent auto-tags never enroll or
+					// update a library; that only happens when you confirm in the modal.
+					this.toggleRow("voiceprintAutoTagSkipModal", {
+						name: "Auto-tag when all speakers match",
+						desc: "Skip the speaker-tagging modal and apply tags automatically when every speaker is a " +
+							"confident voiceprint match at or above the floor below. Voiceprint libraries are never " +
+							"updated on a silent auto-tag — only confirming in the modal enrolls or corrects them.",
+					}),
+					this.ratioRow("voiceprintAutoTagFloor", {
+						name: "Auto-tag confidence floor",
+						desc: "Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
+							"Keep it high so unattended tagging stays strict. Default 0.80.",
+						placeholder: "0.80",
+						visible: autoTagOn,
+					}),
+					this.ratioRow("voiceprintAutoTagMinorMaxShare", {
+						name: "Ignore minor speakers",
+						desc: "Diarizers often emit a junk speaker for crosstalk or stray utterances that never " +
+							"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
+							"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
+							"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
+						placeholder: "0.05",
+						visible: autoTagOn,
+					}),
+				],
+			},
+			this.promptGroup(
+				"Transcript post-processing",
+				"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
+				"Prompts/Transcript Post-Processing Prompt.md",
+				"speakerTaggingPromptPath",
+				"speakerTagModel",
+				"speakerTagFlags",
+				[
+					this.textRow("microphoneUser", {
+						name: "Microphone user",
+						desc: "Your full name as it appears in meeting notes — passed to the LLM to identify your voice in transcripts",
+						placeholder: "Full name",
+					}),
+					this.intRow("rosterMaxEnriched", {
+						name: "Roster enrichment cap",
+						desc: "Maximum number of meeting invitees to enrich with People note context for speaker tagging. Larger meetings pass all names but only enrich up to this many.",
+					}),
+					this.intRow("speakerTagClipSeconds", {
+						name: "Speaker clip length (seconds)",
+						desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
+						placeholder: "5",
+						min: 0,
+					}),
+				],
+			),
+		];
+	}
+
+	/** Summary & research page — the two note-producing prompts and their inputs. */
+	private summaryPage(): SettingDefinitionItem<SettingKey>[] {
+		return [
+			this.promptGroup(
+				"Summarizer",
+				"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
+				"Prompts/Meeting Summarizer.md",
+				"summarizerPromptPath",
+				"summarizerModel",
+				"summarizerFlags",
+			),
+			this.promptGroup(
+				"Research",
+				"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
+				"Prompts/Meeting Research.md",
+				"researchPromptPath",
+				"researchModel",
+				"researchFlags",
+				[
+					this.folderRow("seriesNotesFolderPath", {
+						name: "Meeting series notes folder",
+						desc: "Vault folder of per-series notes for recurring meetings. Each note holds bespoke research instructions (under a '## Research instructions' heading) that pre-fill the Research modal for that series. Leave empty to disable.",
+						placeholder: "Meeting Series",
+					}),
+				],
+			),
+		];
+	}
+
+	/** LLM engine page — the shared plumbing every prompt runs on. */
+	private llmPage(): SettingDefinitionItem<SettingKey>[] {
+		return [
+			{
+				type: "group",
+				cls: "whisper-cal-settings",
+				items: [
+					{
+						name: "Enable LLM features",
+						desc: "Allow speaker tagging and summarization via a cloud LLM. Enabling this may send meeting content to external services.",
+						render: (setting) => {
+							setting.addToggle(toggle => {
+								let handling = false;
+								toggle.setValue(this.plugin.settings.llmEnabled);
+								toggle.onChange(async (value) => {
+									if (handling) {
+										// A click while the consent modal is pending already flipped the
+										// DOM — snap it back to the stored setting so they can't desync.
+										// (Guarded so the nested onChange from setValue can't recurse.)
+										if (toggle.getValue() !== this.plugin.settings.llmEnabled) {
+											toggle.setValue(this.plugin.settings.llmEnabled);
+										}
+										return;
+									}
+									handling = true;
+									try {
+										if (value) {
+											toggle.setValue(false);
+											const accepted = await new LlmConsentModal(this.app).prompt();
+											if (accepted) {
+												this.plugin.settings.llmEnabled = true;
+												toggle.setValue(true);
+												await this.plugin.saveSettings();
+											}
+										} else {
+											this.plugin.settings.llmEnabled = false;
+											await this.plugin.saveSettings();
+										}
+									} finally {
+										handling = false;
+									}
+								});
+							});
+						},
+					},
+					// Automatic mode — repurposes the autoSummarizeAfterTagging key (same
+					// key, existing installs keep their value) as the switch for the whole
+					// automatic workflow: background auto-tag + auto-summarize after apply.
+					this.toggleRow("autoSummarizeAfterTagging", {
+						name: "Automatic mode",
+						desc: "Run the LLM workflow automatically: when a transcript is linked to a meeting note, " +
+							"tag speakers in the background and cache the candidates (the card's action button turns into " +
+							"\"Review speakers\" when they're ready — tags are never applied without your confirmation), then " +
+							"start summarization after you apply them. Single-mic recordings are skipped. " +
+							"Off = the card's action button steps through each stage (Tag speakers, Summarize) manually.",
+					}),
+					this.intRow("autoTagLookbackHours", {
+						name: "Auto-tag catch-up window (hours)",
+						desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
+						placeholder: "48",
+						min: 0,
+						visible: () => this.plugin.settings.autoSummarizeAfterTagging,
+					}),
+				],
+			},
+			{
+				// Shared invocation settings that apply to every prompt.
+				type: "group",
+				heading: "LLM engine",
+				cls: "whisper-cal-settings",
+				items: [
+					this.folderRow("llmPromptDir", {
+						name: "Prompt directory",
+						desc: "Vault folder holding your LLM prompt files",
+						placeholder: "Prompts",
+					}),
+					this.textRow("llmCli", {
+						name: "CLI command",
+						desc: "Command used to invoke the LLM (default: claude)",
+						placeholder: "claude",
+						normalize: v => v.trim() || "claude",
+					}),
+					this.textRow("llmExtraFlags", {
+						name: "Additional flags (all prompts)",
+						desc: "Extra CLI flags appended to every LLM command. " +
+							"⚠️ The default --dangerously-skip-permissions is required for " +
+							"non-interactive LLM usage — removing it will break speaker tagging " +
+							"and summarization. Trust boundary: with this flag the CLI can read " +
+							"and write files with no confirmation, and prompts include third-party " +
+							"content (transcribed audio, attendee names, invite subjects) that could " +
+							"contain injection attempts. Only run against meetings and an LLM you trust. " +
+							"Use the per-prompt flags for task-specific options.",
+						placeholder: "--dangerously-skip-permissions",
+					}),
+					this.secretRow("anthropicApiKey", {
+						name: "Anthropic API key",
+						desc: "Used to populate model dropdowns. Not sent to the CLI — the CLI uses its own auth.",
+						placeholder: "sk-ant-...",
+					}),
+					this.intRow("llmTimeoutMinutes", {
+						name: "LLM timeout (minutes)",
+						desc: "Kill the LLM process if it runs longer than this (0 = no timeout). Transcript post-processing reads and rewrites the whole transcript, so give it headroom.",
+						min: 0,
+					}),
+					this.intRow("llmMaxConcurrent", {
+						name: "Max concurrent LLM processes",
+						desc: "Maximum number of LLM processes that can run simultaneously",
+					}),
+				],
+			},
+			{
+				type: "group",
+				heading: "Troubleshooting",
+				cls: "whisper-cal-settings",
+				items: [
+					this.toggleRow("llmDebugMode", {
+						name: "Debug mode",
+						desc: "Open LLM commands in a terminal window instead of running in the background",
+						visible: () => Platform.isMacOS || Platform.isWin,
+					}),
+					this.toggleRow("llmDebugLogging", {
+						name: "Debug logging",
+						desc: "Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (Cmd+Opt+I / Ctrl+Shift+I). Off by default to avoid leaking meeting content.",
+					}),
+				],
+			},
+		];
+	}
+
+	/**
+	 * One prompt group (Prompt path / Model / Additional flags), plus any rows
+	 * that belong with that prompt.
+	 */
+	private promptGroup(
+		name: string,
+		promptDesc: string,
+		placeholder: string,
+		pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
+		modelKey: ModelKey,
+		flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
+		extra: Row[] = [],
+	): SettingDefinitionGroup<SettingKey> {
+		const lower = name.toLowerCase();
+		return {
+			type: "group",
+			heading: name,
+			cls: "whisper-cal-settings",
+			items: [
+				this.pathRow(pathKey, {
+					name: "Prompt",
+					desc: promptDesc,
+					placeholder,
+					aliases: [`${name} prompt`],
+				}),
+				{
+					name: "Model",
+					desc: `Claude model for ${lower}. Set the API key on the LLM engine page to load available models.`,
+					aliases: [`${name} model`],
+					render: (setting) => {
+						const entry = {sel: null as unknown as HTMLSelectElement, key: modelKey};
+						setting.addDropdown(dropdown => {
+							entry.sel = dropdown.selectEl;
+							this.fillModelSelect(entry.sel, modelKey);
+							dropdown.onChange(async (value) => {
+								this.plugin.settings[modelKey] = value;
+								await this.plugin.saveSettings();
+							});
+						});
+						this.modelSelects.push(entry);
+						void this.loadModels();
+						return () => {
+							this.modelSelects = this.modelSelects.filter(e => e !== entry);
+						};
+					},
+				},
+				this.textRow(flagsKey, {
+					name: "Additional flags",
+					desc: `Extra CLI flags for ${lower} only, appended after the global flags on the LLM engine page (e.g. --effort medium). Leave empty to use only the global flags.`,
+					placeholder: "--effort medium",
+					aliases: [`${name} flags`],
+				}),
+				...extra,
+			],
+		};
+	}
+
+	/** (Re)build one model dropdown from the cached model list. */
+	private fillModelSelect(sel: HTMLSelectElement, key: ModelKey): void {
+		const current = this.plugin.settings[key];
+		sel.replaceChildren();
+		sel.add(new Option("Default", ""));
+		for (const m of this.models) {
+			sel.add(new Option(m.display_name, m.id));
 		}
-		case "signing-in": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label",
-				text: state.message ?? "Signing in\u2026",
-			});
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-hint",
-				text: "Waiting for authorization\u2026",
-			});
-			const cancelBtn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn whisper-cal-btn-secondary",
-				text: "Cancel",
-			});
-			cancelBtn.addEventListener("click", () => {
-				this.plugin.auth.cancelSignIn();
-			});
-			break;
+		// The configured model must always be selectable, even when the fetch
+		// failed or didn't list it (deprecated id, different key scope).
+		if (current && !this.models.some(m => m.id === current)) {
+			sel.add(new Option(current, current));
 		}
-		case "signed-in": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label whisper-cal-auth-success",
-				text: "Signed in",
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn whisper-cal-btn-secondary",
-				text: "Sign out",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.signOut();
-			});
-			break;
-		}
-		case "error": {
-			statusContainer.createDiv({
-				cls: "whisper-cal-auth-label whisper-cal-auth-error",
-				text: state.message,
-			});
-			const btn = statusContainer.createEl("button", {
-				cls: "whisper-cal-btn",
-				text: "Try again",
-			});
-			btn.addEventListener("click", () => {
-				void this.plugin.auth.startSignIn();
-			});
-			break;
-		}
+		sel.value = current;
+	}
+
+	/**
+	 * Fetch the model list once per API key and populate the dropdowns on
+	 * screen. Failure of any kind (no key, bad key, offline) keeps the dropdowns
+	 * usable: they offer "Default" and the configured model.
+	 */
+	private async loadModels(): Promise<void> {
+		const apiKey = resolveAnthropicKey(this.plugin.settings.anthropicApiKey);
+		if (apiKey === this.modelsFetchedFor) return;
+		this.modelsFetchedFor = apiKey;
+		const seq = ++this.modelRefreshSeq;
+		const result = apiKey ? await listAnthropicModels(apiKey) : null;
+		// A newer fetch started while this one was in flight — let it win.
+		if (seq !== this.modelRefreshSeq) return;
+		this.models = result?.ok ? result.models : [];
+		// Let a failed fetch be retried the next time a dropdown renders.
+		if (apiKey && !result?.ok) this.modelsFetchedFor = null;
+		for (const {sel, key} of this.modelSelects) {
+			this.fillModelSelect(sel, key);
 		}
 	}
 
-	private renderImportantOrganizers(containerEl: HTMLElement): void {
-		const setting = new Setting(containerEl)
-			.setName("Important organizers")
-			.setDesc("Meetings organized by these people show an alert icon in the gutter");
-
+	private renderImportantOrganizers(setting: Setting): void {
 		const settingEl = setting.settingEl;
 		settingEl.addClass("whisper-cal-important-organizers-setting");
 

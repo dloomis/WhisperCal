@@ -161,7 +161,7 @@ MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and 
 
 ## Prerequisites
 
-- **Obsidian** 1.6.0 or later (desktop only — macOS or Windows)
+- **Obsidian** 1.13.0 or later (desktop only — macOS or Windows)
 - A **Microsoft 365** account with calendar access, or a **Google** account with Google Calendar
 - For Microsoft: an **Azure AD app registration** (see [Microsoft 365 Setup](#microsoft-365-setup))
 - For Google: a **Google Cloud Console OAuth credential** (see [Google Calendar Setup](#google-calendar-setup))
@@ -630,7 +630,7 @@ The log is verbatim and LLM-free: each message shows its author, local time, and
 Reading chat needs the delegated **`Chat.Read`** Graph scope, which WhisperCal requests as part of its Microsoft sign-in. Two one-time steps:
 
 1. In the Azure portal, open your app registration → **API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated permissions** → **Chat.Read**, then grant consent.
-2. In WhisperCal's settings (**Calendar** tab), **sign out and sign back in** to Microsoft. WhisperCal sends its full scope set on every token refresh, so an existing session keeps refreshing against the old consent until it is re-established. (If your tenant grants *admin* consent for `Chat.Read`, the next refresh picks it up silently and you can skip this step — but signing out and back in is the reliable path either way.)
+2. In WhisperCal's settings (**Calendar** page), **sign out and sign back in** to Microsoft. WhisperCal sends its full scope set on every token refresh, so an existing session keeps refreshing against the old consent until it is re-established. (If your tenant grants *admin* consent for `Chat.Read`, the next refresh picks it up silently and you can skip this step — but signing out and back in is the reliable path either way.)
 
 Until both are done, the automatic pull stays quiet and the card shows *"Meeting chat unavailable — check the Chat.Read permission"* after a recording; the manual pull explains the same thing in a notice.
 
@@ -1149,7 +1149,7 @@ All commands are available from the command palette (`Cmd+P` on macOS, `Ctrl+P` 
 
 ## Settings Reference
 
-Settings are organized into six tabs, grouped by pipeline stage: **Calendar · LLM engine · Notes & people · Recording · Speakers · Summary & research**.
+Settings are organized into six pages, grouped by pipeline stage: **Calendar · LLM engine · Notes & people · Recording · Speakers · Summary & research**. Open a page from the WhisperCal settings tab, or jump straight to any setting with Obsidian's settings search.
 
 ### Calendar
 
@@ -1283,7 +1283,7 @@ Both fields must be filled in before you can sign in. See [Google Calendar Setup
 The sign-in flow is valid for 5 minutes. If it times out before you complete sign-in in the browser, click **Sign in** again.
 
 ### Calendar shows "Offline" with no events
-- Check that you're signed in (**Settings > WhisperCal > Calendar** should show "Signed in" under **Provider**).
+- Check that you're signed in (**Settings > WhisperCal > Calendar** should show "Signed in" under **Connection**).
 - Try clicking the refresh button in the calendar header.
 - Verify your Azure AD app has the **Calendars.Read** permission.
 
