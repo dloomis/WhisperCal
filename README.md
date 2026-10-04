@@ -36,6 +36,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 - [Prerequisites](#prerequisites)
   - [Obsidian plugins](#obsidian-plugins)
 - [Installation](#installation)
+  - [Upgrading from 0.8.x](#upgrading-from-08x-whispercore-no-longer-required)
 - [Setup](#setup)
   - [Choosing a Calendar Provider](#choosing-a-calendar-provider)
   - [Microsoft 365 Setup](#microsoft-365-setup)
@@ -48,7 +49,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Meeting Cards](#meeting-cards)
   - [The Card Actions Menu](#the-card-actions-menu)
   - [Exporting a Meeting Bundle](#exporting-a-meeting-bundle)
-  - [Hover-Expanding Cards](#hover-expanding-cards)
+  - [Importing a Meeting Bundle](#importing-a-meeting-bundle)
   - [All-Day Events](#all-day-events)
   - [Unscheduled Meetings](#unscheduled-meetings)
   - [Merging Meetings](#merging-meetings)
@@ -57,11 +58,12 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Conflict Detection](#conflict-detection)
   - [Gap Markers](#gap-markers)
   - [Gutter Icons](#gutter-icons)
-  - [Gutter Background Colors](#gutter-background-colors)
+  - [Gutter Colors](#gutter-colors)
+  - [The Kanban Review Mark](#the-kanban-review-mark)
+  - [The Activity Badge](#the-activity-badge)
   - [Category Bar](#category-bar)
   - [The Status Rail](#the-status-rail)
   - [Non-Accepted Meeting Indicator](#non-accepted-meeting-indicator)
-  - [Incomplete Workflow Highlighting](#incomplete-workflow-highlighting)
   - [Note-Open Highlighting](#note-open-highlighting)
   - [Unlinked Recordings](#unlinked-recordings)
 - [The Five-Stage Pipeline](#the-five-stage-pipeline)
@@ -85,13 +87,18 @@ WhisperCal is built and used daily by a single developer, so some integrations a
     - [Automate Meeting Recording](#automate-meeting-recording)
   - [Re-Recording](#re-recording)
 - [People Matching](#people-matching)
+  - [Matching Fields](#matching-fields)
+  - [Personnel Type Icons](#personnel-type-icons)
   - [Auto-Created People Notes](#auto-created-people-notes)
+  - [Example People Note](#example-people-note)
 - [LLM Integration](#llm-integration)
   - [Included Prompts](#included-prompts)
   - [Speaker Tagging](#speaker-tagging)
     - [Per-Speaker Transcript Excerpts](#per-speaker-transcript-excerpts)
+    - [Click-to-Play Audio](#click-to-play-audio)
     - [Required LLM Output Format](#required-llm-output-format)
     - [What Happens When You Apply](#what-happens-when-you-apply)
+    - [Reviewing or Editing Tags Later](#reviewing-or-editing-tags-later)
   - [Word Replacements](#word-replacements)
   - [Summarization](#summarization)
   - [Meeting Research](#meeting-research)
@@ -99,7 +106,6 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Per-Prompt Model Selection](#per-prompt-model-selection)
   - [How Invocation Works](#how-invocation-works)
   - [Concurrency and Timeouts](#concurrency-and-timeouts)
-  - [LLM Settings](#llm-settings)
 - [Calendar Caching](#calendar-caching)
 - [Commands](#commands)
 - [Settings Reference](#settings-reference)
@@ -143,9 +149,13 @@ WhisperCal is built and used daily by a single developer, so some integrations a
 | LLM meeting research | Yes | Yes |
 | MacWhisper recording | Yes | No |
 | Recording API | Yes | Yes |
-| LLM debug mode (Terminal) | Yes | No |
+| LLM debug mode (terminal window) | Yes | Yes |
+| Acoustic voiceprints | Yes (needs Tome sidecars) | Yes (needs Tome sidecars) |
+| Automate meeting recording | Yes | Yes |
+| Teams meeting chat | Microsoft 365 only | Microsoft 365 only |
+| Meeting bundle export / import | Yes | Yes |
 
-MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and the plugin defaults to the Recording API for transcript capture. LLM debug mode (which opens an interactive Terminal.app window) is also macOS-only; on Windows, LLM commands always run in the background.
+MacWhisper is a macOS-only app. On Windows, the MacWhisper option is hidden and the plugin defaults to the Recording API for transcript capture. LLM debug mode opens the LLM command in a visible terminal window on both platforms (Terminal.app on macOS, a console window on Windows).
 
 ---
 
@@ -169,7 +179,7 @@ WhisperCal uses only Obsidian's native APIs, so **no community plugin is require
 | JSON Viewer | Pretty-prints `.json` files opened in the vault | Optional — only for eyeballing WhisperCal's data files: voiceprint libraries in `Caches/Voiceprints/*.json` and Tome's `*.voiceprints.json` sidecars |
 | [Dataview](https://github.com/blacksmithgu/obsidian-dataview) | Renders a "related meetings" query inside People notes | Optional — needed **only if** your People-note template includes such a query; WhisperCal emits no Dataview itself |
 
-None of these touch the core pipeline. MacWhisper and the Recording API app (Tome) are *external macOS apps*, not Obsidian plugins — see [Recording Sources](#recording-sources).
+None of these touch the core pipeline. MacWhisper (macOS only) and the Recording API app (Tome) are *external apps*, not Obsidian plugins — see [Recording Sources](#recording-sources).
 
 ---
 
@@ -181,14 +191,14 @@ None of these touch the core pipeline. MacWhisper and the Recording API app (Tom
 
 1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin from Community plugins.
 2. Open **Settings > BRAT > Add Beta plugin**.
-3. Enter `dloomis/whisper-cal` and click **Add Plugin**.
+3. Enter `dloomis/WhisperCal` and click **Add Plugin**.
 4. Enable **WhisperCal** in **Settings > Community plugins**.
 
 BRAT automatically downloads new releases and keeps the plugin up to date.
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/dloomis/whisper-cal/releases/latest).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/dloomis/WhisperCal/releases/latest).
 2. Create a folder at `<your-vault>/.obsidian/plugins/whisper-cal/`.
 3. Copy the three files into that folder.
 4. Open **Settings > Community plugins** and enable **WhisperCal**.
@@ -197,7 +207,7 @@ BRAT automatically downloads new releases and keeps the plugin up to date.
 
 WhisperCal 0.8.x kept your calendar sign-in and LLM engine settings in a separate **WhisperCore** plugin. WhisperCal now holds them itself again, so new installs need only this one plugin.
 
-If you are upgrading, **update WhisperCal before you uninstall WhisperCore**. On its first load, the new version copies your provider credentials, sign-in tokens, and LLM engine settings out of WhisperCore's data file (`.obsidian/plugins/whispercore/data.json`), so there is nothing to re-enter and no need to sign in again. It never changes WhisperCore's file. If you remove WhisperCore first, that file is gone and you will need to re-enter your provider credentials and sign in again.
+If you are upgrading, **update WhisperCal before you uninstall WhisperCore**. On its first load, the new version copies your provider credentials, sign-in tokens, and LLM engine settings out of WhisperCore's data file (`.obsidian/plugins/whispercore/data.json`), so there is nothing to re-enter and no need to sign in again. It never changes WhisperCore's file. If that file can't be read on the first try (for example it is still syncing), WhisperCal shows a notice and retries the next time Obsidian starts; anything you set up in WhisperCal in the meantime is kept rather than overwritten. If you remove WhisperCore first, that file is gone and you will need to re-enter your provider credentials and sign in again.
 
 Once WhisperCal shows your calendar, you can uninstall WhisperCore — unless you also use WhisperOrg, which still needs it for now.
 
@@ -225,7 +235,7 @@ WhisperCal connects to your calendar through the Microsoft Graph API. You need t
 5. Click **Register**.
 6. On the app's **Overview** page, copy the **Application (client) ID**. The **Directory (tenant) ID** is optional — leave it empty to auto-detect from your account at sign-in.
 7. Go to **API permissions** > **Add a permission** > **Microsoft Graph** > **Delegated permissions**.
-8. Add **Calendars.Read** and **offline_access**.
+8. Add **Calendars.Read**, **People.Read**, **User.ReadBasic.All**, and **offline_access**. WhisperCal requests all of them at sign-in: the calendar scope reads your events, and the two people scopes back the people search (for example the **Important organizers** autocomplete). If you want [Teams Meeting Chat](#teams-meeting-chat), add **Chat.Read** as well.
 9. Click **Grant admin consent** (if required by your organization).
 
 Then in WhisperCal settings:
@@ -274,8 +284,6 @@ If your organization uses a government or sovereign cloud, select the appropriat
 | **USGovDoD** | `login.microsoftonline.us` | `dod-graph.microsoft.us` | US Department of Defense |
 | **China** | `login.chinacloudapi.cn` | `microsoftgraph.chinacloudapi.cn` | 21Vianet (China) |
 
-You can also override the **Login URL** if your environment uses a non-standard endpoint.
-
 ---
 
 ## The Calendar View
@@ -285,9 +293,11 @@ Open the calendar sidebar by clicking the **calendar ribbon icon** or running th
 ### Navigation
 
 - **Left / right chevron** — Move one day backward or forward.
+- **Date label** — Click the date between the chevrons to open a date picker and jump straight to any day.
 - **Today button** — Jump to the current date (hidden when already viewing today).
 - **Refresh button** — Manually refresh calendar data from your calendar provider.
 - **Settings gear** — Opens WhisperCal settings directly from the calendar header.
+- **⋯ menu** — Calendar-level actions, currently [Import meeting bundle…](#importing-a-meeting-bundle).
 - **Sign in** — When signed out, an inline banner appears at the top of the calendar with a sign-in button, so you don't need to visit settings to authenticate.
 
 The calendar auto-refreshes on a configurable interval (default: every 5 minutes). At midnight, the view automatically advances to the new day.
@@ -304,19 +314,19 @@ A small dot below the header shows connection status:
 
 Each calendar event is displayed as a two-column card:
 
-- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)), and while a job runs, a compact [activity badge](#the-activity-badge) shows what's happening and on which model. A category color bar runs along the left edge. Shows a warning-colored background when the workflow is incomplete, and a dashed bar for meetings you haven't accepted.
+- **Time gutter** (left) — Start/end times, duration, "All day", or "Ad hoc" for unscheduled meetings. Below the time, an inline row of icons provides at-a-glance context (see [Gutter Icons](#gutter-icons)). Beneath that sit the card's two fixed controls: the **capture button** (Record / Re-record / Stop — Recording API source only) and the **⋯ menu** button. While a job runs, a compact [activity badge](#the-activity-badge) shows what's happening and on which model. A category color bar runs along the left edge and the gutter takes a wash of the same color (see [Gutter Colors](#gutter-colors)); meetings you haven't accepted get a dashed bar.
 - **Content** (right):
   - **Subject** — The meeting title. Clicking it **opens the meeting note** (creating it first if it doesn't exist yet; unscheduled cards prompt for a name). A dotted underline appears on hover.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
   - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
-  - **Status rail** — Four slim segments (Note · Transcript · Speakers · Summary) tracking pipeline progress. Each is clickable and opens its stage's artifact (see [The Status Rail](#the-status-rail)).
-  - **Smart action button + ⋯ menu** — One button showing the pipeline's next verb (Record / Stop / Tag speakers / Review speakers / Summarize), plus a **⋯ mini button** opening the menu of every other action, Research included (see [The Card Actions Menu](#the-card-actions-menu)). When the pipeline is complete the button disappears.
+  - **Status rail** — Four labeled segments (Note · Transcript · Speakers · Summary) tracking pipeline progress. Each is clickable and acts on its stage (see [The Status Rail](#the-status-rail)).
+  - **Smart action button** — One button showing the pipeline's next step after capture (Link recording / Review speakers / Tag speakers… / Summarize meeting…). There is no button while a job is running or once the pipeline is complete.
 
-Cards rest compact — the action row is [revealed by hovering the card](#hover-expanding-cards) (the status rail and the gutter activity badge stay visible). All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
+Cards are always shown in full — the rail labels and the action row don't depend on hovering. All-day events (if enabled in settings) appear at the top, followed by timed events sorted by start time.
 
 ### The Card Actions Menu
 
-The **⋯** mini button — or right-clicking anywhere on the card (except links) — opens a menu of the card's secondary actions. The menu is always available, and its items adapt to the pipeline state:
+The **⋯** button in the card's gutter — or right-clicking anywhere on the card (except links) — opens a menu of the card's secondary actions. The menu is always available, and its items adapt to the pipeline state:
 
 | Item | Shown when | What it does |
 |------|-----------|--------------|
@@ -327,10 +337,14 @@ The **⋯** mini button — or right-clicking anywhere on the card (except links
 | **Edit speaker tags** | Speaker tags applied | Re-opens the confirmation modal pre-filled with the current assignments — no LLM re-run |
 | **Summarize meeting…** / **Regenerate summary…** | Speakers tagged / summary complete | Opens the instructions dialog, then runs summarization |
 | **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
-| **Re-record…** | Transcript linked, Recording API mode | Confirms, then clears the transcript and starts a fresh recording |
 | **Split transcript…** | Transcript linked, meeting not yet summarized, nothing mid-run | Opens the transcript in split mode to divide it into two meetings (see [Splitting a Meeting](#splitting-a-meeting)) |
 | **Pull Teams meeting chat** | Online meeting, note exists, Microsoft calendar | Re-reads the meeting's Teams chat into the note (see [Teams Meeting Chat](#teams-meeting-chat)) |
+| **Skip kanban processing** / **Unmark kanban reviewed** | A meeting note exists | Sets or clears the note's `kanban-reviewed` mark (see [The Kanban Review Mark](#the-kanban-review-mark)) |
 | **Export meeting bundle…** | A meeting note exists | Bundles the meeting's artifacts into a `.zip` outside the vault (see below) |
+| **Rename note…** | A meeting note exists | Renames the note, optionally renaming its transcript, audio, and voiceprint sidecar with it; links are rewritten |
+| **Delete note…** | A meeting note exists, no live recording | Confirms, then moves the note (and, optionally, its related files) to the trash |
+
+Recording has no menu item: the gutter's capture button covers Record, Stop, and Re-record at every stage.
 
 The everyday next step stays one click on the smart button; the menu keeps everything else reachable without growing the action row.
 
@@ -355,12 +369,6 @@ The files cross over **verbatim** — a bundle is written by another WhisperCal 
 - The one field rewritten is `calendar_provider`, which the calendar filters cards on — without it a bundle from a Google vault would import invisibly into a Microsoft 365 one.
 
 Nothing already in your vault is overwritten. If a name is taken — you already imported this bundle, say — the note, transcript, and audio all shift to a free suffix together (`… 2`), and the links between them are rewired to match.
-
-### Hover-Expanding Cards
-
-Cards rest in a compact state showing the subject, organizer, metadata, and the slim status rail. **Hovering a card expands it**: the rail segments grow into labeled bars and the action row (smart button + ⋯ mini) slides open. Move the mouse away and the card settles back down.
-
-A card stays expanded without hover **only while a live recording is running**, so the Stop button is never hidden. All other activity — LLM jobs, transcription progress, candidates awaiting review — announces itself through the [activity badge](#the-activity-badge) and the pulsing rail segment instead of holding the card open.
 
 ### All-Day Events
 
@@ -425,66 +433,76 @@ Between non-overlapping event groups, a gap indicator shows how much free time y
 
 ### Gutter Icons
 
-Below the time and duration, the gutter displays up to three inline icons (in this order):
+Below the time and duration, the gutter displays a row of inline icons:
 
 | Icon | Meaning |
 |------|---------|
 | **☆ Star** | You are the organizer of this meeting. Determined by comparing the event's organizer email against your calendar account email. |
 | **⛔ Octagon-alert** | The organizer is in your **important organizers** list (configured in settings with people autocomplete from your calendar provider). |
 | **⊞ Grid-2x2** | The meeting has a **category** assigned (Outlook categories for Microsoft, color labels for Google). The icon color matches the category color. Hover for the category name tooltip. |
+| **Kanban board** | The meeting note carries a `kanban-reviewed` mark (see [The Kanban Review Mark](#the-kanban-review-mark)). |
 
-### Gutter Background Colors
+### Gutter Colors
 
-The gutter background tint reflects the pipeline workflow state:
+The gutter takes a light wash of the meeting's **category color** (Outlook categories for Microsoft, color labels for Google) — the same color as the category bar on the card's left edge — and its divider a stronger dose of the same hue. Uncategorized meetings keep a muted default.
 
-| Color | Meaning |
-|-------|---------|
-| **No tint** (default) | No meeting note created yet, or pipeline not started. |
-| **Warning tint** (amber/yellow, `--text-warning`) | Meeting note exists but the pipeline is incomplete — recording, speaker tagging, or summarization still needed. |
-| **Accent tint** (your theme accent color, `--interactive-accent`) | All four pipeline stages are complete. |
+The gutter does not show pipeline progress; the [status rail](#the-status-rail) reports that, segment by segment.
+
+### The Kanban Review Mark
+
+A meeting note can carry a `kanban-reviewed` frontmatter key, meaning its action items have been triaged onto a kanban board. WhisperCal does not do that triage itself — the mark is written by separate vault automation — but it shows and toggles the mark:
+
+- A **kanban icon** appears in the gutter's icon row once the mark is present.
+- **Skip kanban processing** in the ⋯ menu stamps the mark by hand (with a "manually skipped" note), taking the meeting out of that automation's queue.
+- **Unmark kanban reviewed** clears the mark, whoever wrote it.
+
+If you don't run such automation you can ignore this entirely.
 
 ### The Activity Badge
 
-While anything is happening on a meeting — an LLM job, voiceprint matching, transcript linking — a compact **activity badge** appears in the time gutter, level with the status rail:
+While anything is happening on a meeting — an LLM job, voiceprint matching, transcript linking — a compact **activity badge** appears in the time gutter, level with the action row:
 
 - **Line 1** — a one-word verb for the work in flight: *Processing* (transcript post-processing + speaker tagging), *Summarizing*, *Researching*, *Matching* (voiceprint), *Transcribing*, *Linking*, *Waiting*, *Enriching*.
 - **Line 2** (LLM jobs only) — the model running the job, e.g. *Opus 4.8* or *Sonnet 5*.
 
-When the work finishes, the badge briefly shows the outcome — *Linked*, *Tagged*, *Summarized*, *Researched*, or a warning like *Failed* / *Not ready* — then clears. Hovering the badge shows the full status message as a tooltip. The badge replaces the older verbose status line under the rail, and the collapsed card grows just enough to fit it while it's visible.
+When the work finishes, the badge briefly shows the outcome — *Linked*, *Tagged*, *Summarized*, *Researched*, or a warning like *Failed* / *Not ready* — then clears. Hovering the badge shows the full status message as a tooltip. The badge replaces the older verbose status line under the rail.
 
 ### Category Bar
 
-The vertical bar on the left edge of the card indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default. When the gutter has a workflow tint, the bar darkens to a deeper shade of the same workflow color, keeping it visually distinct from the background.
+The vertical bar on the left edge of the card indicates the event category color (Outlook categories for Microsoft, color labels for Google). When no category is assigned, it uses a subtle default.
 
 ### The Status Rail
 
-Under the meta rows, a **four-segment rail** tracks pipeline progress: **Note · Transcript · Speakers · Summary**. Each segment is a slim clickable bar that opens its stage's artifact (note / transcript / transcript / note). Hovering the card expands the segments into labeled bars — a bigger click target, with each stage's name shown right on the bar. Segment colors:
+Under the meta rows, a **four-segment rail** tracks pipeline progress: **Note · Transcript · Speakers · Summary**. Each segment is a labeled, clickable bar:
+
+- **Note** — opens the meeting note, creating it first if it doesn't exist.
+- **Transcript** — opens the transcript.
+- **Speakers** — opens the speaker confirmation modal when candidates await review or tags are already applied (the same as **Edit speaker tags**); otherwise opens the transcript.
+- **Summary** — opens the meeting note.
+
+Segment colors:
 
 | State | Appearance |
 |-------|------------|
 | **Pending** | Neutral border color; disabled if its artifact doesn't exist yet. |
 | **Done** | Green fill (`--text-success`). |
-| **Running** | Accent fill (`--interactive-accent`), pulsing (a background LLM job for that stage). |
+| **Running** | Accent fill (`--interactive-accent`), pulsing (a background LLM job for that stage). A running research job pulses the Note segment. |
 | **Needs you** | Warning fill (`--text-warning`) — the pipeline is mid-flight and waiting on you: Speakers once a transcript is in (candidates to review or manual tagging), Summary once speakers are tagged. |
 | **Recording** | Red fill (`--text-error`), pulsing — Transcript, while a live recording is running. |
 
-All segment colors are Obsidian semantic theme variables, so they follow your theme and light/dark mode.
+All segment colors are Obsidian semantic theme variables, so they follow your theme and light/dark mode. A stage that has just completed plays a brief fill animation, and finishing the whole pipeline plays one across the full rail.
 
-The slim rail is always visible, even on cards at rest, so a busy day still shows every meeting's progress at a glance. [Hovering the card](#hover-expanding-cards) grows the segments into labeled bars.
+Below the rail sits the **smart action button** — the pipeline's next step after capture, fully labeled: **Link recording** (MacWhisper source), **Review speakers · N** (accent-tinted, with a count of the speakers awaiting confirmation), **Tag speakers…**, or **Summarize meeting…**. While an LLM job runs there is no button — the activity badge and the pulsing segment say what's happening — and when the pipeline is complete there is none either.
 
-Below the rail sits the **smart action button** — always the pipeline's next verb (Record, Stop, Tag speakers, Review speakers, Summarize), fully labeled. A running job disables it with a pulse; the Stop button carries a red tint and a live timer; Review speakers is accent-tinted with a count of the speakers awaiting confirmation. When the pipeline is complete there is no button — only the ⋯ mini remains.
+Recording is deliberately separate: the **capture button** in the gutter (Recording API source) reads Record, then turns into a red Stop button with a live timer beneath it, and reads Re-record once a transcript is linked.
 
 ### Non-Accepted Meeting Indicator
 
 Meetings you haven't accepted (tentative, not responded, or declined) show a **dashed category bar** on the time gutter, alternating between the category color and the primary background color, making them visually distinct from accepted meetings.
 
-### Incomplete Workflow Highlighting
-
-Cards that have a meeting note but haven't completed the full pipeline (through summarization) show a **warning-tinted gutter** with a darkened category bar. This provides a visual cue that there is still work to do — whether that's linking a recording, tagging speakers, or running summarization. The tint disappears once the Summary stage is complete, replaced by the accent highlight.
-
 ### Note-Open Highlighting
 
-When you open a meeting note in any editor tab, the corresponding card in the calendar sidebar is highlighted and scrolled into view. If the note belongs to a different day, the calendar automatically navigates to that day.
+When you open a meeting note in any editor tab, the corresponding card in the calendar sidebar is highlighted with a light wash of your theme's accent color and scrolled into view. If the note belongs to a different day, the calendar automatically navigates to that day.
 
 The same highlight applies to transcripts: opening a transcript file highlights its meeting card, and opening an unlinked transcript highlights its card in the [Unlinked Recordings](#unlinked-recordings) section.
 
@@ -510,7 +528,7 @@ The section is collapsed by default and only appears when the count is greater t
 
 ## The Five-Stage Pipeline
 
-Each meeting card tracks your progress through the meeting workflow with three separated controls: the **title** opens the note, the **[status rail](#the-status-rail)** shows each stage's state, and one **smart action button** offers the pipeline's next step (with the rest of the actions in the [⋯ menu](#the-card-actions-menu)). The rail fills green as stages complete and greys out stages whose prerequisites aren't met.
+Each meeting card tracks your progress through the meeting workflow with three separated controls: the **title** opens the note, the **[status rail](#the-status-rail)** shows each stage's state, and one **smart action button** offers the pipeline's next step (with the rest of the actions in the [⋯ menu](#the-card-actions-menu)). Recording has its own capture button in the gutter. The rail fills green as stages complete and greys out stages whose prerequisites aren't met.
 
 ```
 Note  -->  Record/Transcript  -->  Speakers  -->  Summary
@@ -532,17 +550,17 @@ Once the note exists, clicking the title opens it.
 
 ### Stage 2 — Record / Transcript
 
-The smart action button adapts based on your configured [recording source](#recording-sources):
+How you capture depends on your configured [recording source](#recording-sources):
 
-**MacWhisper mode** — The button is labeled "Link recording". Click it to link an existing MacWhisper recording:
+**MacWhisper mode** — The smart action button is labeled "Link recording". Click it to link an existing MacWhisper recording:
 - A picker modal shows MacWhisper recordings that started near the meeting time.
 - Select a recording, and WhisperCal writes the session ID to frontmatter, sets the recording title in MacWhisper, waits for transcription, creates a transcript file, and links everything together.
 
-**Recording API mode** — The button is labeled "Record". Click it to start a live recording:
-- The recording starts via the configured API. The button turns into a red **Stop · MM:SS** button with a live elapsed timer, and the Transcript rail segment pulses red.
+**Recording API mode** — The capture button in the card's gutter (a microphone icon) starts a live recording:
+- The recording starts via the configured API. The button turns into a red **Stop** button with a live elapsed timer beneath it, and the Transcript rail segment pulses red.
 - Click Stop to end the recording. WhisperCal polls for transcription completion, then links the transcript file to the meeting note. (The button returns to **Record** immediately — recording again during transcription is allowed.)
 
-Once the transcript exists, open it from the Transcript rail segment (or **Open transcript** in the ⋯ menu). To capture a fresh take, use **Re-record…** in the ⋯ menu.
+Once the transcript exists, open it from the Transcript rail segment (or **Open transcript** in the ⋯ menu). To capture a fresh take, click the capture button again — it now reads **Re-record** and asks for confirmation first (see [Re-Recording](#re-recording)).
 
 ### Stage 3 — Speakers
 
@@ -554,7 +572,7 @@ Once a transcript exists, the smart action button becomes **Tag speakers…** �
 - Review the proposals, edit names as needed, and click **Apply** to commit.
 - WhisperCal replaces speaker labels throughout the transcript and sets `pipeline_state: tagged`.
 
-The smart button shows **Tagging speakers…** with a pulse while the LLM is running (the transcript stays openable from the rail in the meantime), and the Speakers rail segment pulses. If you dismiss the confirmation modal without applying, the proposals stay cached and the button **becomes an accent-tinted "Review speakers · N"** (N = speakers awaiting confirmation) with the Speakers segment turning warning-colored — clicking it resumes the review directly. Once tags are applied, the button advances to Summarize and the ⋯ menu offers **Edit speaker tags**.
+While the LLM is running there is no smart button: the gutter's activity badge names the job and its model, the Speakers rail segment pulses, and the transcript stays openable from the rail. If you dismiss the confirmation modal without applying, the proposals stay cached and the button **becomes an accent-tinted "Review speakers · N"** (N = speakers awaiting confirmation) with the Speakers segment turning warning-colored — clicking it resumes the review directly. Once tags are applied, the button advances to Summarize and the ⋯ menu offers **Edit speaker tags**.
 
 **Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no clicks needed. The run stops after caching the proposals: **tags are not applied without your review** (unless you also enable auto-tagging for confident matches — see below). The smart button becomes **Review speakers · N** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
 
@@ -568,7 +586,7 @@ The smart button shows **Tagging speakers…** with a pulse while the LLM is run
 Once speakers are tagged, the smart action button becomes **Summarize meeting…** — click it to run LLM summarization in the background. (The same action is in the ⋯ menu.)
 
 - Clicking it opens a small instructions dialog — leave it empty and hit **Run** for a normal run, or type one-off instructions (e.g., "focus on the budget discussion").
-- While running, the button shows **Summarizing…** with a pulse (as does the Summary rail segment) and a "Summarizing…" banner appears at the top of the meeting note editor.
+- While running, the activity badge reads *Summarizing*, the Summary rail segment pulses, and a "Summarizing…" banner appears at the top of the meeting note editor.
 - The LLM reads your summarizer prompt along with the meeting note and transcript, then writes the summary.
 - When finished, the plugin sets `pipeline_state: summarized` and the banner disappears.
 
@@ -581,7 +599,7 @@ Once the summary is complete, the menu item becomes **Regenerate summary…**, w
 - For a **recurring meeting** with a [series note](#recurring-meetings--series-prep), the modal opens clean: a tag links to the series note whose prompt and default context notes are already pulled in, and you just click **Research**.
 - For everything else, expand **"Add context notes or customize the prompt"** to **search and select vault notes** as context (project plans, policies, prior meeting notes, etc.), add instructions, or override the prompt entirely.
 - The LLM reads your research prompt along with the selected notes and meeting context, then writes its findings into the meeting note.
-- When complete, `research_notes` is added to the meeting note's frontmatter. The menu item stays available to re-run research.
+- When complete, the plugin sets `research_state: research-done` in the meeting note's frontmatter (the context notes you selected are recorded in `research_notes`). The menu item stays available to re-run research.
 
 This is useful for pre-meeting preparation or post-meeting fact-checking against organizational documents.
 
@@ -671,6 +689,10 @@ Use `{{variableName}}` placeholders in your template body. All available variabl
 | `{{isOnlineMeeting}}` | Whether it has an online link | `true` |
 | `{{onlineMeetingUrl}}` | Online meeting join URL (Teams, Google Meet, Zoom, etc.) | `https://teams.microsoft.com/...` |
 | `{{isAllDay}}` | All-day event flag | `false` |
+| `{{isRecurring}}` | Whether the event belongs to a recurring series | `true` |
+| `{{invitees}}` | Attendees as indented YAML list items of quoted wiki links | `  - "[[Jane Smith]]"` (one per line) |
+| `{{eventId}}` | The provider's calendar event id | `AAMkAG...` |
+| `{{noteCreated}}` | ISO timestamp of when the note was created | `2026-03-07T15:00:00.000Z` |
 | `{{description}}` | Event body (HTML converted to Markdown) | Meeting agenda text |
 
 ### Reserved Frontmatter Keys
@@ -693,8 +715,15 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `is_recurring` | Passed to transcript creation |
 | `macwhisper_session_id` | Links a MacWhisper recording to the note |
 | `macwhisper_session_ids` | All source session IDs on a merged note (see [Merging Meetings](#merging-meetings)) |
-| `merged_from` | Links to the archived original parts on a merged note |
+| `session_guid` | Correlation id tying the note to its Recording API session and the resulting transcript |
+| `meeting_series_id` | Recurring-series id; matches an occurrence to its [series note](#recurring-meetings--series-prep) |
+| `merged_from` | Links to the original parts on a merged note |
+| `merged_into` | Backlink on each original part; hides that part's card in favor of the merged one |
 | `split_from` / `split_into` | Cross-links between the two halves of a split meeting (see [Splitting a Meeting](#splitting-a-meeting)) |
+| `split_offset_seconds` | On the second half of a split: where it begins in the shared recording |
+| `research_state` | Set to `research-done` when a research run completes |
+| `research_notes` | Context notes selected for research |
+| `kanban-reviewed` | External triage mark; WhisperCal only shows and toggles it (see [The Kanban Review Mark](#the-kanban-review-mark)) |
 | `transcript` | Backlink to the transcript file |
 | `pipeline_state` | Workflow state; mirrored from transcript automatically |
 
@@ -713,8 +742,6 @@ The default source. WhisperCal reads directly from [MacWhisper](https://goodsnoo
 **Requirements:**
 - MacWhisper must be installed (database path: `~/Library/Application Support/MacWhisper/Database/main.sqlite`).
 - Recordings must be transcribed in MacWhisper before a transcript file can be created. WhisperCal will wait up to ~3 minutes for transcription to complete.
-
-A **microphone ribbon icon** is provided to quickly launch MacWhisper.
 
 **How recording matching works:** When you click the Link recording button, WhisperCal queries the MacWhisper database for sessions whose recording start time falls within a configurable window of the meeting's scheduled start time.
 
@@ -739,11 +766,11 @@ An alternative source that records meetings directly via a REST API. The Record 
 - A recording application running a compatible REST API on localhost.
 - The API must implement: `GET /health`, `POST /start`, `POST /stop`, `GET /status`.
 
-**API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for a port file at `~/Library/Application Support/Tome/api-port` and constructs the URL automatically. Apps that write a port number to this path will be detected without any configuration.
+**API auto-discovery:** If the **Recording API base URL** is left empty in settings, WhisperCal looks for a port file at `~/Library/Application Support/Tome/api-port` (macOS) or `%APPDATA%\Tome\api-port` (Windows) and constructs the URL automatically. Apps that write a port number to this path will be detected without any configuration.
 
 **Recording flow:**
-1. Click the Record button — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
-2. The button turns into a red **Stop · MM:SS** button with a **live elapsed timer**, and the Transcript rail segment pulses red.
+1. Click the capture button in the card's gutter — WhisperCal checks the API health, then sends a start request with the meeting subject and attendees.
+2. The button turns into a red **Stop** button with a **live elapsed timer** beneath it, and the Transcript rail segment pulses red.
 3. Click Stop — WhisperCal polls `/status` every 3 seconds until transcription is complete (up to 5 minutes).
 4. The transcript file is located in the vault's transcripts folder, enriched with pipeline frontmatter (meeting subject, invitees, date, organizer, location), and linked to the meeting note.
 
@@ -758,7 +785,7 @@ The app is terminated with the platform's own process tools (`killall` on macOS,
 
 ### Re-Recording
 
-If a meeting already has a linked transcript, choose **Re-record…** from the card's ⋯ menu. It shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
+If a meeting already has a linked transcript, the capture button in the card's gutter reads **Re-record** (Recording API source only). Clicking it shows a confirmation modal with options to **View** the existing transcript or **Re-record**. Re-recording clears the transcript link, pipeline state, and any speaker tags or summary.
 
 ---
 
@@ -841,7 +868,7 @@ WhisperCal invokes an external LLM CLI tool as a background process to tag speak
 
 ### Included Prompts
 
-The plugin ships with ready-to-use prompt files. The repo's `prompts/` directory holds the bundled copies the plugin auto-installs from; the `samples/` directory holds copies for manual installation, alongside the meeting note template. They work out of the box as defaults — use them as-is, or copy them into your vault and customize them to fit your workflow.
+The plugin ships with ready-to-use prompt files. On load it installs the post-processing, summarizer, and research prompts into your vault's `Prompts/` folder if they aren't already there (it never overwrites an existing file). The repo's `prompts/` directory holds the bundled copies; the `samples/` directory holds copies for manual installation, alongside the meeting note template. They work out of the box as defaults — use them as-is, or copy them into your vault and customize them to fit your workflow.
 
 Each prompt can run on its own model (see [Per-Prompt Model Selection](#per-prompt-model-selection)) and at its own reasoning effort. Set effort in that prompt's **Additional flags** setting, e.g. `--effort medium` — the `claude` CLI accepts `low`, `medium`, `high`, `xhigh`, and `max`. Recommendations:
 
@@ -850,7 +877,7 @@ Each prompt can run on its own model (see [Per-Prompt Model Selection](#per-prom
 | `Transcript Post-Processing Prompt.md` | Fixes transcription and diarization errors in the transcript in place and proposes identities for the speakers voiceprints didn't match. Runs on every recording, so latency matters. | Sonnet | `medium` |
 | `Meeting Transcript Summarizer Prompt.md` | Writes the structured summary (decisions, action items, discussion points) into the meeting note. | Sonnet — step up to Opus if downstream automation consumes the summaries and quality outweighs speed | `medium` |
 | `Meeting Research Prompt.md` | Pre-meeting research: synthesizes selected context notes and meeting metadata into findings in the meeting note. The most synthesis-heavy prompt of the set. | Opus | `high` |
-| `Meeting Series Research Prompt.md` | Lighter research variant for recurring meetings driven by a [series note](#recurring-meetings--series-prep). | Sonnet | `medium` |
+| `Meeting Series Research Prompt.md` | Lighter research variant for recurring meetings driven by a [series note](#recurring-meetings--series-prep). Not installed automatically and not in `samples/` — copy it from the repo's `prompts/` folder and point the **Research prompt** setting at it if you want it. | Sonnet | `medium` |
 | `Speaker Auto-Tag Prompt.md` | Legacy speaker-tagging prompt, superseded by Transcript Post-Processing. Kept for reference only. | — | — |
 
 The reasoning behind the recommendations: post-processing and summarization are high-volume, well-scoped tasks that are comfortably within Sonnet's range, and they sit in the critical path of every recording — a smaller model returns minutes sooner at no practical quality cost. Going below Sonnet is not recommended for post-processing, where verbatim edit fidelity is the whole job. Research runs are infrequent, user-triggered, and synthesis-heavy, which is exactly where a larger model at higher effort earns its extra latency. A prompt with no model selected uses the CLI's default model, and with no `--effort` flag the CLI's default effort.
@@ -859,7 +886,7 @@ The reasoning behind the recommendations: post-processing and summarization are 
 
 WhisperCal is **embeddings-first**: when a recording has [Tome](https://github.com/dloomis/Tome) voiceprints, known people are tagged acoustically before any LLM runs (each speaker's centroid is matched against the enrolled libraries in `Caches/Voiceprints/`, and confident hits are pre-filled as CERTAIN). Applying the tags enrolls each confirmed speaker, so the library self-improves; overriding a match self-heals the wrongly-matched library. How strict matching is can be tuned with the **Voiceprint match floor** setting.
 
-**Auto-tagging confident recordings (optional).** By default every recording is reviewed in the confirmation modal. Enable **"Auto-tag when all speakers match"** to skip the modal and apply tags automatically when *every* speaker is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`). To guard against voiceprint **drift**, these silent auto-tags **never enroll or correct a library** — the self-improving / self-healing behavior above only happens when you confirm a recording in the modal. That's intentional: if auto-tagging also wrote back to your libraries unattended, a misattributed speaker or noise (cross-talk, stray utterances) could quietly poison a person's voiceprint over time. The junk speaker diarizers emit for crosstalk doesn't block the gate: an unmatched speaker below the **"Ignore minor speakers"** line-share threshold is left untagged rather than forcing a review (see [Stage 3 — Speakers](#stage-3--speakers)). Whether the trigger is a **Review speakers** button click (Automatic mode off) or a fully background run (Automatic mode on) is covered in [Stage 3 — Speakers](#stage-3--speakers).
+**Auto-tagging confident recordings (optional).** By default every recording is reviewed in the confirmation modal. **"Auto-tag when all speakers match"** skips the modal when every speaker is a high-confidence voiceprint match; such silent auto-tags never enroll or correct a library, so the self-improving and self-healing behavior above only happens when you confirm in the modal. The full rules — the confidence floor, the minor-speaker exemption, and how it combines with Automatic mode — are in [Stage 3 — Speakers](#stage-3--speakers).
 
 Voiceprint libraries stay **aligned 1:1 with your People notes**: a confirmed name (whether proposed by voiceprint, the LLM, or typed by you) is canonicalized to its People-note basename before enrolling — so a library always maps to a real person note, the same target `confirmed_speakers` wikilinks resolve to. If you enroll someone who has no People note yet, a Notice nudges you to create one. (Email-derived name variants help here: a note emailed `douglas.sperber@…` still matches the LLM's formal "Douglas Sperber" even when its basename is "Doug Sperber".)
 
@@ -878,7 +905,7 @@ The optional **transcript post-processing** LLM pass runs whenever LLM features 
 **Usage:**
 
 1. Click the **Tag speakers…** smart button (or choose it from the card's ⋯ menu), or run the **"Tag speakers in transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
-2. The smart button shows **Tagging speakers…** and the Speakers rail segment pulses while the LLM runs in the background.
+2. The activity badge reads *Processing* and the Speakers rail segment pulses while the LLM runs in the background.
 3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
 4. Review the proposed mappings, edit any names, and click **Apply**.
 5. WhisperCal replaces speaker labels in the transcript body and sets `pipeline_state: tagged`.
@@ -901,7 +928,7 @@ When the transcript has a linked recording, the confirmation modal becomes a lis
 
 - A compact **audio player** appears at the top of the modal, loaded with the meeting recording.
 - Every timestamp in a speaker's excerpt panel is a **click-to-play** control: click it to play just that snippet — playback starts at the line and stops automatically at the next speaker's timestamp. Click a later line for the same speaker to hear a clearer sample. Pause and scrub freely with the player's own controls.
-- The **"Speaker clip length (seconds)"** setting caps how long each snippet plays. Leave it at `0` to play the whole snippet, or set e.g. `5` to hear a fixed five-second clip (still never bleeding past the next speaker).
+- The **"Speaker clip length (seconds)"** setting caps how long each snippet plays. The default is `5`, a fixed five-second clip (never bleeding past the next speaker); set it to `0` to play the whole snippet.
 
 The recording is discovered automatically from the transcript's `recording` frontmatter key (a wiki link to the audio file, e.g. `recording: "[[My Meeting.m4a]]"`). The [Recording API](#recording-api) source writes this link when it saves the meeting audio into the vault. Timestamps are read straight from the transcript body, so no conversion or extra setup is needed. If a transcript has no linked recording, the modal behaves exactly as before — excerpts with plain-text timestamps and no player.
 
@@ -1002,19 +1029,19 @@ Shine Mountain,Cheyenne Mountain
 
 **Setup:**
 
-1. Copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Summarizer.md`). This prompt works as a ready-to-use default — customize it if needed.
-2. Set the **"Summarizer prompt"** path in WhisperCal settings.
+1. The plugin installs `Prompts/Meeting Transcript Summarizer Prompt.md` into your vault automatically, and the **"Summarizer prompt"** setting points at it by default — customize the file if needed. (To install it by hand, copy `samples/Meeting Transcript Summarizer Prompt.md` from the plugin's GitHub repo.)
+2. To use a different prompt, change the **"Summarizer prompt"** path in WhisperCal settings.
 
 **Usage:**
 
 1. Choose **"Summarize meeting…"** from the meeting card's ⋯ menu, or run the **"Summarize meeting transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the item reads **"Regenerate summary…"** and regenerates the same way.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
-4. The banner disappears and the card gutter shows the completed (accent) highlight.
+4. The banner disappears and the Summary rail segment turns green.
 
 The summarizer prompt receives the meeting note path as its target. Your prompt should instruct the LLM to read the linked transcript (available via the `transcript` frontmatter key) and write the summary into the meeting note.
 
-**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no clicks needed. The timeout applies independently to each stage, so a 5-minute timeout gives speaker tagging 5 minutes and summarization another 5 minutes.
+**Auto-summarize:** If **"Automatic mode"** is enabled in settings, summarization starts automatically as soon as you apply speaker tags — no clicks needed. The timeout applies independently to each stage, so a 10-minute timeout gives speaker tagging 10 minutes and summarization another 10 minutes.
 
 ### Meeting Research
 
@@ -1022,8 +1049,8 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
 
 **Setup:**
 
-1. Copy `samples/Meeting Research Prompt.md` from the plugin's GitHub repo into your vault (e.g., `Prompts/Meeting Research Prompt.md`). This prompt works as a ready-to-use default — customize it if needed.
-2. Set the **"Research prompt"** path in WhisperCal settings.
+1. The plugin installs `Prompts/Meeting Research Prompt.md` into your vault automatically, and the **"Research prompt"** setting points at it by default — customize the file if needed. (To install it by hand, copy `samples/Meeting Research Prompt.md` from the plugin's GitHub repo.)
+2. To use a different prompt, change the **"Research prompt"** path in WhisperCal settings.
 
 **Usage:**
 
@@ -1035,7 +1062,7 @@ The summarizer prompt receives the meeting note path as its target. Your prompt 
      - **Additional instructions** typed in the text area are appended to the research prompt.
      - **Bypass the prompt file** entirely by checking "Use as direct prompt"; the text area then becomes the direct prompt that replaces the prompt file.
 3. Click **Research** to run the LLM in the background.
-4. When complete, the research output is written into the meeting note and `research_notes` is set in frontmatter.
+4. When complete, the research output is written into the meeting note and `research_state: research-done` is set in frontmatter. The context notes you selected are recorded in `research_notes`.
 
 ### Recurring Meetings & Series Prep
 
@@ -1077,35 +1104,9 @@ If any check fails, an Obsidian notice explains the problem.
 
 ### Concurrency and Timeouts
 
-- **Concurrency limit** — A maximum number of LLM processes can run simultaneously (default: 2). If you try to start another job while at the limit, a notice tells you to wait. This prevents overloading your machine or hitting API rate limits.
-- **Timeout** — Each LLM process is killed if it runs longer than the configured timeout (default: 5 minutes). The process receives SIGTERM, then SIGKILL after 5 seconds if it doesn't exit. A timed-out job shows a notice with the duration.
+- **Concurrency limit** — A maximum number of LLM processes can run simultaneously (default: 2). If you start a job by hand while at the limit, a notice tells you to try again when a running job finishes. Jobs started by **Automatic mode** wait instead: the card shows an *LLM limit* badge with a retry countdown, and the job is dropped (with a warning on the card) if no slot frees up within 30 minutes. This prevents overloading your machine or hitting API rate limits.
+- **Timeout** — Each LLM process is killed if it runs longer than the configured timeout (default: 10 minutes). The process receives SIGTERM, then SIGKILL after 5 seconds if it doesn't exit. A timed-out job shows a notice with the duration.
 - **Plugin unload** — When you disable the plugin or quit Obsidian, all running LLM processes are terminated (SIGTERM) and job tracking is cleared.
-
-### LLM Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Enable LLM features** | Off | Master toggle for all LLM functionality. Shows a consent modal on first enable. |
-| **Speaker voiceprints folder** | `Caches/Voiceprints` | Vault folder where per-speaker voice embeddings are stored (one `<Name>.json` per person), enrolled when you apply speaker tags to a transcript that has a Tome voiceprint sidecar. Library names align 1:1 with your People notes — a confirmed name is canonicalized to its People-note basename before enrolling. |
-| **Voiceprint match floor** | `0.50` | Minimum cosine similarity (0–1) required to accept an acoustic speaker match. Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. Solo-library matches always use at least `0.55`. |
-| **Auto-tag when all speakers match** | Off | Skip the speaker-tagging modal and apply tags automatically when *every* speaker is a voiceprint match at/above the confidence floor below. Silent auto-tags **never** enroll or correct a voiceprint library (the drift guard) — only confirming in the modal does. Works with **Automatic mode** to decide whether the trigger is a **Review speakers** click or a fully background run. |
-| **Auto-tag confidence floor** | `0.80` | Minimum cosine similarity (0–1) *every* speaker must reach for the modal to be skipped. Only shown/used when "Auto-tag when all speakers match" is on. Kept high so unattended tagging stays strict. |
-| **Ignore minor speakers** | `0.05` | Max share of transcript lines (0–1) below which an unmatched speaker (crosstalk, stray utterances) no longer blocks an auto-tag — it's left untagged, as you would in the modal. At least one speaker must still genuinely match. `0` requires every speaker to match. Only shown/used when "Auto-tag when all speakers match" is on. |
-| **CLI command** | `claude` | The LLM CLI executable name or path. Must be on your shell's PATH. |
-| **Additional flags** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default flag allows Claude Code to read/write files without interactive prompts, which is required since the LLM runs headlessly with no terminal. Adjust this for your CLI tool — most LLMs need a similar non-interactive or auto-approve flag to work in the background. |
-| **Microphone user** | *(empty)* | Your full name as it appears in meetings. Passed to the LLM to help identify your voice. |
-| **Transcript post-processing prompt** | `Prompts/Transcript Post-Processing Prompt.md` | Path to the prompt that fixes transcription + diarization errors and proposes names for speakers voiceprints didn't match (vault-relative, absolute, or `~/`-relative). Leave empty to disable the LLM pass. |
-| **Transcript post-processing model** | *(default)* | Claude model to use for transcript post-processing. |
-| **Summarizer prompt** | `Prompts/Meeting Transcript Summarizer Prompt.md` | Path to your summarization prompt file. |
-| **Summarizer model** | *(default)* | Claude model to use for summarization. |
-| **Research prompt** | `Prompts/Meeting Research Prompt.md` | Path to your meeting research prompt file. |
-| **Research model** | *(default)* | Claude model to use for meeting research. |
-| **Meeting series notes folder** | *(empty)* | Vault folder of per-series notes for recurring meetings. Each note holds default context notes (`research_notes`) and bespoke instructions (under a `## Research instructions` heading) that pre-fill the Research modal for that series. Leave empty to disable. See [Recurring Meetings & Series Prep](#recurring-meetings--series-prep). |
-| **LLM timeout (minutes)** | `10` | Kill the LLM process if it runs longer than this. Post-processing reads and rewrites the whole transcript, so give it headroom. Set to `0` to disable the timeout. |
-| **Max concurrent LLM processes** | `2` | Maximum number of LLM processes that can run at the same time. |
-| **Automatic mode** | Off | Run the LLM workflow automatically: newly linked transcripts are speaker-tagged in the background (candidates cached for review — never applied automatically; the smart action button becomes **Review speakers** when ready), and summarization starts after you apply the tags. Single-mic recordings are skipped. |
-| **Auto-tag catch-up window (hours)** | `48` | On startup, also auto-tag eligible transcripts created within this many hours. `0` disables the startup scan. Only shown when Automatic mode is on. |
-| **Debug mode** | Off | Opens LLM commands in a Terminal window instead of running in the background. Useful for seeing raw command output. |
 
 ---
 
@@ -1123,22 +1124,23 @@ WhisperCal maintains a local cache of calendar data so you can browse your sched
 
 ## Commands
 
-All commands are available from the command palette (`Cmd+P`):
+All commands are available from the command palette (`Cmd+P` on macOS, `Ctrl+P` on Windows):
 
 | Command | Description |
 |---------|-------------|
 | **Open calendar view** | Opens the WhisperCal calendar sidebar |
-| **Link MacWhisper recording** | Links a MacWhisper recording to the active meeting note (only available when a meeting note is open) |
+| **Link MacWhisper recording** | Links a MacWhisper recording to the active meeting note (macOS only; available when a meeting note is open) |
 | **Tag speakers in transcript** | Launches LLM speaker tagging for the active note's transcript (available on meeting notes with a transcript, or directly on transcript files) |
 | **Summarize meeting transcript** | Launches LLM summarization (available when `pipeline_state` is `tagged`) |
 | **Research meeting** | Opens the research modal to run LLM-powered meeting research with selected vault notes as context (available on meeting notes) |
+| **Open meeting series note** | Opens (creating if needed) the [series note](#recurring-meetings--series-prep) for the active meeting note (available when a **Meeting series notes folder** is set) |
+| **Pull Teams meeting chat** | Re-reads the meeting's Teams chat into the active meeting note (Microsoft calendars only; see [Teams Meeting Chat](#teams-meeting-chat)) |
 | **Run word replacements** | Applies word replacement rules to the active note (available on any open note; also accessible via the ⇄ toolbar icon) |
 
 **Link MacWhisper recording** is also available in the file context menu (right-click) for meeting notes.
 
 **Ribbon icons:**
 - **Calendar icon** — Opens the calendar view.
-- **Microphone icon** — Launches the MacWhisper app.
 
 **Note toolbar icon:**
 - **Replace-all icon (⇄)** — Runs word replacements on the active note (appears on every markdown note).
@@ -1199,8 +1201,10 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Database path** | *(read-only)* | Shows the MacWhisper database location (MacWhisper source only). |
 | **Recording match window** | `15` min | How close a recording start must be to the meeting time to appear in the picker (MacWhisper source only). |
 | **Unlinked lookback** | `30` days | How far back to check for unlinked recordings (MacWhisper source only). |
-| **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from the port file at `~/Library/Application Support/Tome/api-port` (Recording API source only). |
+| **Recording API base URL** | *(empty = auto)* | REST API base URL. Leave empty to auto-detect from Tome's port file — `~/Library/Application Support/Tome/api-port` on macOS, `%APPDATA%\Tome\api-port` on Windows (Recording API source only). |
+| **Test API** | — | Button that queries the recording app's status endpoint and reports whether it is reachable (Recording API source only). |
 | **Automate meeting recording** | Off | Clicking a meeting's join link on its card auto-starts recording; stopping that recording from WhisperCal closes the meeting app (Teams, Zoom) to leave the call (Recording API source only). See [Automate Meeting Recording](#automate-meeting-recording). |
+| **Pull Teams meeting chat** | On | When a recording finishes, add the meeting's Teams chat to the note under a `## Meeting Chat` heading (Recording API source, Microsoft calendars only; needs `Chat.Read`). See [Teams Meeting Chat](#teams-meeting-chat). |
 
 ### Speakers
 
@@ -1238,13 +1242,13 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. |
 | **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
 | **CLI command** | `claude` | LLM CLI executable name or path. |
-| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. Must include a non-interactive flag for your CLI tool (see [LLM Settings](#llm-settings)). |
-| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files. |
+| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default lets Claude Code read and write files without interactive prompts, which a headless run needs; most CLIs need a similar non-interactive flag. See the trust-boundary note in [Disclosures](#disclosures). |
+| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files (the field shows `Prompts` as a placeholder). |
 | **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
 | **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
-| **Debug mode** | Off | Open LLM commands in Terminal instead of background (macOS only). |
-| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I`). Off by default to avoid leaking meeting content. |
+| **Debug mode** | Off | Open LLM commands in a terminal window instead of running them in the background. |
+| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I` on macOS, `Ctrl+Shift+I` on Windows). Off by default to avoid leaking meeting content. |
 
 ---
 
@@ -1253,12 +1257,17 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 - **Remote services:** This plugin connects to the **Microsoft Graph API** or the **Google Calendar API** (depending on your chosen provider) to fetch calendar events. Both providers use OAuth 2.0 Authorization Code flow with PKCE via a localhost redirect.
 - **OAuth token storage:** Refresh and access tokens for Microsoft 365 and Google are stored in the plugin's `data.json` file inside your vault (`.obsidian/plugins/whisper-cal/data.json`). They are **not encrypted at rest**. If your vault is synced (Obsidian Sync, iCloud, Dropbox, git, etc.) or backed up, those tokens travel with it — anyone who can read the file can act as you against the calendar provider until the tokens are revoked. To clear them, click **Sign out** in settings; to invalidate them server-side, revoke access in your provider's account portal (Microsoft 365 or Google account → security → app permissions).
 - **Other secrets in `data.json`:** the same unencrypted `data.json` also holds the optional **Anthropic API key** (used only to populate model dropdowns) and, for the Google provider, your **Google OAuth client secret**. Like the tokens above, these are stored in plaintext and travel with a synced or backed-up vault. Treat the file as sensitive.
+- **People search:** Looking up people (for example the **Important organizers** autocomplete) queries your provider's directory — Microsoft Graph (`People.Read`, `User.ReadBasic.All`) or the Google People API (contacts, read-only).
+- **Teams meeting chat:** With **Pull Teams meeting chat** on (the default, Microsoft calendars only), WhisperCal reads the meeting's Teams chat through Microsoft Graph (`Chat.Read`) and writes it into the meeting note. See [Teams Meeting Chat](#teams-meeting-chat).
+- **WhisperCore data file:** On its first load after upgrading from 0.8.x, WhisperCal reads the WhisperCore plugin's `data.json` (`.obsidian/plugins/whispercore/data.json`) once to import your provider credentials, sign-in tokens, and LLM settings. It never writes to that file.
+- **OS account name:** The first time it loads, WhisperCal asks the operating system for your account's full name (`id -F` on macOS, a PowerShell lookup on Windows) to pre-fill the **Microphone user** setting. The name stays in your settings; it is only passed on as part of LLM prompts.
+- **Closing the meeting app:** With **Automate meeting recording** on, stopping a recording from WhisperCal force-quits the meeting app it launched (`killall` on macOS, `taskkill` on Windows).
 - **External file access:** The MacWhisper integration reads and writes to the MacWhisper SQLite database at `~/Library/Application Support/MacWhisper/Database/`. This is required to match recordings and extract transcripts. No data leaves your machine during this process.
-- **Recording API:** When using the Recording API source, WhisperCal communicates with a localhost REST API to start/stop recordings and poll transcription status. All communication is local.
+- **Recording API:** When using the Recording API source, WhisperCal communicates with a localhost REST API to start/stop recordings and poll transcription status; the start request carries the meeting subject and attendee names. All communication is local.
 - **LLM invocation:** When you use the speaker tagging, summarization, or research features, WhisperCal spawns an external CLI tool (default: `claude`) as a background process. Your transcript and meeting note content are passed to that tool. The LLM process runs locally but may send data to a remote API depending on the CLI tool's configuration. Review your LLM provider's privacy policy to understand how your data is handled.
 - **LLM trust boundary:** The default **Additional flags** value is `--dangerously-skip-permissions`, which lets the CLI read and write files without interactive approval — necessary because the LLM runs headlessly with no terminal to answer prompts. The catch: the content sent to the LLM includes **third-party-controlled text** — transcribed audio, calendar attendee names, and invite subjects from people outside your control. A crafted meeting name or spoken sentence is a potential prompt-injection vector that, combined with skip-permissions, could drive the CLI to take file or shell actions rooted at your vault. Only run these features against meetings and an LLM CLI you trust. To reduce the blast radius, replace the default flag with a scoped `--allowedTools` set (or remove it and approve actions another way) at the cost of headless convenience.
 - **LLM model discovery:** If an Anthropic API key is configured (the **Anthropic API key** setting, or the `ANTHROPIC_API_KEY` environment variable), WhisperCal fetches available Claude models from the Anthropic API to populate per-prompt model selectors. No other data is sent.
-- **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and AppleScript, and is not available on Obsidian Mobile.
+- **Desktop only:** This plugin uses Node.js APIs (`child_process`, `os`) and, on macOS, AppleScript, and is not available on Obsidian Mobile.
 
 ---
 
@@ -1286,7 +1295,7 @@ The sign-in flow is valid for 5 minutes. If it times out before you complete sig
 ### LLM job fails immediately
 - Verify the **CLI command** setting matches an installed CLI tool (e.g., `claude`). WhisperCal checks your login shell's PATH, so tools installed via Homebrew or nvm should be found automatically.
 - Ensure your **Transcript post-processing prompt** or **Summarizer prompt** path points to an existing file. The path can be vault-relative, absolute, or start with `~/`.
-- Check the Obsidian developer console (`Cmd+Option+I`) for `[WhisperCal]` log entries with more detail. Turn on **Debug logging** in settings for verbose diagnostics (LLM commands and stdout, speaker tagging, and voiceprint enrollment), filterable by the `[WhisperCal:` prefix.
+- Check the Obsidian developer console (`Cmd+Option+I` on macOS, `Ctrl+Shift+I` on Windows) for `[WhisperCal]` log entries with more detail. Turn on **Debug logging** in settings for verbose diagnostics (LLM commands and stdout, speaker tagging, and voiceprint enrollment), filterable by the `[WhisperCal:` prefix.
 
 ### Speaker tagging modal shows no AI suggestions
 - The LLM's stdout must contain a fenced JSON code block with the expected schema (see [Required LLM Output Format](#required-llm-output-format)). If parsing fails, speakers are shown without proposals.
@@ -1320,7 +1329,7 @@ A rail segment stays neutral (and isn't clickable) until its stage's artifact ex
 
 Once a stage is reached and waiting on you (speakers to tag, summary to run), its segment turns the warning color instead of gray — gray always means "not reached yet".
 
-The smart action button always shows the single next step that *is* available, so if nothing seems clickable, the button is where to look.
+The smart action button shows the single next step that *is* available (before a transcript exists on the Recording API source, that step is the capture button in the gutter), so if nothing seems clickable, those two are where to look.
 
 ### Meeting note attendees aren't wiki-linked
 - Set the **People folder** path in settings.
@@ -1330,120 +1339,7 @@ The smart action button always shows the single next step that *is* available, s
 
 ## Migrating Legacy Notes
 
-If you have meeting notes that were created before WhisperCal (or before the unlinked recordings feature), they won't have a `macwhisper_session_id` in their frontmatter. This means their MacWhisper recordings will appear as "unlinked" even though a note exists.
-
-### What WhisperCal expects
-
-WhisperCal identifies a note as linked to a MacWhisper recording by the presence of `macwhisper_session_id` in its YAML frontmatter:
-
-```yaml
----
-macwhisper_session_id: "AABBCCDD11223344AABBCCDD11223344"
----
-```
-
-The value is a 32-character uppercase hex string — the MacWhisper session ID. Without this key, the recording shows up in the "Unlinked recordings" section.
-
-### Finding session IDs
-
-If your legacy notes already have transcript files linked via a `transcript` frontmatter key, the session ID is stored in the transcript's frontmatter as `session_id`:
-
-```yaml
----
-session_id: "AABBCCDD11223344AABBCCDD11223344"
----
-```
-
-You can also query the MacWhisper database directly to find session IDs by title:
-
-```bash
-sqlite3 -readonly ~/Library/Application\ Support/MacWhisper/Database/main.sqlite \
-  "SELECT hex(id), userChosenTitle FROM session WHERE isTransient = 0 AND dateDeleted IS NULL ORDER BY dateCreated DESC;"
-```
-
-### Backfilling a single note
-
-Add `macwhisper_session_id` to the note's existing frontmatter block:
-
-```yaml
----
-meeting_subject: "Weekly Standup"
-meeting_date: 2026-01-15
-macwhisper_session_id: "AABBCCDD11223344AABBCCDD11223344"
----
-```
-
-The note will disappear from the unlinked list on the next calendar view refresh.
-
-### Bulk backfill from transcript files
-
-If your legacy transcripts have `session_id` in their frontmatter, you can backfill all matching meeting notes at once. This script reads the session ID from each transcript and writes it to the corresponding meeting note:
-
-```bash
-VAULT=~/path/to/vault
-NOTES="$VAULT/Meetings"
-TRANSCRIPTS="$VAULT/Transcripts"
-
-for transcript in "$TRANSCRIPTS"/*.md; do
-  # Extract session_id from transcript frontmatter
-  sid=$(grep -m1 'session_id:' "$transcript" | sed 's/.*session_id: *"\(.*\)"/\1/')
-  [ -z "$sid" ] && continue
-
-  # Find the meeting note linked from the transcript
-  note_link=$(grep -m1 'meeting_note:' "$transcript" | sed 's/.*\[\[\(.*\)\]\].*/\1/')
-  [ -z "$note_link" ] && continue
-
-  note_file="$NOTES/${note_link}.md"
-  [ -f "$note_file" ] || continue
-
-  # Skip if already has macwhisper_session_id
-  grep -q 'macwhisper_session_id:' "$note_file" && continue
-
-  # Insert macwhisper_session_id after the opening ---
-  sed -i '' "1,/^---$/{/^---$/a\\
-macwhisper_session_id: \"$sid\"
-}" "$note_file"
-
-  echo "Patched: $(basename "$note_file") <- $sid"
-done
-```
-
-### Bulk backfill by matching titles
-
-If your legacy notes don't have transcript files but you named MacWhisper recordings to match your note filenames, you can match by title:
-
-```bash
-VAULT=~/path/to/vault
-NOTES="$VAULT/Meetings"
-DB=~/Library/Application\ Support/MacWhisper/Database/main.sqlite
-
-sqlite3 -readonly "$DB" \
-  "SELECT hex(id), userChosenTitle FROM session WHERE isTransient = 0 AND dateDeleted IS NULL AND userChosenTitle IS NOT NULL;" \
-  | while IFS='|' read -r sid title; do
-    # Try to find a note whose filename contains the session title
-    match=$(find "$NOTES" -name "*.md" -maxdepth 1 | while read f; do
-      bn=$(basename "$f" .md)
-      # Strip hex suffixes from old naming schemes
-      clean=$(echo "$bn" | sed 's/\.[a-f0-9]\{3,6\}$//')
-      if [ "$clean" = "$title" ]; then
-        echo "$f"
-        break
-      fi
-    done)
-    [ -z "$match" ] && continue
-    grep -q 'macwhisper_session_id:' "$match" && continue
-
-    sed -i '' "1,/^---$/{/^---$/a\\
-macwhisper_session_id: \"$sid\"
-}" "$match"
-
-    echo "Patched: $(basename "$match") <- $sid"
-  done
-```
-
-### Using the Link button instead
-
-You can also backfill one at a time using the **Link** button in the unlinked recordings section. This has the advantage of creating a transcript file and completing the full linking flow. However, it creates a new meeting note if one doesn't already exist — so it works best for recordings that genuinely don't have notes yet.
+Meeting notes created before WhisperCal (or before the unlinked recordings feature) have no `macwhisper_session_id` in their frontmatter, so their MacWhisper recordings show up as "unlinked" even though a note exists. [docs/migrating-legacy-notes.md](docs/migrating-legacy-notes.md) explains how to backfill the key, one note at a time or in bulk. It applies to the MacWhisper source on macOS only.
 
 ---
 
