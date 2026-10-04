@@ -488,12 +488,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		// tab persists on the instance for the session.
 		const tabs: {id: SettingsTabId; label: string}[] = [
 			{id: "calendar", label: "Calendar"},
+			{id: "llm", label: "LLM engine"},
 			{id: "notes", label: "Notes & people"},
 			{id: "recording", label: "Recording"},
 			{id: "speakers", label: "Speakers"},
 			{id: "summary", label: "Summary & research"},
-			 
-			{id: "llm", label: "LLM engine"},
 		];
 		const tabBar = containerEl.createDiv({cls: "whisper-cal-settings-tabbar"});
 		for (const tab of tabs) {

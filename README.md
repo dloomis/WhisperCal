@@ -1149,7 +1149,7 @@ All commands are available from the command palette (`Cmd+P` on macOS, `Ctrl+P` 
 
 ## Settings Reference
 
-Settings are organized into six tabs, grouped by pipeline stage: **Calendar · Notes & people · Recording · Speakers · Summary & research · LLM engine**.
+Settings are organized into six tabs, grouped by pipeline stage: **Calendar · LLM engine · Notes & people · Recording · Speakers · Summary & research**.
 
 ### Calendar
 
@@ -1178,6 +1178,22 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 |---------|---------|-------------|
 | **Client ID** | *(empty)* | OAuth client ID from your Google Cloud Console desktop app credentials. |
 | **Client secret** | *(empty)* | OAuth client secret from your Google Cloud Console desktop app credentials. |
+
+### LLM engine
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. |
+| **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. |
+| **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
+| **CLI command** | `claude` | LLM CLI executable name or path. |
+| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default lets Claude Code read and write files without interactive prompts, which a headless run needs; most CLIs need a similar non-interactive flag. See the trust-boundary note in [Disclosures](#disclosures). |
+| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files (the field shows `Prompts` as a placeholder). |
+| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
+| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
+| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
+| **Debug mode** | Off | Open LLM commands in a terminal window instead of running them in the background. |
+| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I` on macOS, `Ctrl+Shift+I` on Windows). Off by default to avoid leaking meeting content. |
 
 ### Notes & people
 
@@ -1233,22 +1249,6 @@ Settings are organized into six tabs, grouped by pipeline stage: **Calendar · N
 | **Research model** | *(default)* | Claude model for meeting research. |
 | **Additional flags** | *(empty)* | Extra CLI flags for research only. |
 | **Meeting series notes folder** | *(empty)* | Folder of per-series notes whose `## Research instructions` sections pre-fill the Research modal for recurring meetings. |
-
-### LLM engine
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| **Enable LLM features** | Off | Master toggle. Shows a consent modal on first enable. |
-| **Automatic mode** | Off | Auto-tag new transcripts in the background (candidates cached for review — auto-applied only if **Auto-tag when all speakers match** is also on and all speakers clear its floor) and auto-summarize after tags are applied. |
-| **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
-| **CLI command** | `claude` | LLM CLI executable name or path. |
-| **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default lets Claude Code read and write files without interactive prompts, which a headless run needs; most CLIs need a similar non-interactive flag. See the trust-boundary note in [Disclosures](#disclosures). |
-| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files (the field shows `Prompts` as a placeholder). |
-| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
-| **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
-| **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
-| **Debug mode** | Off | Open LLM commands in a terminal window instead of running them in the background. |
-| **Debug logging** | Off | Log detailed diagnostics — LLM commands and stdout, speaker tagging, and voiceprint enrollment — to the developer console (`Cmd+Opt+I` on macOS, `Ctrl+Shift+I` on Windows). Off by default to avoid leaking meeting content. |
 
 ---
 
