@@ -4,7 +4,8 @@ import type {WhisperCalSettings} from "../settings";
 import {coerceFmDate, coerceFmTime, formatDate, formatTimeHHmm, parseDateTime} from "../utils/time";
 import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
-import {applyTemplate, buildVariableMap, loadTemplate} from "../services/TemplateEngine";
+import {applyTemplate, buildVariableMap, loadTemplate, resolveAttendeeNames} from "../services/TemplateEngine";
+import {RSVP_KEYS, buildRsvpLists, type RsvpLists} from "../services/RsvpSync";
 import {PeopleMatchService} from "../services/PeopleMatchService";
 import {FM} from "../constants";
 
@@ -304,7 +305,8 @@ export class NoteCreator {
 		const organizerNotePath = peopleSvc.matchOne(event.organizerName, event.organizerEmail);
 		const variables = buildVariableMap(event, this.settings.timezone, peopleMatch, organizerNotePath, noteCreated);
 		const content = applyTemplate(template, variables);
-		return this.injectReservedFrontmatter(content, event, variables);
+		const rsvps = buildRsvpLists(event, resolveAttendeeNames(event.attendees, peopleMatch));
+		return this.injectReservedFrontmatter(content, event, variables, rsvps);
 	}
 
 	/**
@@ -315,6 +317,7 @@ export class NoteCreator {
 		content: string,
 		event: CalendarEvent,
 		variables: Record<string, string>,
+		rsvps: RsvpLists,
 	): string {
 		const inviteeLines = event.attendees.length > 0
 			? "\n" + variables["invitees"]
@@ -332,6 +335,15 @@ export class NoteCreator {
 			`calendar_provider: ${this.settings.calendarProvider}`,
 			`is_recurring: ${event.isRecurring}`,
 		];
+		// RSVP buckets only for invited meetings (ad hoc notes have no attendees).
+		if (event.attendees.length > 0) {
+			for (const key of RSVP_KEYS) {
+				const links = rsvps[key] ?? [];
+				reserved.push(links.length > 0
+					? `${key}:\n${links.map(l => `  - "${yamlEscape(l)}"`).join("\n")}`
+					: `${key}: []`);
+			}
+		}
 		// Only recurring events carry a series id; keep non-recurring notes clean.
 		if (event.seriesId) {
 			reserved.push(`${FM.MEETING_SERIES_ID}: "${yamlEscape(event.seriesId)}"`);

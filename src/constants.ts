@@ -39,6 +39,14 @@ export const FM = {
 	MEETING_INVITEES: "meeting_invitees",
 	CALENDAR_ATTENDEES: "calendar_attendees",
 	INVITEES: "invitees",
+	// Per-invitee RSVP, bucketed into one wikilink list per response so Bases /
+	// Dataview can query "who declined" with a plain `contains`. Every
+	// meeting_invitees entry lands in exactly one bucket. Stamped at note
+	// creation and re-synced from the calendar on each refresh (see RsvpSync).
+	MEETING_ACCEPTED: "meeting_accepted",
+	MEETING_TENTATIVE: "meeting_tentative",
+	MEETING_DECLINED: "meeting_declined",
+	MEETING_NO_RESPONSE: "meeting_no_response",
 	MACWHISPER_SESSION_ID: "macwhisper_session_id",
 	MACWHISPER_SESSION_IDS: "macwhisper_session_ids",
 	// Correlation id linking a meeting note, its Tome recording session, and the

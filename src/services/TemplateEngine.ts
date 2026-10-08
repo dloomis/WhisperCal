@@ -1,9 +1,34 @@
 import {App, Notice, TFile} from "obsidian";
-import type {CalendarEvent} from "../types";
+import type {CalendarEvent, EventAttendee} from "../types";
 import type {PeopleMatchResult} from "./PeopleMatchService";
 import {formatDate, formatTimeForFrontmatter} from "../utils/time";
 import {parseDisplayName} from "../utils/nameParser";
 import {yamlEscape} from "../utils/sanitize";
+
+/**
+ * Resolve an attendee to the name their wiki link uses: the People-note
+ * basename when matched, else a name parsed from the display name / email.
+ */
+function attendeeNameResolver(peopleMatch?: PeopleMatchResult): (name: string, email: string) => string {
+	const matchedByEmail = new Map<string, string>();
+	const matchedByName = new Map<string, string>();
+	if (peopleMatch) {
+		for (const m of peopleMatch.matched) {
+			const noteName = m.notePath.split("/").pop() ?? m.notePath;
+			if (m.email) matchedByEmail.set(m.email.toLowerCase(), noteName);
+			if (m.name) matchedByName.set(m.name.toLowerCase(), noteName);
+		}
+	}
+	return (name, email) => matchedByEmail.get(email.toLowerCase())
+		?? matchedByName.get(name.toLowerCase())
+		?? parseDisplayName(name, email);
+}
+
+/** Resolved link names for `attendees`, index-aligned with the input. */
+export function resolveAttendeeNames(attendees: EventAttendee[], peopleMatch?: PeopleMatchResult): string[] {
+	const resolveName = attendeeNameResolver(peopleMatch);
+	return attendees.map(a => resolveName(a.name, a.email));
+}
 
 /**
  * Build a map of all template variables from a CalendarEvent.
@@ -22,23 +47,7 @@ export function buildVariableMap(
 	const endTime = formatTimeForFrontmatter(event.endTime, timezone);
 	const location = event.location || "N/A";
 
-	// Build a lookup from matched people notes (email → note filename)
-	const matchedByEmail = new Map<string, string>();
-	const matchedByName = new Map<string, string>();
-	if (peopleMatch) {
-		for (const m of peopleMatch.matched) {
-			const noteName = m.notePath.split("/").pop() ?? m.notePath;
-			if (m.email) matchedByEmail.set(m.email.toLowerCase(), noteName);
-			if (m.name) matchedByName.set(m.name.toLowerCase(), noteName);
-		}
-	}
-
-	// Resolve a display name: use people note filename if matched, else parse
-	const resolveName = (name: string, email: string): string => {
-		return matchedByEmail.get(email.toLowerCase())
-			?? matchedByName.get(name.toLowerCase())
-			?? parseDisplayName(name, email);
-	};
+	const resolveName = attendeeNameResolver(peopleMatch);
 
 	// Organizer
 	const organizerResolved = organizerNotePath
@@ -49,7 +58,7 @@ export function buildVariableMap(
 	// Attendees — every attendee becomes a [[wiki link]]. The YAML-bound forms
 	// (attendees, invitees) escape the name: an unescaped quote in a resolved
 	// name would corrupt the whole frontmatter block.
-	const resolvedNames = event.attendees.map(a => resolveName(a.name, a.email));
+	const resolvedNames = resolveAttendeeNames(event.attendees, peopleMatch);
 	const attendees = resolvedNames.map(n => `"[[${yamlEscape(n)}]]"`).join(", ");
 	const attendeeList = resolvedNames.map(n => `- [[${n}]]`).join("\n");
 	const invitees = resolvedNames.map(n => `  - "[[${yamlEscape(n)}]]"`).join("\n");

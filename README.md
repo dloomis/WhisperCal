@@ -81,6 +81,7 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Template Setup](#template-setup)
   - [Template Variables](#template-variables)
   - [Reserved Frontmatter Keys](#reserved-frontmatter-keys)
+    - [RSVP Tracking](#rsvp-tracking)
 - [Recording Sources](#recording-sources)
   - [MacWhisper](#macwhisper)
   - [Recording API](#recording-api)
@@ -318,7 +319,7 @@ Each calendar event is displayed as a two-column card:
 - **Content** (right):
   - **Subject** — The meeting title. Clicking it **opens the meeting note** (creating it first if it doesn't exist yet; unscheduled cards prompt for a name). A dotted underline appears on hover.
   - **Organizer row** — Organizer name with People note link (if matched). The person icon reflects their `personnel_type` (see [Personnel Type Icons](#personnel-type-icons)).
-  - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red), and duration, separated by middle dots.
+  - **Meta row** — Location (clickable for online meeting URLs), total attendee count, RSVP breakdown (accepted in green, tentative in yellow, declined in red, no response in gray), and duration, separated by middle dots. Hover the attendee count or any RSVP icon to see the names in that group.
   - **Status rail** — Four labeled segments (Note · Transcript · Speakers · Summary) tracking pipeline progress. Each is clickable and acts on its stage (see [The Status Rail](#the-status-rail)).
   - **Smart action button** — One button showing the pipeline's next step after capture (Link recording / Review speakers / Tag speakers… / Summarize meeting…). There is no button while a job is running or once the pipeline is complete.
 
@@ -708,6 +709,7 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `meeting_location` | Meeting location |
 | `meeting_invitees` | Attendee list; passed to transcript creation |
 | `meeting_organizer` | Meeting organizer as wiki link |
+| `meeting_accepted` / `meeting_tentative` / `meeting_declined` / `meeting_no_response` | Each invitee's RSVP, as wiki-link lists (same names as `meeting_invitees`); every invitee is in exactly one. Re-synced from the calendar on each refresh (see [RSVP Tracking](#rsvp-tracking)) |
 | `tags` | Used to distinguish meeting notes from transcript files |
 | `calendar_event_id` | Identifies this file as a WhisperCal meeting note |
 | `meeting_join_url` | Online meetings only; carries the Teams chat thread id (see [Teams Meeting Chat](#teams-meeting-chat)) |
@@ -726,6 +728,30 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `kanban-reviewed` | External triage mark; WhisperCal only shows and toggles it (see [The Kanban Review Mark](#the-kanban-review-mark)) |
 | `transcript` | Backlink to the transcript file |
 | `pipeline_state` | Workflow state; mirrored from transcript automatically |
+
+#### RSVP Tracking
+
+Each invitee's response to the invite is recorded per person in four list properties, so it can be reported on across meetings:
+
+```yaml
+meeting_accepted:
+  - "[[Jane Smith]]"
+meeting_tentative: []
+meeting_declined:
+  - "[[Bob Jones]]"
+meeting_no_response:
+  - "[[Ann Lee]]"
+```
+
+The lists are written when the note is created and kept up to date whenever the calendar view refreshes a day that has the meeting (a note is only rewritten when a response actually changed). Notes created before this existed pick the lists up the first time their day is viewed. The organizer is recorded in `meeting_organizer`, and appears in `meeting_accepted` only when the calendar lists them as an attendee.
+
+For example, a Dataview table of every meeting someone declined:
+
+```dataview
+TABLE meeting_date
+WHERE contains(meeting_declined, [[Bob Jones]])
+SORT meeting_date DESC
+```
 
 ---
 

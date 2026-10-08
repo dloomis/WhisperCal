@@ -76,6 +76,32 @@ export async function batchUpdateFrontmatter(
 }
 
 /**
+ * Set several frontmatter keys to arbitrary YAML values (lists, numbers…),
+ * rewriting only the keys whose value actually changed.
+ */
+export async function setFrontmatterValues(
+	app: App,
+	filePath: string,
+	updates: Record<string, unknown>,
+): Promise<void> {
+	await enqueue(filePath, async () => {
+		const file = app.vault.getAbstractFileByPath(filePath);
+		if (!(file instanceof TFile)) {
+			console.error(`[WhisperCal] setFrontmatterValues: no file at "${filePath}" — skipping {${Object.keys(updates).join(", ")}}`);
+			return;
+		}
+
+		await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+			for (const [key, value] of Object.entries(updates)) {
+				if (JSON.stringify(frontmatter[key]) !== JSON.stringify(value)) {
+					frontmatter[key] = value;
+				}
+			}
+		});
+	});
+}
+
+/**
  * Read a frontmatter value as a string. Returns undefined if the key is missing,
  * the frontmatter is undefined, or the value is not a string.
  */

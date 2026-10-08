@@ -203,11 +203,19 @@ export class GraphApiProvider implements CalendarProvider {
 }
 
 function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<string, string>, timezone: string): CalendarEvent {
-	const attendees = event.attendees?.map(a => ({
-		name: a.emailAddress.name ?? "",
-		email: a.emailAddress.address ?? "",
-		responseStatus: (a.status?.response ?? "none") as ResponseStatus,
-	})) ?? [];
+	// Graph often leaves the signed-in user's own attendee entry at "none" even
+	// after they respond; the event-level responseStatus is the authoritative
+	// copy, so it stands in for an unanswered self entry.
+	const selfResponse = (event.responseStatus?.response ?? "none") as ResponseStatus;
+	const attendees = event.attendees?.map(a => {
+		const email = a.emailAddress.address ?? "";
+		let responseStatus = (a.status?.response ?? "none") as ResponseStatus;
+		if (userEmail !== "" && email.toLowerCase() === userEmail
+			&& (responseStatus === "none" || responseStatus === "notResponded")) {
+			responseStatus = selfResponse;
+		}
+		return {name: a.emailAddress.name ?? "", email, responseStatus};
+	}) ?? [];
 	const rawBody = event.body?.content ?? "";
 	const body = event.body?.contentType === "text"
 		? rawBody.trim()
@@ -239,7 +247,7 @@ function parseGraphEvent(event: GraphEvent, userEmail: string, colorMap: Map<str
 		isOrganizer: userEmail !== "" && (event.organizer?.emailAddress?.address ?? "").toLowerCase() === userEmail,
 		isRecurring: event.type !== "singleInstance",
 		seriesId: event.seriesMasterId ?? "",
-		responseStatus: (event.responseStatus?.response as CalendarEvent["responseStatus"]) ?? "none",
+		responseStatus: selfResponse,
 		categories: (event.categories ?? []).reduce<EventCategory[]>((acc, name) => {
 			const color = colorMap.get(name);
 			if (color) acc.push({name, color});

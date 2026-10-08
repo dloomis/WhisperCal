@@ -564,6 +564,16 @@
 	color: var(--text-error);
 }
 
+.whisper-cal-rsvp-none {
+	color: var(--text-faint);
+}
+
+/* RSVP hover list: heading line, then one name per line. */
+.tooltip.whisper-cal-rsvp-tooltip {
+	white-space: pre-line;
+	text-align: left;
+}
+
 
 .whisper-cal-btn {
 	display: inline-flex;

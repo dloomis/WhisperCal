@@ -1,5 +1,5 @@
 import {App, Menu, Notice, TFile, normalizePath, setIcon, setTooltip} from "obsidian";
-import type {CalendarEvent} from "../types";
+import type {CalendarEvent, EventAttendee, ResponseStatus} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
 import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOffset} from "../utils/time";
@@ -364,36 +364,36 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 	}
 
 	if (event.attendeeCount > 0) {
-		const attEl = meta.createSpan({cls: "whisper-cal-card-meta-item"});
-		const attIcon = attEl.createSpan({cls: "whisper-cal-card-icon"});
-		setIcon(attIcon, "users-round");
-		attEl.createSpan({text: `${event.attendeeCount}`});
-
-		const accepted = event.attendees.filter(a => a.responseStatus === "accepted" || a.responseStatus === "organizer").length;
-		const tentative = event.attendees.filter(a => a.responseStatus === "tentativelyAccepted").length;
-		const declined = event.attendees.filter(a => a.responseStatus === "declined").length;
-
-		if (accepted > 0) {
-			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-accepted"});
+		const byStatus = (...statuses: (ResponseStatus | undefined)[]): EventAttendee[] =>
+			event.attendees.filter(a => statuses.includes(a.responseStatus));
+		const groups: {people: EventAttendee[]; label: string; icon: string; cls: string}[] = [
+			{people: event.attendees, label: "Invitees", icon: "users-round", cls: ""},
+			{people: byStatus("accepted", "organizer"), label: "Accepted", icon: "user-round-check", cls: "whisper-cal-rsvp-accepted"},
+			{people: byStatus("tentativelyAccepted"), label: "Tentative", icon: "user-round-minus", cls: "whisper-cal-rsvp-tentative"},
+			{people: byStatus("declined"), label: "Declined", icon: "user-round-x", cls: "whisper-cal-rsvp-declined"},
+			{people: byStatus("notResponded", "none", undefined), label: "No response", icon: "circle-help", cls: "whisper-cal-rsvp-none"},
+		];
+		for (const g of groups) {
+			// The invitee total always shows; a response bucket only when non-empty.
+			if (g.people.length === 0) continue;
+			const el = meta.createSpan({cls: `whisper-cal-card-meta-item ${g.cls}`.trim()});
 			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
-			setIcon(icon, "user-round-check");
-			el.createSpan({text: `${accepted}`});
-		}
-		if (tentative > 0) {
-			const names = event.attendees.filter(a => a.responseStatus === "tentativelyAccepted").map(a => a.name || a.email);
-			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-tentative", attr: {"aria-label": `Tentative: ${names.join(", ")}`}});
-			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
-			setIcon(icon, "user-round-minus");
-			el.createSpan({text: `${tentative}`});
-		}
-		if (declined > 0) {
-			const names = event.attendees.filter(a => a.responseStatus === "declined").map(a => a.name || a.email);
-			const el = meta.createSpan({cls: "whisper-cal-card-meta-item whisper-cal-rsvp-declined", attr: {"aria-label": `Declined: ${names.join(", ")}`}});
-			const icon = el.createSpan({cls: "whisper-cal-card-icon"});
-			setIcon(icon, "user-round-x");
-			el.createSpan({text: `${declined}`});
+			setIcon(icon, g.icon);
+			el.createSpan({text: `${g.people.length}`});
+			setTooltip(el, rsvpTooltipText(g.label, g.people), {placement: "top", classes: ["whisper-cal-rsvp-tooltip"]});
 		}
 	}
+}
+
+/** Names listed in an RSVP hover tooltip before collapsing the rest into "… and N more". */
+const RSVP_TOOLTIP_MAX_NAMES = 20;
+
+/** "Declined (2)" heading, then one name per line. */
+function rsvpTooltipText(label: string, people: EventAttendee[]): string {
+	const names = people.map(a => a.name || a.email);
+	const shown = names.slice(0, RSVP_TOOLTIP_MAX_NAMES);
+	if (names.length > shown.length) shown.push(`… and ${names.length - shown.length} more`);
+	return `${label} (${names.length})\n${shown.join("\n")}`;
 }
 
 function computePillStates(

@@ -21,6 +21,7 @@ import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/CalendarAuth";
 import {autoCreatePeopleNotes} from "../services/PeopleAutoCreate";
 import {PeopleMatchService} from "../services/PeopleMatchService";
+import {syncRsvpFrontmatter} from "../services/RsvpSync";
 import {resolveRecordingApiBaseUrl, recordingStatus, recordingSessionStatus} from "../services/RecordingApi";
 import {findNoteBySessionGuid, runApiLinkTail} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
@@ -402,6 +403,8 @@ export class CalendarView extends ItemView {
 					this.callbacks.getUserEmail(),
 				);
 			}
+
+			void this.syncRsvps(events);
 		} catch (e) {
 			// Abort if a newer refresh has started
 			if (gen !== this.refreshGeneration) return;
@@ -417,6 +420,25 @@ export class CalendarView extends ItemView {
 		this.updateStatusIndicator();
 		this.updateTodayButtonVisibility();
 		void this.loadAndRenderUnlinkedSection();
+	}
+
+	/**
+	 * Re-stamp each existing meeting note's per-invitee RSVP lists from freshly
+	 * fetched events — responses change after the note is made. Writes only on
+	 * change, so the metadata-change re-render this can trigger settles at once.
+	 */
+	private async syncRsvps(events: CalendarEvent[]): Promise<void> {
+		const peopleSvc = new PeopleMatchService(this.app, this.settings.peopleFolderPath);
+		for (const event of events) {
+			if (event.isMerged || event.attendees.length === 0) continue;
+			const file = this.noteCreator.findNote(event);
+			if (!file) continue;
+			try {
+				await syncRsvpFrontmatter(this.app, file, event, peopleSvc);
+			} catch (e) {
+				console.error(`[WhisperCal] RSVP sync failed for "${file.path}":`, e);
+			}
+		}
 	}
 
 	/**
