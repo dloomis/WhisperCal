@@ -2,7 +2,8 @@ import {App, Menu, Notice, TFile, normalizePath, setIcon, setTooltip} from "obsi
 import type {CalendarEvent, EventAttendee, ResponseStatus} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
-import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOffset} from "../utils/time";
+import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOffset, sleep} from "../utils/time";
+import {debug} from "../utils/debug";
 import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
 import {closeMeetingApp} from "../services/MeetingAppCloser";
 import {resolveWikiLink} from "../utils/vault";
@@ -343,11 +344,26 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 		locLink.addEventListener("click", evt => {
 			evt.preventDefault();
 			void (async () => {
-				const launched = await openMeetingUrl(joinUrl);
-				// Auto-record: once the meeting app is up, kick off capture so the
-				// user doesn't have to reach back to the card. Only when the launch
-				// succeeded and auto-record is on.
-				if (launched && opts.automateMeeting) {
+				const launch = openMeetingUrl(joinUrl);
+				// macOS resolves openExternal only once the target app has finished
+				// launching, so a cold Teams start can hold the promise for a long
+				// time. Auto-record doesn't wait on that: if the launch hasn't failed
+				// within the settle window, the link was handed to the OS and capture
+				// starts anyway.
+				const outcome = await Promise.race([
+					launch,
+					sleep(LAUNCH_SETTLE_MS).then(() => "pending" as const),
+				]);
+				if (outcome === "pending") {
+					debug("meetingLink", `launch still pending after ${LAUNCH_SETTLE_MS}ms — proceeding`);
+					void launch.then(ok => { if (!ok) showLaunchFailed(); });
+				} else if (!outcome) {
+					showLaunchFailed();
+					return;
+				}
+				// Auto-record: kick off capture so the user doesn't have to reach
+				// back to the card.
+				if (opts.automateMeeting) {
 					attemptAutoRecord(opts, event, joinUrl);
 				}
 			})();
@@ -383,6 +399,13 @@ function renderMetadata(content: HTMLElement, event: CalendarEvent, opts: Meetin
 			setTooltip(el, rsvpTooltipText(g.label, g.people), {placement: "top", classes: ["whisper-cal-rsvp-tooltip"]});
 		}
 	}
+}
+
+/** How long a join click waits on the meeting-app launch before auto-record proceeds without it. */
+const LAUNCH_SETTLE_MS = 3000;
+
+function showLaunchFailed(): void {
+	new Notice("Couldn't open the meeting link. Check that the meeting app or a browser is installed.");
 }
 
 /** Names listed in an RSVP hover tooltip before collapsing the rest into "… and N more". */

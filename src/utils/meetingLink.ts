@@ -79,21 +79,23 @@ export function toMeetingDeepLink(url: string): string {
  */
 export async function openMeetingUrl(url: string): Promise<boolean> {
 	const deepLink = toMeetingDeepLink(url);
+	const t0 = Date.now();
 	if (deepLink !== url) {
 		try {
 			debug("meetingLink", `opening deep link: ${deepLink}`);
 			await shell.openExternal(deepLink);
+			debug("meetingLink", `deep link opened in ${Date.now() - t0}ms`);
 			return true;
 		} catch (err) {
 			// App not installed — fall back to the browser.
-			debug("meetingLink", `deep link failed, falling back to browser: ${String(err)}`);
+			console.warn(`[WhisperCal] Meeting deep link failed after ${Date.now() - t0}ms, falling back to browser:`, err);
 		}
 	}
 	try {
 		await shell.openExternal(url);
 		return true;
 	} catch (err) {
-		debug("meetingLink", `browser launch failed: ${String(err)}`);
+		console.warn(`[WhisperCal] Meeting link browser launch failed after ${Date.now() - t0}ms:`, err);
 		return false;
 	}
 }
