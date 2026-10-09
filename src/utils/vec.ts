@@ -1,6 +1,6 @@
 /** Small vector helpers shared by voiceprint enrollment + matching. */
 
-export function l2(v: number[]): number {
+function l2(v: number[]): number {
 	let s = 0;
 	for (const x of v) s += x * x;
 	return Math.sqrt(s);

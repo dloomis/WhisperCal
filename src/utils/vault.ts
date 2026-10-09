@@ -9,6 +9,46 @@ export function stripWikiLink(raw: string): string {
 	return raw.replace(/^\[\[/, "").replace(/(\|.*?)?\]\]$/, "").trim();
 }
 
+/** Basename of a note path without the `.md` extension ("" for an empty path). */
+export function noteBasename(notePath: string): string {
+	return notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+}
+
+/**
+ * The transcript naming contract: a note's transcript (and its audio and
+ * voiceprint sidecar) is `<note basename> - Transcript`.
+ */
+export function transcriptBasenameFor(noteBase: string): string {
+	return `${noteBase} - Transcript`;
+}
+
+export function transcriptPathFor(notePath: string, transcriptFolderPath: string): string {
+	return normalizePath(`${transcriptFolderPath}/${transcriptBasenameFor(noteBasename(notePath) || "Transcript")}.md`);
+}
+
+/**
+ * Wikilink to a vault path with the basename as display text, e.g.
+ * `[[Meetings/2026-01-01 - Standup|2026-01-01 - Standup]]`. Written by hand
+ * (not fileManager.generateMarkdownLink) because every reader of these
+ * frontmatter fields parses `[[…]]` via stripWikiLink.
+ */
+export function wikiLinkToPath(path: string): string {
+	const base = noteBasename(path);
+	const linkTarget = path.endsWith(".md") ? path.slice(0, -3) : path;
+	return `[[${linkTarget}|${base}]]`;
+}
+
+/** First free path for "{folder}/{basename}.md", suffixing " (1)", " (2)", ... */
+export function uniquePath(app: App, folder: string, basename: string): string {
+	let candidate = normalizePath(`${folder}/${basename}.md`);
+	let i = 1;
+	while (app.vault.getAbstractFileByPath(candidate)) {
+		candidate = normalizePath(`${folder}/${basename} (${i}).md`);
+		i++;
+	}
+	return candidate;
+}
+
 /**
  * Resolve a frontmatter wiki-link value (e.g. "[[Some Note]]") to a TFile.
  * Returns null if the value is missing, empty, or the target doesn't exist.

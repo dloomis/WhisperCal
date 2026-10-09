@@ -125,9 +125,10 @@ export class AutoSpeakerTagger {
 			return {ok: false};
 		};
 		if (!s.autoSummarizeAfterTagging) return skip("automatic mode off");
-		if (!s.llmEnabled) return skip("LLM features disabled");
-		if (this.deps.isLlmDebugMode()) return skip("LLM debug mode on");
-		if (!s.speakerTaggingPromptPath) return skip("no speaker tagging prompt");
+		// Without the LLM pass the run is voiceprint-only (cache matches, auto-apply
+		// when every speaker clears the floor) — still worth doing in the background.
+		const llmPass = s.llmEnabled && !!s.speakerTaggingPromptPath;
+		if (llmPass && this.deps.isLlmDebugMode()) return skip("LLM debug mode on");
 		if (file.extension !== "md" || !s.transcriptFolderPath || !file.path.startsWith(s.transcriptFolderPath + "/")) {
 			return skip("not a transcript file");
 		}

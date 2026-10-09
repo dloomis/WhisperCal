@@ -9,5 +9,4 @@ export interface PeopleSearchResult {
 
 export interface PeopleSearchProvider {
 	search(query: string): Promise<PeopleSearchResult[]>;
-	isAvailable(): boolean;
 }

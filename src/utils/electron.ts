@@ -18,7 +18,7 @@ interface RemoteModule {
  * runtime but not in esbuild's external list); plain `electron` is external
  * and can be required directly.
  */
-export function windowRequire(module: string): unknown {
+function windowRequire(module: string): unknown {
 	const req = (window as unknown as {require?: (m: string) => unknown}).require;
 	try {
 		return req ? req(module) : undefined;

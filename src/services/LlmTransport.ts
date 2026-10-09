@@ -87,9 +87,8 @@ export function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKIL
 		// process is spawned with windowsHide (CREATE_NO_WINDOW) and has no window
 		// to receive the message, so a "SIGTERM" would just waste the grace window —
 		// and on plugin unload the renderer dies before the escalation timer fires,
-		// leaving orphaned claude/node processes. Note: taskkill doesn't set
-		// child.killed, so the runLlm force-kill timer always fires on
-		// Windows; killing an already-dead PID just errors, which is swallowed.
+		// leaving orphaned claude/node processes. Killing an already-dead PID
+		// just errors, which is swallowed.
 		execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], {timeout: 5000}, () => { /* best-effort */ });
 		return;
 	}
@@ -285,16 +284,9 @@ function buildCliCommand(req: LlmTransportRequest, systemPromptFile?: string): s
 	// PowerShell's $(Get-Content -Raw …) subexpression is the direct analog, giving
 	// Windows the same system-prompt authority and prompt-cache behavior.
 	if (systemPromptFile) {
-		// Windows never reaches the isWin branch here — runLlm delivers the
-		// instructions via the user message on Windows (see review #1), so
-		// systemPromptFile is POSIX-only. The Windows form (with -Encoding UTF8) is
-		// kept defensive in case a future caller opts back into system-prompt
-		// delivery on Windows.
-		flagParts.push(
-			Platform.isWin
-				? `--append-system-prompt "$(Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(systemPromptFile)})"`
-				: `--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`,
-		);
+		// POSIX-only: on Windows the instructions ride in the user message instead
+		// (see deliverSystemPrompt), so systemPromptFile is never set there.
+		flagParts.push(`--append-system-prompt "$(cat ${shellQuote(systemPromptFile)})"`);
 	}
 	if (req.model) flagParts.push(`--model ${platformQuote(req.model)}`);
 	// Base flags first, then per-run flags so a specific value can override a
@@ -309,6 +301,27 @@ function buildCliCommand(req: LlmTransportRequest, systemPromptFile?: string): s
 }
 
 /**
+ * Decide how the system prompt reaches the CLI: a temp file for
+ * `--append-system-prompt` on POSIX, or prepended to the user message on
+ * Windows / when the temp write fails. Any temp file is appended to `tmpFiles`.
+ */
+function deliverSystemPrompt(req: LlmTransportRequest, tmpFiles: string[]): {systemPromptFile?: string; message: string} {
+	const message = req.userMessage;
+	if (req.systemPrompt === undefined) return {message};
+	if (!Platform.isWin) {
+		try {
+			const tmpFile = path.join(ensureTmpDir(req.tmpDir), tmpFileName("wcal-sys"));
+			fs.writeFileSync(tmpFile, req.systemPrompt, {encoding: "utf-8", mode: 0o600});
+			tmpFiles.push(tmpFile);
+			return {systemPromptFile: tmpFile, message};
+		} catch {
+			// Temp write failed — fall back to user-message delivery below.
+		}
+	}
+	return {message: `${req.systemPrompt}\n\n${message}`};
+}
+
+/**
  * Build the full shell command string for a request.
  * Pipes the user message via stdin to avoid OS argument length limits.
  *
@@ -319,28 +332,11 @@ function buildCliCommand(req: LlmTransportRequest, systemPromptFile?: string): s
  * prepended to the user message instead: PowerShell 5.1's legacy native-argument
  * passing does not escape embedded double quotes when building the child command
  * line, so `--append-system-prompt "$(Get-Content …)"` would shatter into
- * garbage tokens on any instruction text containing `"` (review #1).
+ * garbage tokens on any instruction text containing `"`.
  */
 function buildCommand(req: LlmTransportRequest): {cmd: string; message: string; tmpFiles: string[]} {
 	const tmpFiles: string[] = [];
-	let systemPromptFile: string | undefined;
-	let message = req.userMessage;
-
-	if (req.systemPrompt !== undefined) {
-		let delivered = false;
-		if (!Platform.isWin) {
-			try {
-				const tmpFile = path.join(ensureTmpDir(req.tmpDir), tmpFileName("wcal-sys"));
-				fs.writeFileSync(tmpFile, req.systemPrompt, {encoding: "utf-8", mode: 0o600});
-				tmpFiles.push(tmpFile);
-				systemPromptFile = tmpFile;
-				delivered = true;
-			} catch {
-				// Temp write failed — fall back to user-message delivery below.
-			}
-		}
-		if (!delivered) message = `${req.systemPrompt}\n\n${message}`;
-	}
+	const {systemPromptFile, message} = deliverSystemPrompt(req, tmpFiles);
 
 	const cli = buildCliCommand(req, systemPromptFile);
 
@@ -352,14 +348,14 @@ function buildCommand(req: LlmTransportRequest): {cmd: string; message: string; 
 		// carries the `&` call operator that invokes the quoted CLI name off PATH.
 		// -Encoding UTF8 + the $OutputEncoding/[Console]::OutputEncoding prelude keep
 		// non-ASCII text (accented names) intact through the read → stdin → stdout
-		// legs; PS 5.1 defaults (ANSI read, ASCII pipe, OEM console) mangle it (#2).
+		// legs; PS 5.1 defaults (ANSI read, ASCII pipe, OEM console) mangle it.
 		const tmpTrigger = path.join(ensureTmpDir(req.tmpDir), tmpFileName("wcal-trigger"));
 		fs.writeFileSync(tmpTrigger, message, {encoding: "utf-8", mode: 0o600});
 		tmpFiles.push(tmpTrigger);
 		cmd = `${WIN_PS_UTF8_PRELUDE}Get-Content -Raw -Encoding UTF8 -LiteralPath ${psQuote(tmpTrigger)} | ${cli}`;
 	} else {
-		// Pipe the message via stdin using a heredoc to avoid ENAMETOOLONG on long
-		// prompts. Randomize the delimiter per invocation: a fixed sentinel could
+		// Pipe the message via stdin using a heredoc so no stdin pipe has to be
+		// managed. Randomize the delimiter per invocation: a fixed sentinel could
 		// appear verbatim in third-party message content and prematurely close the
 		// heredoc, spilling the rest into the login shell. A random token can't be
 		// predicted or injected.
@@ -428,14 +424,17 @@ export function runLlm(req: LlmTransportRequest): Promise<LlmTransportResult> {
 		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
 
-		child.stdout!.on("data", (data: {toString(): string}) => {
-			const text = data.toString();
+		// Decode as streams, not per chunk: a multibyte character split across
+		// two chunks would otherwise become U+FFFD (an accented name in the JSON
+		// block would then fail to resolve to its People note).
+		child.stdout!.setEncoding("utf8");
+		child.stderr!.setEncoding("utf8");
+		child.stdout!.on("data", (text: string) => {
 			stdoutChunks.push(text);
 			if (req.debugLogging) console.debug("[WhisperCal] LLM stdout:", text);
 		});
 
-		child.stderr!.on("data", (data: {toString(): string}) => {
-			const text = data.toString();
+		child.stderr!.on("data", (text: string) => {
 			stderrChunks.push(text);
 			console.error("[WhisperCal] LLM stderr:", text);
 		});
@@ -490,28 +489,11 @@ function runLlmTerminal(req: LlmTransportRequest): Promise<LlmTransportResult> {
 		return Promise.resolve({exitCode: 1, stdout: "", stderr: "Debug terminal mode is only available on macOS and Windows"});
 	}
 	const tmpFiles: string[] = [];
-
-	// Same delivery split as buildCommand: system prefix on POSIX, user-message
-	// prepend on Windows or when the temp write fails (PS 5.1 quoting — review #1).
-	let systemPromptFile: string | undefined;
-	let message = req.userMessage;
-	if (req.systemPrompt !== undefined) {
-		let delivered = false;
-		if (!Platform.isWin) {
-			try {
-				const tmpFile = path.join(ensureTmpDir(req.tmpDir), tmpFileName("wcal-sys"));
-				fs.writeFileSync(tmpFile, req.systemPrompt, {encoding: "utf-8", mode: 0o600});
-				tmpFiles.push(tmpFile);
-				systemPromptFile = tmpFile;
-				delivered = true;
-			} catch { /* fall back */ }
-		}
-		if (!delivered) message = `${req.systemPrompt}\n\n${message}`;
-	}
+	const {systemPromptFile, message} = deliverSystemPrompt(req, tmpFiles);
 
 	const cli = buildCliCommand(req, systemPromptFile);
 	const tmpDir = ensureTmpDir(req.tmpDir);
-	const tmpTrigger = path.join(tmpDir, `wcal-trigger-${Date.now()}.txt`);
+	const tmpTrigger = path.join(tmpDir, tmpFileName("wcal-trigger"));
 	fs.writeFileSync(tmpTrigger, message, {encoding: "utf-8", mode: 0o600});
 	tmpFiles.push(tmpTrigger);
 

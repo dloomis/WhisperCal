@@ -124,25 +124,8 @@
 	margin-bottom: 12px;
 }
 
-.whisper-cal-modal-input {
-	width: 100%;
-	padding: 8px 10px;
-	margin-bottom: 12px;
-	font-size: var(--font-ui-medium);
-}
-
 .whisper-cal-hidden {
 	display: none !important;
-}
-
-.whisper-cal-section-title {
-	font-size: var(--font-ui-small);
-	font-weight: var(--font-semibold);
-	color: var(--text-muted);
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	margin: 16px 0 8px 0;
-	padding-left: 84px;
 }
 
 .whisper-cal-card {
@@ -266,52 +249,35 @@
 	width: 100%;
 }
 
-.whisper-cal-card-gutter-organizer {
-	color: var(--text-warning);
-	display: flex;
-	align-items: center;
-}
-
-.whisper-cal-card-gutter-organizer .svg-icon {
-	width: 16px;
-	height: 16px;
-	stroke-width: 2.5px;
-}
-
-.whisper-cal-card-gutter-important {
-	color: var(--text-warning);
-	display: flex;
-	align-items: center;
-}
-
-.whisper-cal-card-gutter-important .svg-icon {
-	width: 16px;
-	height: 16px;
-	stroke-width: 2.5px;
-}
-
-.whisper-cal-card-gutter-merged {
-	color: var(--text-accent);
-	display: flex;
-	align-items: center;
-}
-
-.whisper-cal-card-gutter-merged .svg-icon {
-	width: 16px;
-	height: 16px;
-	stroke-width: 2.5px;
-}
-
+/* Gutter marker icons — same box, per-marker color. */
+.whisper-cal-card-gutter-organizer,
+.whisper-cal-card-gutter-important,
+.whisper-cal-card-gutter-merged,
 .whisper-cal-card-gutter-kanban {
-	color: var(--text-success);
 	display: flex;
 	align-items: center;
 }
 
+.whisper-cal-card-gutter-organizer .svg-icon,
+.whisper-cal-card-gutter-important .svg-icon,
+.whisper-cal-card-gutter-merged .svg-icon,
 .whisper-cal-card-gutter-kanban .svg-icon {
 	width: 16px;
 	height: 16px;
 	stroke-width: 2.5px;
+}
+
+.whisper-cal-card-gutter-organizer,
+.whisper-cal-card-gutter-important {
+	color: var(--text-warning);
+}
+
+.whisper-cal-card-gutter-merged {
+	color: var(--text-accent);
+}
+
+.whisper-cal-card-gutter-kanban {
+	color: var(--text-success);
 }
 
 /* Dashed border for not-accepted meetings — gaps show primary background */
@@ -731,25 +697,6 @@
 	color: var(--text-error);
 }
 
-.whisper-cal-device-code {
-	font-family: var(--font-monospace);
-	font-size: var(--font-ui-large);
-	font-weight: var(--font-bold);
-	color: var(--text-normal);
-	background: var(--background-secondary);
-	border-radius: var(--radius-s);
-	padding: 8px 12px;
-	text-align: center;
-	letter-spacing: 0.1em;
-	user-select: all;
-}
-
-.whisper-cal-auth-link {
-	font-size: var(--font-ui-small);
-	color: var(--interactive-accent);
-	text-align: center;
-}
-
 .whisper-cal-auth-hint {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-faint);
@@ -991,7 +938,7 @@
    under the meta rows. Clickable buttons that open each stage's artifact.
    Segments are <button>s, so every rule that sets background/color/box-shadow
    must out-rank Obsidian's `button:not(.clickable-icon)` (0,1,1) — hence the
-   descendant/double-class selectors throughout (same trick the old pills used). */
+   descendant/double-class selectors throughout. */
 .whisper-cal-rail {
 	display: flex;
 	gap: 4px;
@@ -1089,9 +1036,11 @@
 	max-width: 200px;
 	padding: 0;
 	border: 0;
-	border-radius: 3px;
+	border-radius: var(--button-radius);
 	background: var(--background-modifier-border);
-	box-shadow: none;
+	/* The theme's button edge (Obsidian draws it as a shadow), so segments stand
+	   off the card's tinted surfaces the way the user's other buttons do. */
+	box-shadow: var(--input-shadow);
 	cursor: pointer;
 	overflow: hidden;
 	transition: background 150ms ease;
@@ -1248,11 +1197,13 @@
 	gap: 6px;
 	height: var(--wc-card-btn-h);
 	padding: 0 12px;
-	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
+	/* The user's theme button: Obsidian's button variables, so the card follows
+	   whatever theme is active. */
+	border-radius: var(--button-radius);
+	border: 0;
 	background: var(--interactive-normal);
 	color: var(--text-normal);
-	box-shadow: none;
+	box-shadow: var(--input-shadow);
 	cursor: pointer;
 	box-sizing: border-box;
 	font-size: var(--font-ui-smaller);
@@ -1260,9 +1211,12 @@
 	line-height: 1;
 }
 
+/* Hover takes an accent tint, like the rail segments, rather than the theme's
+   --interactive-hover: in the default theme that is a near-invisible step
+   (#fff → #fafafa light), which disappears entirely on the tinted gutter. */
 .whisper-cal-smart:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
-	border-color: var(--interactive-accent);
+	box-shadow: var(--input-shadow-hover);
 	color: var(--interactive-accent);
 }
 
@@ -1291,26 +1245,39 @@
 /* Stop button — theme-red tint, matching the rail's recording segment. */
 .whisper-cal-smart.whisper-cal-smart-stop {
 	background: color-mix(in srgb, var(--text-error) 15%, transparent);
-	border-color: var(--text-error);
+	border: 1px solid var(--text-error);
 	color: var(--text-error);
+	/* The colored border is this variant's edge; the theme's shadow ring would
+	   draw a second line inside it. */
+	box-shadow: none;
 }
 
 .whisper-cal-smart-stop:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--text-error) 25%, transparent);
 	border-color: var(--text-error);
 	color: var(--text-error);
+	box-shadow: none;
 }
 
-/* Review speakers — accent-tinted call-to-action (mirrors the old review pill). */
+/* Record button — at rest a plain theme button, but its hover previews the
+   theme-red of the Stop button it turns into once recording starts. */
+.whisper-cal-smart-record:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--text-error) 15%, var(--interactive-normal));
+	color: var(--text-error);
+}
+
+/* Review speakers — accent-tinted call-to-action. */
 .whisper-cal-smart.whisper-cal-smart-review {
 	background: color-mix(in srgb, var(--interactive-accent) 12%, var(--interactive-normal));
-	border-color: var(--interactive-accent);
+	border: 1px solid var(--interactive-accent);
 	color: var(--interactive-accent);
+	box-shadow: none;
 }
 
 .whisper-cal-smart-review:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--interactive-accent) 22%, var(--interactive-normal));
 	color: var(--interactive-accent);
+	box-shadow: none;
 }
 
 .whisper-cal-smart-count {
@@ -1364,10 +1331,8 @@
 	color: var(--text-error);
 }
 
-/* Mini icon buttons — the ⋯ menu. Scoped under both hosts (the gutter slot it
-   lives in, and the action row for the no-gutter fallback) to out-rank
+/* Mini icon buttons — the ⋯ menu. Scoped under the gutter slot to out-rank
    Obsidian's `button:not(.clickable-icon)` styles. */
-.whisper-cal-card-actions .whisper-cal-mini,
 .whisper-cal-card-gutter-record .whisper-cal-mini {
 	display: inline-flex;
 	align-items: center;
@@ -1376,11 +1341,11 @@
 	width: var(--wc-card-btn-h);
 	height: var(--wc-card-btn-h);
 	padding: 0;
-	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--button-radius);
+	border: 0;
 	background: var(--interactive-normal);
 	color: var(--icon-color);
-	box-shadow: none;
+	box-shadow: var(--input-shadow);
 	cursor: pointer;
 	box-sizing: border-box;
 }
@@ -1392,7 +1357,7 @@
 
 .whisper-cal-mini:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
-	border-color: var(--interactive-accent);
+	box-shadow: var(--input-shadow-hover);
 	color: var(--interactive-accent);
 }
 
@@ -1408,63 +1373,6 @@
 @keyframes whisper-cal-accent-wash {
 	0%, 100% { opacity: 0; }
 	50% { opacity: 1; }
-}
-
-/* Inline recording dot used as status-icon in the status line */
-.whisper-cal-rec-dot-inline {
-	width: 14px;
-	height: 14px;
-}
-
-.whisper-cal-rec-dot-inline::after {
-	content: "";
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--color-red);
-	animation: whisper-cal-rec-flash 2s ease-in-out infinite;
-}
-
-.whisper-cal-card-status.whisper-cal-card-status-recording {
-	color: var(--text-muted);
-	animation: none;
-}
-
-.whisper-cal-card-status-done {
-	animation: none;
-	color: var(--text-success, var(--interactive-accent));
-}
-
-.whisper-cal-card-status-warning {
-	animation: none;
-	color: var(--text-muted);
-}
-
-@keyframes whisper-cal-rec-flash {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.3; }
-}
-
-/* Status line below action pills */
-.whisper-cal-card-status {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	margin-top: 8px;
-	font-size: var(--font-ui-smaller);
-	color: var(--interactive-accent);
-	animation: whisper-cal-pulse 1.5s ease-in-out infinite;
-}
-
-.whisper-cal-card-status-icon {
-	display: inline-flex;
-	align-items: center;
-	flex-shrink: 0;
-}
-
-.whisper-cal-card-status-icon svg {
-	width: 14px;
-	height: 14px;
 }
 
 /* LLM-in-progress banner inside meeting/transcript note */
@@ -1655,7 +1563,8 @@
 	width: 100%;
 }
 
-.whisper-cal-name-input-buttons {
+.whisper-cal-name-input-buttons,
+.whisper-cal-cached-proposal-buttons {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
@@ -2455,12 +2364,9 @@
 	.whisper-cal-rail-complete .whisper-cal-rail-seg,
 	.whisper-cal-rail-complete .whisper-cal-rail-seg:nth-of-type(4),
 	.whisper-cal-rail-seg.whisper-cal-rail-seg-complete,
-	.whisper-cal-rail.whisper-cal-rail-complete::after,
 	.whisper-cal-rail-seg.whisper-cal-rail-seg-running,
 	.whisper-cal-rail-seg.whisper-cal-rail-seg-rec,
 	.whisper-cal-rail-badge-progress .whisper-cal-rail-badge-label,
-	.whisper-cal-card-status,
-	.whisper-cal-rec-dot-inline::after,
 	.whisper-cal-llm-banner {
 		animation: none;
 	}

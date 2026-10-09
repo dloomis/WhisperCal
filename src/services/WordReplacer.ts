@@ -16,7 +16,7 @@ interface Replacement {
  *   recieve,receive
  *   Jonh,John
  */
-export function parseReplacementFile(content: string): Replacement[] {
+function parseReplacementFile(content: string): Replacement[] {
 	const replacements: Replacement[] = [];
 	for (const raw of content.split("\n")) {
 		const line = raw.trim();
@@ -36,14 +36,14 @@ export function parseReplacementFile(content: string): Replacement[] {
  * Load replacement pairs from a vault file. Returns empty array if file
  * doesn't exist or contains no valid rules.
  */
-export async function loadReplacements(app: App, replacementFilePath: string): Promise<Replacement[]> {
+async function loadReplacements(app: App, replacementFilePath: string): Promise<Replacement[]> {
 	const mapFile = app.vault.getAbstractFileByPath(replacementFilePath);
 	if (!(mapFile instanceof TFile)) return [];
 	const mapContent = await app.vault.cachedRead(mapFile);
 	return parseReplacementFile(mapContent);
 }
 
-export interface ReplacementHit {
+interface ReplacementHit {
 	from: string;
 	to: string;
 	count: number;
@@ -59,7 +59,7 @@ export interface ReplacementResult {
  * Run replacements on a string. Returns the transformed text, total count,
  * and per-rule hit details.
  */
-export function runReplacements(text: string, replacements: Replacement[]): ReplacementResult {
+function runReplacements(text: string, replacements: Replacement[]): ReplacementResult {
 	// Partition by boundary type for efficient batching
 	const wordBounded = new Map<string, string>();
 	const custom: Replacement[] = [];

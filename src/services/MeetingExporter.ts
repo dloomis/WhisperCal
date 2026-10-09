@@ -1,4 +1,5 @@
 import {App, FileSystemAdapter, Notice, TFile} from "obsidian";
+import {shell} from "electron";
 import {promises as fs} from "fs";
 import {join} from "path";
 import {homedir} from "os";
@@ -101,9 +102,7 @@ export async function exportMeetingBundle(app: App, notePath: string): Promise<v
 	new Notice(`Exported ${files.length} file${files.length === 1 ? "" : "s"} to ${zipPath}`);
 	// Best-effort file-manager reveal — the export already succeeded
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
-		const electron = require("electron") as {shell: {showItemInFolder(path: string): void}};
-		electron.shell.showItemInFolder(zipPath);
+		shell.showItemInFolder(zipPath);
 	} catch (err) {
 		console.warn("[WhisperCal] Could not reveal export folder:", err);
 	}

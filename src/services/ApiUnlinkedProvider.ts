@@ -2,10 +2,10 @@ import type {App} from "obsidian";
 import {TFile, TFolder, normalizePath} from "obsidian";
 import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} from "./UnlinkedRecordingProvider";
 import type {WhisperCalSettings} from "../settings";
-import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "../utils/vault";
-import {batchUpdateFrontmatter, removeFrontmatterKeys} from "../utils/frontmatter";
+import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink, noteBasename, transcriptBasenameFor} from "../utils/vault";
+import {batchUpdateFrontmatter, removeFrontmatterKeys, processFrontmatterQueued} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
-import {parseDurationSeconds} from "../utils/time";
+import {parseDurationSeconds, sleep} from "../utils/time";
 import {FM} from "../constants";
 
 interface ApiTranscriptData {
@@ -26,7 +26,7 @@ async function retryRename<T>(op: () => Promise<T>): Promise<T> {
 			return await op();
 		} catch (err) {
 			lastErr = err;
-			if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500));
+			if (attempt < 2) await sleep(500);
 		}
 	}
 	throw lastErr;
@@ -80,9 +80,9 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		const freshFile = this.app.vault.getAbstractFileByPath(data.file.path);
 		if (!(freshFile instanceof TFile)) return false;
 
-		const noteBasename = opts.notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-		if (!noteBasename) {
-			console.error(`[WhisperCal] ApiUnlinkedProvider.linkToNote: empty noteBasename from "${opts.notePath}" — cannot link ${freshFile.path}`);
+		const noteBase = noteBasename(opts.notePath);
+		if (!noteBase) {
+			console.error(`[WhisperCal] ApiUnlinkedProvider.linkToNote: empty noteBase from "${opts.notePath}" — cannot link ${freshFile.path}`);
 			return false;
 		}
 
@@ -99,15 +99,14 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 
 		// 1. Enrich transcript frontmatter with full meeting context
 		try {
-			await this.app.fileManager.processFrontMatter(
-				freshFile,
+			await processFrontmatterQueued(this.app, freshFile,
 				(fm: Record<string, unknown>) => {
 					const existing = Array.isArray(fm["tags"])
 						? fm["tags"] as string[] : [];
 					if (!existing.includes("transcript")) {
 						fm["tags"] = [...existing, "transcript"];
 					}
-					fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
+					fm[FM.MEETING_NOTE] = `[[${noteBase}]]`;
 					fm[FM.PIPELINE_STATE] = "titled";
 					fm["meeting_subject"] = opts.subject;
 					fm["is_recurring"] = opts.isRecurring ?? false;
@@ -135,12 +134,12 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			return false;
 		}
 
-		// 2. Rename transcript to match linked naming convention: "{noteBasename} - Transcript.md",
+		// 2. Rename transcript to match linked naming convention: "{noteBase} - Transcript.md",
 		//    bringing its sibling audio (.m4a) and voiceprint sidecar (.voiceprints.json) along so
 		//    all three keep the same basename. Both companions are resolved by the transcript's
 		//    basename as a fallback (resolveTranscriptAudio / loadSidecar), so leaving them behind
 		//    orphans click-to-play audio and breaks acoustic enrollment.
-		const expectedBasename = `${noteBasename} - Transcript`;
+		const expectedBasename = transcriptBasenameFor(noteBase);
 		const expectedPath = normalizePath(`${opts.transcriptFolderPath}/${expectedBasename}.md`);
 		let transcriptFile: TFile = freshFile;
 		if (freshFile.path !== expectedPath) {
@@ -289,7 +288,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 			return;
 		}
 		try {
-			await this.app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
+			await processFrontmatterQueued(this.app, transcriptFile, (fm: Record<string, unknown>) => {
 				// Vault-relative path, not the bare filename: loadSidecar resolves a
 				// bare name only against the transcript's folder and vault root, so a
 				// sidecar kept in another folder (Tome stores it next to the audio)

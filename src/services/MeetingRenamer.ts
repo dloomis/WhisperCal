@@ -16,13 +16,18 @@ export interface RenameMeetingResult {
  * when the basename doesn't start with `oldBase` (leave that file untouched rather
  * than risk mangling an unrelated name).
  */
-function relatedRenameTarget(file: TFile, oldBase: string, newBase: string): string | null {
+export function relatedRenameName(file: TFile, oldBase: string, newBase: string): string | null {
 	if (!file.basename.startsWith(oldBase)) return null;
 	const suffix = file.basename.slice(oldBase.length);
-	const newBasename = `${newBase}${suffix}`;
-	const dir = file.parent && file.parent.path !== "/" ? `${file.parent.path}/` : "";
 	const ext = file.extension ? `.${file.extension}` : "";
-	return normalizePath(`${dir}${newBasename}${ext}`);
+	return `${newBase}${suffix}${ext}`;
+}
+
+function relatedRenameTarget(file: TFile, oldBase: string, newBase: string): string | null {
+	const name = relatedRenameName(file, oldBase, newBase);
+	if (name === null) return null;
+	const dir = file.parent && file.parent.path !== "/" ? `${file.parent.path}/` : "";
+	return normalizePath(`${dir}${name}`);
 }
 
 /**

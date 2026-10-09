@@ -4,26 +4,13 @@ import * as path from "path";
 import {runLlm} from "./LlmTransport";
 
 /**
- * LLM invocation orchestration (DESIGN C5): everything WhisperCal-specific about
+ * LLM invocation orchestration: everything WhisperCal-specific about
  * an LLM run — the prompt-file / inline-prompt precedence, trigger assembly
  * (transcript path, folders, roster, voiceprint anchors, …), and the plugin tmp
  * dir — assembled into a generic transport request. All process mechanics
  * (spawn, kills, quoting, timeouts, concurrency slots) live in `LlmTransport`,
  * which stays product-blind; nothing prompt- or meeting-aware may sink below it.
- *
- * The generic helpers are re-exported so existing call sites keep importing them
- * from here; new code should import them from `LlmTransport` directly.
  */
-export {
-	activeProcesses,
-	killProcessTree,
-	stripAnsi,
-	cleanLlmStderr,
-	validateLlmCli,
-	activeLlmCount,
-	claimLlmSlot,
-	releaseLlmSlot,
-} from "./LlmTransport";
 
 interface LlmInvokerOpts {
 	targetPath: string;       // vault-relative path to the file the prompt operates on

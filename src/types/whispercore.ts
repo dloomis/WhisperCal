@@ -1,16 +1,12 @@
 /**
- * Vendored WhisperCore public-API types.
+ * Public-API types for the WhisperCore surface that WhisperCal hosts for
+ * companion plugins (WhisperOrg). These began life as a vendored copy of the
+ * standalone WhisperCore plugin's `api.ts`; Core has since been folded back
+ * into WhisperCal (see Plans/whispercore-reintegration-plan.md), so this file
+ * is now the one definition. Only `LlmConfigDto` is used internally today;
+ * the rest is the contract WhisperOrg's bridge will consume once Phase 5 lands.
  *
- * VERBATIM hand-copy of the vendorable block from `../WhisperCore/src/api.ts`
- * (WhisperCore 0.1.0 — WHISPERCORE_API_VERSION 1). Copied 2026-07-17
- * (listModels() + model DTOs added under Core's additive-on-v1 rule; version
- * integer stays 1 — additive members are optional-chained by consumers whose
- * copy predates them).
- *
- * The block is dependency-free by contract (WhisperCore DESIGN §3), so it
- * compiles standalone — no import, no npm link. Re-copy this whole block on
- * every WHISPERCORE_API_VERSION bump; the runtime `apiVersion` check in
- * CoreBridge is the drift alarm. Do NOT edit the block by hand.
+ * Keep the block dependency-free so a consumer can copy it verbatim.
  */
 
 // ── consumer-facing types (vendorable) — keep dependency-free ──
@@ -67,7 +63,7 @@ export type LlmModelListDto =
 	| {ok: true; models: LlmModelDto[]}
 	| {ok: false; kind: "no-key" | "not-ready" | "auth" | "http" | "parse" | "network"; message: string};
 
-/** One-time migration intake (DESIGN §8.3). Fills EMPTY Core slots only; never overwrites. */
+/** One-time migration intake. Fills EMPTY Core slots only; never overwrites. */
 export interface CoreImportBundle {
 	microsoft?: { tenantId?: string; clientId?: string; cloudInstance?: string;
 		tokenCache?: { accessToken: string; refreshToken: string; expiresAt: number } };
@@ -92,7 +88,7 @@ export interface WhisperCoreApi {
 	getConnectionInfo(provider: CoreProviderId): ConnectionInfoDto;
 	isSignedIn(provider: CoreProviderId): boolean;
 
-	// ── Connections (async / throwing — DESIGN §5.4 prefixes) ──
+	// ── Connections (async / throwing) ──
 	/** Vend a short-lived access token, transparently refreshing (single-flight,
 	 *  5-min expiry buffer — semantics identical to BaseCalendarAuth.getAccessToken). */
 	getAccessToken(provider: CoreProviderId): Promise<string>;
@@ -110,19 +106,7 @@ export interface WhisperCoreApi {
 	 *  vendored earlier. */
 	listModels(): Promise<LlmModelListDto>;
 
-	// ── Migration (write — DESIGN §8.3; deprecated from birth, removed in v2) ──
+	// ── Migration (write; deprecated from birth, removed in v2) ──
 	importConfig(bundle: CoreImportBundle): Promise<CoreImportResult>;
 }
 // ── end vendorable block ──
-
-// ── Ambient augmentation: `app.plugins` is community-standard but unofficial
-//    (WhisperCore DESIGN §8.1; shared with the planned OrgBridge). Every access
-//    MUST be optional-chained and treated as fallible. ──
-declare module "obsidian" {
-	interface App {
-		plugins?: {
-			getPlugin(id: string): Plugin | null;
-			enabledPlugins: Set<string>;
-		};
-	}
-}

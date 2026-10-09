@@ -23,7 +23,7 @@ export class MsalAuth extends BaseCalendarAuth<MsalAuthConfig> {
 	}
 
 	/** Endpoints for the configured cloud, defaulting to Public if the value is
-	 *  somehow out of range (defensive — loadSettings validates, DESIGN §5 rule 4). */
+	 *  somehow out of range (defensive — loadSettings validates). */
 	private endpoints() {
 		return CLOUD_ENDPOINTS[this.config.cloudInstance] ?? CLOUD_ENDPOINTS.Public;
 	}

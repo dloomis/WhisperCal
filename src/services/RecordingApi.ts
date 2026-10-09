@@ -2,7 +2,7 @@ import {requestUrl} from "obsidian";
 import {readFileSync} from "fs";
 import {RECORDING_API_PORT_FILE} from "../constants";
 
-export type RecordingState = "idle" | "recording" | "transcribing" | "complete";
+type RecordingState = "idle" | "recording" | "transcribing" | "complete";
 
 export interface RecordingStatus {
 	state: RecordingState;
@@ -124,7 +124,7 @@ export async function recordingStatus(baseUrl: string): Promise<RecordingStatus>
 	return {state, subject: extractRecordingSubject(obj), startedAt: extractStartedAt(obj), sessionGuid: extractSessionGuid(obj)};
 }
 
-export type SessionGuidState = "recording" | "transcribing" | "complete" | "failed" | "unknown";
+type SessionGuidState = "recording" | "transcribing" | "complete" | "failed" | "unknown";
 
 export interface SessionGuidStatus {
 	state: SessionGuidState;

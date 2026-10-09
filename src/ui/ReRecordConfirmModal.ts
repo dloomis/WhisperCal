@@ -39,7 +39,6 @@ export class ReRecordConfirmModal extends Modal {
 
 	onOpen(): void {
 		const {contentEl} = this;
-		contentEl.addClass("whisper-cal-rerecord-modal");
 
 		const speakersTagged = this.context.pipelineState
 			&& this.context.pipelineState !== "titled";

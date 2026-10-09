@@ -19,7 +19,7 @@ export type TeamsChatErrorKind =
 	| "forbidden"
 	/** No such chat — meeting chat never created, or the thread was deleted. */
 	| "not-found"
-	/** Token could not be vended at all (signed out / Core unavailable). */
+	/** Token could not be vended at all (signed out). */
 	| "auth"
 	| "network"
 	| "other";

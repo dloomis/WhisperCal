@@ -6,14 +6,14 @@ import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {ensureFolder, getMarkdownFilesRecursive} from "../utils/vault";
 
 /** Frontmatter keys specific to a meeting-series note. */
-export const SERIES_FM = {
+const SERIES_FM = {
 	SERIES_ID: "series_id",
 	SERIES_SUBJECT: "series_subject",
 	MATCH_SUBJECTS: "match_subjects",
 	RESEARCH_NOTES: "research_notes",
 } as const;
 
-export const RESEARCH_INSTRUCTIONS_HEADING = "Research instructions";
+const RESEARCH_INSTRUCTIONS_HEADING = "Research instructions";
 
 export interface SeriesPrep {
 	seriesNotePath: string;
@@ -22,7 +22,7 @@ export interface SeriesPrep {
 }
 
 /** Locate the series note for a meeting: by series_id, then by subject. */
-export function findSeriesNote(
+function findSeriesNote(
 	app: App, settings: WhisperCalSettings, seriesId: string, subject: string,
 ): TFile | null {
 	if (!settings.seriesNotesFolderPath) return null;

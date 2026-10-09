@@ -8,9 +8,9 @@ interface PromptEntry {
 	content: string;
 }
 
-// The old "Speaker Auto-Tag" prompt is intentionally not installed: the default is now the
-// in-place post-processing prompt, and the #4 settings migration repoints prior installs.
-// The repo still keeps the file for anyone who deliberately wants the name-only behavior.
+// The old "Speaker Auto-Tag" prompt is intentionally not installed: the default is the
+// in-place post-processing prompt. The repo still keeps the file for anyone who
+// deliberately wants the name-only behavior.
 const BUNDLED_PROMPTS: PromptEntry[] = [
 	{settingPath: "Prompts/Transcript Post-Processing Prompt.md", content: postProcessingPrompt},
 	{settingPath: "Prompts/Meeting Transcript Summarizer Prompt.md", content: summarizerPrompt},
@@ -19,7 +19,7 @@ const BUNDLED_PROMPTS: PromptEntry[] = [
 
 /**
  * Write bundled prompt files into the vault if they don't already exist.
- * Called once during plugin onload().
+ * Called once the workspace layout is ready.
  */
 export async function installBundledPrompts(app: App): Promise<void> {
 	for (const prompt of BUNDLED_PROMPTS) {

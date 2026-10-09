@@ -277,9 +277,8 @@ async function writeChatSection(app: App, noteFile: TFile, body: string): Promis
 	await app.vault.process(noteFile, (content) => upsertChatSection(content, body));
 }
 
-/** The pure half of {@link writeChatSection} — exported so the rewrite rules can
- *  be exercised directly against note text. */
-export function upsertChatSection(content: string, body: string): string {
+/** The pure half of {@link writeChatSection}. */
+function upsertChatSection(content: string, body: string): string {
 	const section = `## ${MEETING_CHAT_HEADING}\n\n${body}\n`;
 	const found = findChatSection(content);
 	if (!found) {

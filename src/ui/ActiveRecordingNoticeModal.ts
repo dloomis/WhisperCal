@@ -18,7 +18,6 @@ export class ActiveRecordingNoticeModal extends Modal {
 
 	onOpen(): void {
 		const {contentEl} = this;
-		contentEl.addClass("whisper-cal-rerecord-modal");
 
 		this.setTitle("Recording already in progress");
 

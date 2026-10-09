@@ -2,8 +2,8 @@ import type {App} from "obsidian";
 import {TFile, normalizePath} from "obsidian";
 import type {WhisperCalSettings} from "../settings";
 import {FM, SPLIT_MARKER} from "../constants";
-import {ensureFolder, resolveVoiceprintSidecar, resolveTranscriptAudio, stripWikiLink} from "../utils/vault";
-import {readFmString} from "../utils/frontmatter";
+import {ensureFolder, resolveVoiceprintSidecar, resolveTranscriptAudio, stripWikiLink, noteBasename, uniquePath, wikiLinkToPath} from "../utils/vault";
+import {readFmString, processFrontmatterQueued} from "../utils/frontmatter";
 import {findSpeakerLabels, transcriptStartOffset} from "../utils/transcript";
 import {
 	coerceFmDate,
@@ -75,28 +75,6 @@ export interface SplitPlan {
  * unrelated note. Hand-built (not fileManager.generateMarkdownLink) because
  * every reader of these fields parses `[[…]]` via stripWikiLink.
  */
-function wikiLinkToPath(path: string): string {
-	const base = basenameNoExt(path);
-	const linkTarget = path.endsWith(".md") ? path.slice(0, -3) : path;
-	return `[[${linkTarget}|${base}]]`;
-}
-
-function basenameNoExt(path: string): string {
-	const name = path.split("/").pop() ?? path;
-	return name.replace(/\.md$/, "");
-}
-
-/** First free path for "{folder}/{basename}.md", suffixing " (1)", " (2)", ... */
-function uniquePath(app: App, folder: string, basename: string): string {
-	let candidate = normalizePath(`${folder}/${basename}.md`);
-	let i = 1;
-	while (app.vault.getAbstractFileByPath(candidate)) {
-		candidate = normalizePath(`${folder}/${basename} (${i}).md`);
-		i++;
-	}
-	return candidate;
-}
-
 /**
  * Drop every marker line from `text`, plus one blank line immediately after it
  * (placeSplitMarker inserts the pair, so removing both leaves the transcript
@@ -373,7 +351,7 @@ export async function splitMeeting(
 	// — can already carry a correct meeting_note backlink.
 	const newNotePath = uniquePath(app, noteFolder, stem);
 	const newTranscriptPath = uniquePath(app, transcriptFolder, `${stem} - Transcript`);
-	const newTranscriptBasename = basenameNoExt(newTranscriptPath);
+	const newTranscriptBasename = noteBasename(newTranscriptPath);
 
 	const pipelineState = readFmString(transcriptFm, FM.PIPELINE_STATE)
 		?? readFmString(noteFm, FM.PIPELINE_STATE);
@@ -437,7 +415,7 @@ export async function splitMeeting(
 				return audio ? `[[${audio.name}]]` : undefined;
 			})();
 
-		await app.fileManager.processFrontMatter(newTranscript, (fm: Record<string, unknown>) => {
+		await processFrontmatterQueued(app, newTranscript, (fm: Record<string, unknown>) => {
 			for (const key of ["type", "source_app", "source_file", "context"]) {
 				if (transcriptFm[key] !== undefined) fm[key] = transcriptFm[key];
 			}
@@ -478,7 +456,7 @@ export async function splitMeeting(
 		created.push(newNote);
 
 		const recordingEnd = new Date(plan.transcriptStart.getTime() + Math.max(totalSeconds, offsetSeconds) * 1000);
-		await app.fileManager.processFrontMatter(newNote, (fm: Record<string, unknown>) => {
+		await processFrontmatterQueued(app, newNote, (fm: Record<string, unknown>) => {
 			fm["meeting_subject"] = title;
 			fm["meeting_date"] = splitDate;
 			fm["meeting_start"] = formatTimeForFrontmatter(splitTime, tz);
@@ -493,7 +471,7 @@ export async function splitMeeting(
 			fm["tags"] = ["meeting"];
 			// Synthetic id, mirroring MeetingMerger's `merged-` convention: the note
 			// has no Graph event of its own, so it surfaces as its own local card.
-			fm[FM.CALENDAR_EVENT_ID] = `split-${basenameNoExt(newNotePath)}`;
+			fm[FM.CALENDAR_EVENT_ID] = `split-${noteBasename(newNotePath)}`;
 			fm["calendar_provider"] = readFmString(noteFm, "calendar_provider") ?? settings.calendarProvider;
 			fm["is_recurring"] = false;
 			fm[FM.TRANSCRIPT] = wikiLinkToPath(newTranscriptPath);
@@ -509,7 +487,7 @@ export async function splitMeeting(
 
 	// ---- 5. Only now is the original touched. Body first, then frontmatter. ----
 	await app.vault.process(transcriptFile, () => partAText);
-	await app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, transcriptFile, (fm: Record<string, unknown>) => {
 		if (offsetSeconds > 0) fm["duration"] = formatElapsed(plan.partASeconds);
 		const attendees = filterAttendees(fm["attendees"], partALabels);
 		if (attendees) fm["attendees"] = attendees;
@@ -519,7 +497,7 @@ export async function splitMeeting(
 	});
 
 	// ---- 6. The original meeting now ends where the second one begins. ----
-	await app.fileManager.processFrontMatter(noteFile, (fm: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, noteFile, (fm: Record<string, unknown>) => {
 		fm["meeting_end"] = formatTimeForFrontmatter(splitTime, tz);
 		fm[FM.SPLIT_INTO] = wikiLinkToPath(newNotePath);
 	});

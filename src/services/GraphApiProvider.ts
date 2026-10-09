@@ -111,6 +111,13 @@ export class GraphApiProvider implements CalendarProvider {
 		if (this.categoryColors === null) {
 			await this.fetchMasterCategories(token);
 		}
+		// If the /me lookup still hasn't succeeded, fail the fetch rather than
+		// parse (and cache) every event with isOrganizer:false — the cached
+		// provider falls back to its cache and retries live later.
+		if (this.userEmail === null) {
+			throw new Error("Could not determine user email — deferring event fetch");
+		}
+		const userEmail = this.userEmail;
 
 		const graphBase = this.auth.getGraphBaseUrl();
 		const baseUrl = `${graphBase}/v1.0/me/calendarView?startDateTime=${startDateTime}&endDateTime=${endDateTime}&$orderby=start/dateTime&$top=50&$select=id,subject,body,start,end,location,isAllDay,attendees,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,type,seriesMasterId,responseStatus,categories`;
@@ -125,23 +132,10 @@ export class GraphApiProvider implements CalendarProvider {
 				headers: {Authorization: `Bearer ${token}`},
 			});
 
-			const data = response.json as { value?: GraphEvent[]; "@odata.nextLink"?: string } | GraphEvent[];
-			if (Array.isArray(data)) {
-				allEvents.push(...data);
-				url = null;
-			} else {
-				allEvents.push(...(data.value ?? []));
-				url = data["@odata.nextLink"] ?? null;
-			}
+			const data = response.json as { value?: GraphEvent[]; "@odata.nextLink"?: string };
+			allEvents.push(...(data.value ?? []));
+			url = data["@odata.nextLink"] ?? null;
 		}
-
-		// If the /me lookup still hasn't succeeded, fail the fetch rather than
-		// parse (and cache) every event with isOrganizer:false — the cached
-		// provider falls back to its cache and retries live later.
-		if (this.userEmail === null) {
-			throw new Error("Could not determine user email — deferring event fetch");
-		}
-		const userEmail = this.userEmail;
 		const colorMap = this.categoryColors ?? new Map<string, string>();
 		// Drop all-day events the query window only clipped: Graph stores them as
 		// [D 00:00Z, D+1 00:00Z), which overlaps the configured-zone window of the
@@ -164,8 +158,8 @@ export class GraphApiProvider implements CalendarProvider {
 				method: "GET",
 				headers: {Authorization: `Bearer ${token}`},
 			});
-			const data = response.json as { value?: MasterCategory[] } | MasterCategory[];
-			const items = Array.isArray(data) ? data : (data.value ?? []);
+			const data = response.json as { value?: MasterCategory[] };
+			const items = data.value ?? [];
 			this.categoryColors = new Map();
 			for (const cat of items) {
 				const hex = PRESET_COLORS[cat.color];

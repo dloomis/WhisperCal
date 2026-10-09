@@ -1,5 +1,5 @@
 import {App, TFile} from "obsidian";
-import {stripAnsi} from "../services/LlmInvoker";
+import {stripAnsi} from "../services/LlmTransport";
 
 const ERRORS_HEADING = "## LLM Errors";
 
@@ -82,7 +82,7 @@ function fenceBlock(text: string): string {
  * Creates the heading at end-of-file if absent; otherwise appends the entry
  * after the last existing entry, before the next H1/H2 boundary.
  */
-export function insertErrorEntry(content: string, entry: string): string {
+function insertErrorEntry(content: string, entry: string): string {
 	const lines = content.split("\n");
 	const headingIdx = lines.findIndex(l => l.trim() === ERRORS_HEADING);
 

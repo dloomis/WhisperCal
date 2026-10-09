@@ -1,6 +1,7 @@
 import type {App} from "obsidian";
 import {TFile} from "obsidian";
 import {transcriptBody, findSpeakerLabels} from "../utils/transcript";
+import {processFrontmatterQueued} from "../utils/frontmatter";
 
 export interface ProposedSpeakerMapping {
 	index: number;
@@ -71,15 +72,14 @@ export function parseSpeakerTagOutput(
 	const jsonResult = extractJsonSpeakers(stdout, speakers);
 	if (jsonResult) return jsonResult;
 
-	// Legacy fallback: try the old "Proposed Mapping:" regex format
-	const legacyResult = extractLegacySpeakers(stdout, speakers);
-	if (legacyResult) return legacyResult;
-
 	// No parseable output — fallback to frontmatter speakers
 	if (speakers.length === 0) {
 		return {mappings: [], warning: "LLM returned no speaker mappings and transcript has no speakers"};
 	}
-	return {mappings: buildFallbackMappings(speakers)};
+	return {
+		mappings: buildFallbackMappings(speakers),
+		warning: "LLM output had no JSON block — showing speakers without AI suggestions",
+	};
 }
 
 interface LlmSpeakerEntry {
@@ -189,51 +189,6 @@ function extractJsonSpeakers(
 	return {mappings: mergeWithFrontmatter(speakers, llmMap)};
 }
 
-/** Legacy fallback: parse the old "Proposed Mapping:" regex format. */
-function extractLegacySpeakers(
-	stdout: string,
-	speakers: FrontmatterSpeaker[],
-): ParseResult | null {
-	const headerIdx = stdout.indexOf("Proposed Mapping:");
-	if (headerIdx === -1) return null;
-
-	const section = stdout.slice(headerIdx);
-	const lineRe = /^- #(\d+):\s*"([^"]*?)"\s*→\s*(?:"([^"]*?)"|\(unresolved\))\s*\|\s*(\w*)\s*\|\s*(.*)$/gm;
-	const llmMap = new Map<number, ProposedSpeakerMapping>();
-	let match: RegExpExecArray | null;
-	while ((match = lineRe.exec(section)) !== null) {
-		const index = parseInt(match[1]!);
-		const originalName = match[2]!;
-		const proposedName = match[3] ?? "";
-		const confidence = match[4] ?? "";
-		const evidence = match[5]?.trim() ?? "";
-		// Same as the JSON parser: identity comes from mergeWithFrontmatter's
-		// name match, never from the LLM's own index.
-		llmMap.set(index, {
-			index,
-			originalName,
-			proposedName,
-			source: proposedName ? "llm" : "",
-			confidence: confidence.toUpperCase(),
-			evidence,
-			speakerId: "",
-			lineCount: 0,
-		});
-	}
-	if (llmMap.size > 0) {
-		return {mappings: mergeWithFrontmatter(speakers, llmMap)};
-	}
-
-	console.warn("[WhisperCal] 'Proposed Mapping:' header found but no lines matched the expected format");
-	if (speakers.length === 0) {
-		return {mappings: [], warning: "LLM output was malformed — no speakers found in transcript"};
-	}
-	return {
-		mappings: buildFallbackMappings(speakers),
-		warning: "LLM output was malformed — showing speakers without AI suggestions",
-	};
-}
-
 function mergeWithFrontmatter(
 	speakers: FrontmatterSpeaker[],
 	llmMap: Map<number, ProposedSpeakerMapping>,
@@ -297,16 +252,24 @@ function buildFallbackMappings(speakers: FrontmatterSpeaker[]): ProposedSpeakerM
 	}));
 }
 
+/** Count `**Label**` lines per speaker in a transcript body; `order` is first-spoken order. */
+function countSpeakerLabels(content: string): {counts: Map<string, number>; order: string[]} {
+	const counts = new Map<string, number>();
+	const order: string[] = [];
+	for (const {name} of findSpeakerLabels(transcriptBody(content))) {
+		if (!counts.has(name)) order.push(name);
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	return {counts, order};
+}
+
 /**
  * Enrich mappings that have lineCount=0 by counting **SpeakerName** blocks
  * in the transcript body text. Useful when frontmatter lacks a speakers array
  * (e.g. Tome transcripts).
  */
 export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], content: string): void {
-	const counts = new Map<string, number>();
-	for (const {name} of findSpeakerLabels(transcriptBody(content))) {
-		counts.set(name, (counts.get(name) ?? 0) + 1);
-	}
+	const {counts} = countSpeakerLabels(content);
 	for (const mapping of mappings) {
 		if (mapping.lineCount === 0) {
 			mapping.lineCount = counts.get(mapping.originalName) ?? 0;
@@ -321,12 +284,7 @@ export function enrichLineCountsFromBody(mappings: ProposedSpeakerMapping[], con
  * string list (no per-speaker objects). Speakers appear in first-spoken order.
  */
 export function buildMappingsFromBody(content: string): ProposedSpeakerMapping[] {
-	const counts = new Map<string, number>();
-	const order: string[] = [];
-	for (const {name} of findSpeakerLabels(transcriptBody(content))) {
-		if (!counts.has(name)) order.push(name);
-		counts.set(name, (counts.get(name) ?? 0) + 1);
-	}
+	const {counts, order} = countSpeakerLabels(content);
 	return order.map((name, i) => ({
 		index: i,
 		originalName: name,
@@ -401,7 +359,7 @@ export async function writeSpeakerProposals(
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (!(file instanceof TFile)) return;
 
-	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, file, (frontmatter: Record<string, unknown>) => {
 		const existing = frontmatter["attendees"];
 		const proposalByName = new Map<string, ProposedSpeakerMapping>();
 		for (const m of mappings) {
@@ -456,7 +414,7 @@ export async function clearSpeakerProposals(app: App, transcriptPath: string): P
 	const file = app.vault.getAbstractFileByPath(transcriptPath);
 	if (!(file instanceof TFile)) return;
 
-	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, file, (frontmatter: Record<string, unknown>) => {
 		const attendees = frontmatter["attendees"];
 		if (!Array.isArray(attendees)) return;
 		for (const entry of attendees) {

@@ -114,9 +114,7 @@ export class LoopbackOAuthServer {
 			this.server.close();
 			// Keep-alive browser sockets otherwise hold the loopback port open for
 			// minutes after close(); destroy them so the port frees immediately.
-			// (Cast: closeAllConnections exists on the Electron runtime's Node ≥18.2
-			// but not in the pinned @types/node.)
-			(this.server as Server & {closeAllConnections?: () => void}).closeAllConnections?.();
+			this.server.closeAllConnections();
 			this.server = null;
 		}
 		// Unblock any caller awaiting the code (e.g. the user cancelled sign-in)

@@ -1,6 +1,6 @@
 import type {App} from "obsidian";
 import type {CalendarEvent, CalendarProvider, EventAttendee, EventCategory} from "../types";
-import {addDaysInTimezone} from "../utils/time";
+import {addDaysInTimezone, formatDate} from "../utils/time";
 
 /** Serialized form of CalendarEvent with ISO date strings instead of Date objects. */
 interface SerializedCalendarEvent {
@@ -61,6 +61,9 @@ export class CachedCalendarProvider implements CalendarProvider {
 	private cache: CacheFileData = {version: 1, days: {}};
 	private dirty = false;
 	private saveTimer: number | null = null;
+	/** Set once this instance is retired; later fetch results are dropped so an
+	 *  orphaned prefetch loop can't write over the replacement's cache file. */
+	private disposed = false;
 	private lastStatus: CacheStatus = {source: "live", fetchedAt: null, connected: false};
 
 	constructor(
@@ -97,8 +100,8 @@ export class CachedCalendarProvider implements CalendarProvider {
 	}
 
 	async fetchEvents(date: Date, timezone: string): Promise<CalendarEvent[]> {
-		const dateKey = this.toDateKey(date, timezone);
-		const todayKey = this.toDateKey(new Date(), timezone);
+		const dateKey = formatDate(date, timezone);
+		const todayKey = formatDate(new Date(), timezone);
 		const isPast = dateKey < todayKey;
 
 		// Past day with cache — serve from cache. Exception: an entry fetched
@@ -184,7 +187,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 		this.timezone = timezone;
 	}
 
-	/** Clear all cached data (e.g. when switching calendar providers). */
+	/** Clear all cached data and retire this instance (provider switch). */
 	async clear(): Promise<void> {
 		if (this.saveTimer !== null) {
 			window.clearTimeout(this.saveTimer);
@@ -194,6 +197,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 		this.dirty = false;
 		this.lastStatus = {source: "live", fetchedAt: null, connected: false};
 		await this.writeCacheToDisk();
+		this.disposed = true;
 	}
 
 	/** Flush any pending cache writes to disk. Call on plugin unload. */
@@ -214,6 +218,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 	}
 
 	private cacheDay(dateKey: string, events: CalendarEvent[]): void {
+		if (this.disposed) return;
 		this.cache.days[dateKey] = {
 			fetchedAt: Date.now(),
 			events: events.map(e => this.serializeEvent(e)),
@@ -226,11 +231,12 @@ export class CachedCalendarProvider implements CalendarProvider {
 		if (this.cacheFutureDays <= 0) return;
 
 		for (let i = 1; i <= this.cacheFutureDays; i++) {
+			if (this.disposed) return;
 			// Day arithmetic must happen in the configured zone: system-local midnight
 			// renders as the *previous* day when that zone is west of the system's, so
 			// the window would slide back one and never reach the last configured day.
 			const futureDate = addDaysInTimezone(new Date(), timezone, i);
-			const key = this.toDateKey(futureDate, timezone);
+			const key = formatDate(futureDate, timezone);
 
 			// Skip if already cached recently (within 1 hour)
 			const existing = this.cache.days[key];
@@ -267,7 +273,7 @@ export class CachedCalendarProvider implements CalendarProvider {
 	private pruneOldEntries(): void {
 		const cutoff = new Date();
 		cutoff.setDate(cutoff.getDate() - this.cacheRetentionDays);
-		const cutoffKey = this.toDateKey(cutoff, this.timezone);
+		const cutoffKey = formatDate(cutoff, this.timezone);
 
 		for (const key of Object.keys(this.cache.days)) {
 			if (key < cutoffKey) {
@@ -295,14 +301,5 @@ export class CachedCalendarProvider implements CalendarProvider {
 			responseStatus: (e.responseStatus ?? "none") as CalendarEvent["responseStatus"],
 			categories: e.categories ?? [],
 		}));
-	}
-
-	private toDateKey(date: Date, timezone: string): string {
-		return new Intl.DateTimeFormat("en-CA", {
-			timeZone: timezone,
-			year: "numeric",
-			month: "2-digit",
-			day: "2-digit",
-		}).format(date);
 	}
 }

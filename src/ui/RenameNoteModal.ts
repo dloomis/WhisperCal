@@ -1,6 +1,7 @@
 import {Modal, type App} from "obsidian";
 import type {RelatedFile} from "../services/MeetingDeleter";
 import {sanitizeFilename} from "../utils/sanitize";
+import {relatedRenameName} from "../services/MeetingRenamer";
 
 export interface RenameNoteResult {
 	/** New base name for the note (no path, no extension), already sanitized. */
@@ -66,10 +67,9 @@ export class RenameNoteModal extends Modal {
 			const newBase = raw ? sanitizeFilename(raw) : "";
 			for (const rf of related) {
 				const li = list.createEl("li");
-				if (renameRelated && newBase && rf.file.basename.startsWith(this.ctx.currentName)) {
-					const suffix = rf.file.basename.slice(this.ctx.currentName.length);
-					const ext = rf.file.extension ? `.${rf.file.extension}` : "";
-					li.setText(`${rf.file.name} → ${newBase}${suffix}${ext}`);
+				const target = renameRelated && newBase ? relatedRenameName(rf.file, this.ctx.currentName, newBase) : null;
+				if (target !== null) {
+					li.setText(`${rf.file.name} → ${target}`);
 				} else {
 					li.setText(rf.file.name);
 				}

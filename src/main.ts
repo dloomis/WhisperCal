@@ -6,7 +6,8 @@ import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMA
 import {openMeetingsBase} from "./services/MeetingsBase";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording, stopLinkRecordingWatchers, resetLinkRecordingWatchers} from "./services/LinkRecording";
-import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
+import {spawnLlmPrompt, resolvePromptPath} from "./services/LlmInvoker";
+import {validateLlmCli, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmTransport";
 import {JobTracker, type JobKind} from "./services/JobTracker";
 import {CardUiState, type CardStatusVariant} from "./services/CardUiState";
 import {parseSpeakerTagOutput, enrichLineCountsFromBody, hasCachedProposals, buildMappingsFromCache, buildMappingsFromBody, writeSpeakerProposals, clearSpeakerProposals, type ProposedSpeakerMapping} from "./services/SpeakerTagParser";
@@ -97,10 +98,8 @@ function parseInviteeNames(fm: Record<string, unknown>): string[] {
 	const names: string[] = [];
 	for (const entry of raw) {
 		if (typeof entry !== "string") continue;
-		// Strip wiki-link wrappers: "[[People/Jane Smith]]" → "Jane Smith"
-		const stripped = entry.replace(/^\[\[/, "").replace(/\]\]$/, "");
-		// Take the last path segment if it's a path
-		const name = stripped.includes("/") ? stripped.split("/").pop()! : stripped;
+		// "[[People/Jane Smith|Jane]]" → "Jane Smith"
+		const name = stripWikiLink(entry).split("/").pop() ?? "";
 		if (name) names.push(name);
 	}
 	return names;
@@ -124,9 +123,11 @@ function distinctSpeakerLabels(content: string): number {
 	return new Set(findSpeakerLabels(transcriptBody(content)).map(l => l.name)).size;
 }
 
+/** Keys older releases wrote to data.json that nothing reads any more. Dropped
+ *  from the in-memory settings on load so persistData() sheds them. */
+const REMOVED_DATA_KEYS = ["tokenCache", "importantOrganizerEmails", "llmModel", "autoRecordOnLaunch", "llmSpeakerTagFallback"];
+
 interface PluginData extends WhisperCalSettings {
-	// Legacy single token cache (predates the per-provider split; treated as Microsoft)
-	tokenCache?: TokenCache | null;
 	// Per-provider token caches — top-level keys in data.json, outside `settings`
 	microsoftTokenCache?: TokenCache | null;
 	googleTokenCache?: TokenCache | null;
@@ -240,25 +241,7 @@ export default class WhisperCalPlugin extends Plugin {
 			void this.reconcileActiveApiRecordings();
 		});
 
-		this.activeProviderType = this.settings.calendarProvider;
-		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks(this.settings.calendarProvider));
-		this.auth = stack.auth;
-		this.updateAuthConfig = stack.updateAuthConfig;
-		this.upstream = stack.provider;
-		this.peopleSearch = stack.peopleSearch;
-		this.auth.initialize();
-
-
-		this.cachedProvider = new CachedCalendarProvider(
-			this.app,
-			this.upstream,
-			this.manifest.dir!,
-			this.settings.cacheFutureDays,
-			this.settings.cacheRetentionDays,
-			this.settings.timezone,
-		);
-		await this.cachedProvider.loadCache();
-		this.provider = this.cachedProvider;
+		await this.buildProviderStack();
 
 		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
 
@@ -272,6 +255,14 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			onReviewSpeakerCandidates: (notePath: string) => {
 				this.reviewSpeakerCandidates(notePath);
+			},
+			// Card status writes come from long-lived recording tails that outlive
+			// the view that rendered the card — re-render in whichever view is open now.
+			onCardStatusChanged: (eventId: string) => {
+				for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
+					const view = leaf.view;
+					if (view instanceof CalendarView) view.rerenderCardById(eventId);
+				}
 			},
 			onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => {
 				if (force) {
@@ -589,7 +580,12 @@ export default class WhisperCalPlugin extends Plugin {
 		if (this.settings.calendarProvider === this.activeProviderType) return false;
 		this.auth.cancelSignIn();
 		await this.cachedProvider?.clear();
+		await this.buildProviderStack();
+		return true;
+	}
 
+	/** Build the auth → upstream → cached provider chain for the selected provider. */
+	private async buildProviderStack(): Promise<void> {
 		this.activeProviderType = this.settings.calendarProvider;
 		const stack = createCalendarStack(this.settings.calendarProvider, this.settings, this.authCallbacks(this.settings.calendarProvider));
 		this.auth = stack.auth;
@@ -608,25 +604,18 @@ export default class WhisperCalPlugin extends Plugin {
 		);
 		await this.cachedProvider.loadCache();
 		this.provider = this.cachedProvider;
-		return true;
 	}
 
-	async onExternalSettingsChange(): Promise<void> {
-		await this.loadSettings();
-		// A synced settings change from another machine may switch the calendar
-		// provider — rebuild the stack before propagating config to live components.
-		await this.rebuildProviderStackIfChanged();
-		// Propagate updated settings to live components (same as saveSettings does)
+	/** Push the current settings into every live component (auth, cache, views). */
+	private applySettingsToLiveComponents(): void {
 		this.updateAuthConfig(this.settings);
-		// loadSettings replaced the token caches from disk — bring the live auth in
-		// line (a sign-in or sign-out synced from another machine).
-		this.auth.reloadTokenCache();
 		this.cachedProvider?.updateConfig(
 			this.settings.cacheFutureDays,
 			this.settings.cacheRetentionDays,
 			this.settings.timezone,
 		);
 		setTimeFormat(this.settings.timeFormat);
+		// Recreate unlinked provider (recordingSource or transcriptFolderPath may have changed)
 		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 			const view = leaf.view;
@@ -634,6 +623,18 @@ export default class WhisperCalPlugin extends Plugin {
 				view.updateSettings(this.settings, this.provider);
 			}
 		}
+	}
+
+	async onExternalSettingsChange(): Promise<void> {
+		await this.loadSettings();
+		// A synced settings change from another machine may switch the calendar
+		// provider — rebuild the stack before propagating config to live components.
+		await this.rebuildProviderStackIfChanged();
+		this.updateAuthConfig(this.settings);
+		// loadSettings replaced the token caches from disk — bring the live auth in
+		// line (a sign-in or sign-out synced from another machine).
+		this.auth.reloadTokenCache();
+		this.applySettingsToLiveComponents();
 	}
 
 	/** Get the vault's absolute filesystem path. Requires a desktop vault on the local filesystem. */
@@ -650,11 +651,10 @@ export default class WhisperCalPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 
 		// Token caches persist as top-level keys beside the settings, never inside
-		// the settings object. The legacy single tokenCache predates the
-		// per-provider split — treat it as Microsoft.
-		this.microsoftTokenCache = sanitizeTokenCache(data?.microsoftTokenCache ?? data?.tokenCache);
+		// the settings object.
+		this.microsoftTokenCache = sanitizeTokenCache(data?.microsoftTokenCache);
 		this.googleTokenCache = sanitizeTokenCache(data?.googleTokenCache);
-		for (const k of ["tokenCache", "microsoftTokenCache", "googleTokenCache"]) {
+		for (const k of ["microsoftTokenCache", "googleTokenCache", ...REMOVED_DATA_KEYS]) {
 			delete (this.settings as unknown as Record<string, unknown>)[k];
 		}
 		// A bad persisted cloud (hand-edit, version skew) would select no endpoints.
@@ -662,21 +662,7 @@ export default class WhisperCalPlugin extends Plugin {
 			this.settings.cloudInstance = DEFAULT_SETTINGS.cloudInstance;
 		}
 
-		// Migrate old importantOrganizerEmails (string[]) to importantOrganizers ({name, email}[])
 		const legacy = data as Record<string, unknown> | null;
-		if (legacy?.importantOrganizerEmails && Array.isArray(legacy.importantOrganizerEmails)) {
-			const oldEmails = legacy.importantOrganizerEmails as string[];
-			if (oldEmails.length > 0 && (!this.settings.importantOrganizers || this.settings.importantOrganizers.length === 0)) {
-				this.settings.importantOrganizers = oldEmails.map(e => ({name: e, email: e}));
-			}
-		}
-		// Migrate legacy single llmModel → per-prompt model settings
-		if (legacy?.llmModel && typeof legacy.llmModel === "string") {
-			const old = legacy.llmModel;
-			if (!this.settings.speakerTagModel) this.settings.speakerTagModel = old;
-			if (!this.settings.summarizerModel) this.settings.summarizerModel = old;
-			if (!this.settings.researchModel) this.settings.researchModel = old;
-		}
 		// A bad persisted numeric (hand-edit, version skew) must not reach the LLM
 		// spawn path as NaN/negative.
 		this.settings.llmTimeoutMinutes = sanitizeNumber(this.settings.llmTimeoutMinutes, DEFAULT_SETTINGS.llmTimeoutMinutes, 0);
@@ -685,18 +671,6 @@ export default class WhisperCalPlugin extends Plugin {
 		// now also closes the meeting app when recording is stopped from WhisperCal).
 		if (typeof legacy?.autoRecordOnLaunch === "boolean" && data?.automateMeetingRecording === undefined) {
 			this.settings.automateMeetingRecording = legacy.autoRecordOnLaunch;
-		}
-		delete (this.settings as unknown as Record<string, unknown>)["autoRecordOnLaunch"];
-		// Drop the removed llmSpeakerTagFallback toggle from older data files — the
-		// post-processing prompt path is now the LLM on/off switch.
-		delete (this.settings as unknown as Record<string, unknown>)["llmSpeakerTagFallback"];
-		// Repoint installs still on the previous default speaker-tagging prompt to the new
-		// in-place post-processing prompt. The old "Speaker Auto-Tag" prompt only proposed
-		// names; the new default also fixes transcription/diarization errors in the body.
-		// Only the exact old default is migrated — a custom or deliberately-chosen path is
-		// left alone. installBundledPrompts (onLayoutReady) writes the new file if missing.
-		if (this.settings.speakerTaggingPromptPath === "Prompts/Speaker Auto-Tag Prompt.md") {
-			this.settings.speakerTaggingPromptPath = DEFAULT_SETTINGS.speakerTaggingPromptPath;
 		}
 		// MacWhisper is macOS-only; coerce to Recording API on other platforms
 		if (!Platform.isMacOS && this.settings.recordingSource === "macwhisper") {
@@ -762,25 +736,7 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// If provider type changed, rebuild the entire stack
 		await this.rebuildProviderStackIfChanged();
-
-		// Update auth config (e.g. client ID/secret changed)
-		this.updateAuthConfig(this.settings);
-		// Update cache config
-		this.cachedProvider?.updateConfig(
-			this.settings.cacheFutureDays,
-			this.settings.cacheRetentionDays,
-			this.settings.timezone,
-		);
-		setTimeFormat(this.settings.timeFormat);
-		// Recreate unlinked provider (recordingSource or transcriptFolderPath may have changed)
-		this.unlinkedProvider = createUnlinkedProvider(this.settings, this.app);
-		// Update existing views with new settings
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
-			const view = leaf.view;
-			if (view instanceof CalendarView) {
-				view.updateSettings(this.settings, this.provider);
-			}
-		}
+		this.applySettingsToLiveComponents();
 	}
 
 	onAuthStateChange(listener: (state: AuthState) => void): () => void {
@@ -985,7 +941,7 @@ export default class WhisperCalPlugin extends Plugin {
 	// Queue for serializing speaker tag modal presentations
 	private speakerTagModalQueue: Promise<void> = Promise.resolve();
 
-	// The LLM concurrency counter lives in LlmTransport (C5): the slot claim/release
+	// The LLM concurrency counter lives in LlmTransport: the slot claim/release
 	// helpers imported above are the single machine-wide count for this plugin.
 
 	/** Badge label for the slot-wait countdown. Doubles as the marker
@@ -2312,6 +2268,9 @@ export default class WhisperCalPlugin extends Plugin {
 					llmExtraFlags,
 					pluginDir: this.manifest.dir!,
 				});
+				// Unload kills the child, which still resolves here — don't run the
+				// completion tail against a dead plugin instance.
+				if (this.unloading) return;
 
 				if (llmConfig.debugMode) {
 					// eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -2438,7 +2397,6 @@ export default class WhisperCalPlugin extends Plugin {
 		if (container.querySelector(`.${WhisperCalPlugin.BANNER_CLS}[data-op="${op}"]`)) return;
 		const banner = container.createDiv({cls: WhisperCalPlugin.BANNER_CLS});
 		banner.dataset["op"] = op;
-		banner.createSpan({cls: "whisper-cal-card-status-dot"});
 		banner.createSpan({text: label});
 		container.prepend(banner);
 	}
@@ -2641,8 +2599,8 @@ export default class WhisperCalPlugin extends Plugin {
 
 		// Use the scheduled meeting time (meeting_date + meeting_start) so
 		// recording matching works even when the note is created days later.
-		// Fall back to note_created only for unscheduled meetings where
-		// the note is typically created at recording time.
+		// Fall back to the file's creation time only for unscheduled meetings,
+		// where the note is typically created at recording time.
 		let meetingStart: Date | null = null;
 
 		// Coerce legacy unquoted YAML values (Date object / sexagesimal number)

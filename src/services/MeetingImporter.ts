@@ -6,7 +6,7 @@ import {unzip, type Unzipped} from "fflate";
 import type {WhisperCalSettings} from "../settings";
 import {FM} from "../constants";
 import {ensureFolder} from "../utils/vault";
-import {yamlEscape} from "../utils/sanitize";
+import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {remoteDialog} from "../utils/electron";
 
 /** A markdown member of the bundle: frontmatter both parsed (to read) and raw (to edit). */
@@ -149,7 +149,7 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 		// Async unzip for the same reason export uses async zip: the .m4a dominates
 		// the payload and doing it inline freezes Obsidian for the whole read.
 		entries = await new Promise<Unzipped>((resolve, reject) => {
-			unzip(new Uint8Array(raw), (err, data) => (err ? reject(err) : resolve(data)));
+			unzip(raw, (err, data) => (err ? reject(err) : resolve(data)));
 		});
 	} catch (err) {
 		console.error("[WhisperCal] Couldn't read bundle:", err);
@@ -161,9 +161,17 @@ export async function importMeetingBundle(app: App, settings: WhisperCalSettings
 	// Bundles travel by email, so drop the directory entries and the macOS
 	// archiver noise that rides along with them.
 	const files = Object.entries(entries)
-		.filter(([name]) => !name.endsWith("/")
-			&& !name.split("/").some(p => p === "__MACOSX" || p === ".DS_Store" || p.startsWith("._")))
-		.map(([name, data]) => ({name: name.split("/").pop() ?? name, data}));
+		.filter(([name]) => !/[\\/]$/.test(name)
+			&& !name.split(/[\\/]/).some(p => p === "__MACOSX" || p === ".DS_Store" || p.startsWith("._")))
+		.map(([name, data]) => ({name: name.split(/[\\/]/).pop() ?? name, data}));
+	// Member names come from an untrusted archive: refuse anything that isn't a
+	// plain filename (a Windows-built zip can store `..\\x.md`, which normalizePath
+	// would not collapse).
+	const bad = files.find(f => f.name === "." || f.name === ".." || sanitizeFilename(f.name) !== f.name);
+	if (bad) {
+		new Notice(`Not a meeting bundle — unsafe member name "${bad.name}"`);
+		return;
+	}
 
 	// No manifest to consult, so the members are told apart by the frontmatter
 	// each writer stamps.

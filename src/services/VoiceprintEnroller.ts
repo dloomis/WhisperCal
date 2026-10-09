@@ -14,8 +14,8 @@ import type {VoiceprintMatch} from "./VoiceprintMatcher";
  * that has a Tome voiceprint sidecar (`<transcript>.voiceprints.json`), bind each
  * confirmed name to that speaker's centroid embedding and append it as a sample to
  * `<voiceprintFolder>/<Name>.json`. The Apply click is the trust signal — over a few
- * meetings each regular self-enrolls with no extra work. Phase 3 will match new
- * recordings against these libraries before invoking the LLM.
+ * meetings each regular self-enrolls with no extra work. VoiceprintMatcher matches
+ * new recordings against these libraries before the LLM runs.
  *
  * See docs/voiceprints.md (Tome repo) for the producer side and the binding contract.
  */
@@ -53,7 +53,7 @@ const HEAL_SIM_FLOOR = 0.40;
 /** ...and only if it's this much of an outlier within the wrongly-matched library. */
 const HEAL_OUTLIER_MAX = 0.55;
 
-export interface SidecarSpeaker {
+interface SidecarSpeaker {
 	embedding: number[];
 	activeSeconds: number;
 	segmentCount: number;

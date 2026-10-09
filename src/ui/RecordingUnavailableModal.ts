@@ -18,7 +18,6 @@ export class RecordingUnavailableModal extends Modal {
 
 	onOpen(): void {
 		const {contentEl} = this;
-		contentEl.addClass("whisper-cal-rerecord-modal");
 
 		this.setTitle("Recording didn't start");
 

@@ -4,7 +4,7 @@ import {VIEW_TYPE_CALENDAR, FM} from "../constants";
 import type {CalendarEvent, CalendarProvider} from "../types";
 import type {WhisperCalSettings} from "../settings";
 import type {CacheStatus} from "../services/CalendarCache";
-import type {UnlinkedRecording, UnlinkedRecordingProvider} from "../services/UnlinkedRecordingProvider";
+import type {LinkUnlinkedOpts, UnlinkedRecording, UnlinkedRecordingProvider} from "../services/UnlinkedRecordingProvider";
 import {EventSuggestModal, type LinkableNote} from "./EventSuggestModal";
 import {NameInputModal} from "./NameInputModal";
 import {DeleteTranscriptModal} from "./DeleteTranscriptModal";
@@ -27,6 +27,54 @@ import {findNoteBySessionGuid, runApiLinkTail} from "../services/ApiRecording";
 import {hasCachedProposals} from "../services/SpeakerTagParser";
 import {collectTranscriptRelatedFiles, trashMeetingFiles} from "../services/MeetingDeleter";
 
+/**
+ * A CalendarEvent for a note that has no calendar backing (unscheduled, merged,
+ * split, or ad hoc from a recording): every provider-sourced field is empty.
+ */
+function syntheticEvent(id: string, subject: string, startTime: Date, endTime: Date, extra: Partial<CalendarEvent> = {}): CalendarEvent {
+	return {
+		id,
+		subject,
+		body: "",
+		isAllDay: false,
+		isOnlineMeeting: false,
+		onlineMeetingUrl: "",
+		startTime,
+		endTime,
+		location: "",
+		attendeeCount: 0,
+		attendees: [],
+		organizerName: "",
+		organizerEmail: "",
+		isOrganizer: false,
+		isRecurring: false,
+		seriesId: "",
+		responseStatus: "organizer",
+		categories: [],
+		...extra,
+	};
+}
+
+/**
+ * Meeting context for linkToNote, read off an existing note's frontmatter so
+ * the transcript gets the same self-contained enrichment as a live link.
+ * Dates/times are coerced, not typeof-guarded: a hand-authored note's unquoted
+ * `meeting_date: 2026-08-05` re-reads as a Date and `meeting_start: 16:39` as
+ * the number 999.
+ */
+function linkContextFromNoteFm(fm: Record<string, unknown>): Pick<LinkUnlinkedOpts, "isRecurring" | "meetingDate" | "meetingStart" | "meetingEnd" | "organizer" | "location"> {
+	const str = (v: unknown): string | undefined =>
+		typeof v === "string" && v.trim() ? v.trim() : undefined;
+	return {
+		isRecurring: fm["is_recurring"] === true,
+		meetingDate: coerceFmDate(fm["meeting_date"]),
+		meetingStart: coerceFmTime(fm["meeting_start"]),
+		meetingEnd: coerceFmTime(fm["meeting_end"]),
+		organizer: str(fm["meeting_organizer"]),
+		location: str(fm["meeting_location"]),
+	};
+}
+
 export interface CalendarViewCallbacks {
 	getCacheStatus: () => CacheStatus | null;
 	getUserEmail: () => string;
@@ -34,6 +82,8 @@ export interface CalendarViewCallbacks {
 	cardUi: CardUiState;
 	onTagSpeakers: (transcriptFile: TFile, transcriptFm: Record<string, unknown>, notePath: string, customInstructions?: string) => void;
 	onReviewSpeakerCandidates: (notePath: string) => void;
+	/** A card's status changed; re-render it in every open calendar view. */
+	onCardStatusChanged: (eventId: string) => void;
 	onSummarize: (notePath: string, force?: boolean, customInstructions?: string) => void;
 	onResearch: (notePath: string) => void;
 	/** Pull (or re-pull) the meeting's Teams chat into its note. */
@@ -324,7 +374,7 @@ export class CalendarView extends ItemView {
 
 	async refresh(opts?: {background?: boolean}): Promise<void> {
 		// A background (timer) refresh must not disturb the user: no "Loading…"
-		// teardown, scroll position preserved across the re-render.
+		// teardown (renderEvents rebuilds synchronously, so scroll is kept).
 		const background = opts?.background ?? false;
 		const now = Date.now();
 		if (now - this.lastRefreshTime < CalendarView.DEBOUNCE_MS) {
@@ -342,13 +392,7 @@ export class CalendarView extends ItemView {
 		// Check for midnight rollover — auto-advance only if viewing the old "today"
 		const todayString = getTodayString(this.settings.timezone);
 		if (todayString !== this.currentDateString) {
-			const wasViewingToday = this.currentDateString ===
-				new Intl.DateTimeFormat("en-CA", {
-					timeZone: this.settings.timezone,
-					year: "numeric",
-					month: "2-digit",
-					day: "2-digit",
-				}).format(this.selectedDate);
+			const wasViewingToday = this.currentDateString === formatDate(this.selectedDate, this.settings.timezone);
 			this.currentDateString = todayString;
 			if (wasViewingToday) {
 				this.selectedDate = new Date();
@@ -387,11 +431,7 @@ export class CalendarView extends ItemView {
 				}
 			}
 			// Preserve scroll position across a background re-render.
-			const prevScroll = background ? this.contentContainer?.scrollTop ?? 0 : 0;
 			this.renderEvents(events);
-			if (background && this.contentContainer) {
-				this.contentContainer.scrollTop = prevScroll;
-			}
 
 			// Auto-create People notes for unmatched organizers (fire-and-forget)
 			if (this.settings.autoCreatePeopleNotes && this.settings.peopleFolderPath && this.settings.peopleTemplatePath) {
@@ -621,15 +661,9 @@ export class CalendarView extends ItemView {
 
 	private renderEvents(events: CalendarEvent[]): void {
 		if (!this.contentContainer) return;
-		// Backfill isOrganizer for cached events that predate the field
-		const userEmail = this.callbacks.getUserEmail()?.toLowerCase() ?? "";
-		if (userEmail) {
-			for (const e of events) {
-				if (!e.isOrganizer && e.organizerEmail) {
-					e.isOrganizer = e.organizerEmail.toLowerCase() === userEmail;
-				}
-			}
-		}
+		// One People index per full render: the service memoizes its folder scan,
+		// so a fresh instance here picks up notes created since the last pass.
+		this.peopleMatchService = null;
 		this.cachedEvents = events;
 		this.contentContainer.empty();
 		// Full re-render invalidates merge selection (cards are rebuilt)
@@ -638,26 +672,12 @@ export class CalendarView extends ItemView {
 		const isToday = isSameDay(this.selectedDate, new Date(), this.settings.timezone);
 
 		// Unscheduled card — always at the top
-		const unscheduledEvent: CalendarEvent = {
-			id: "unscheduled",
-			subject: this.settings.unscheduledSubject || "Unscheduled Meeting",
-			body: "",
-			isAllDay: false,
-			isOnlineMeeting: false,
-			onlineMeetingUrl: "",
-			startTime: this.selectedDate,
-			endTime: this.selectedDate,
-			location: "",
-			attendeeCount: 0,
-			attendees: [],
-			organizerName: "",
-			organizerEmail: "",
-			isOrganizer: false,
-			isRecurring: false,
-			seriesId: "",
-			responseStatus: "organizer",
-			categories: [],
-		};
+		const unscheduledEvent = syntheticEvent(
+			"unscheduled",
+			this.settings.unscheduledSubject || "Unscheduled Meeting",
+			this.selectedDate,
+			this.selectedDate,
+		);
 		this.renderAndStoreCard(this.contentContainer, unscheduledEvent);
 		this.contentContainer.createDiv({cls: "whisper-cal-adhoc-divider"});
 
@@ -839,7 +859,7 @@ export class CalendarView extends ItemView {
 				if (this.cachedEvents) this.renderEvents(this.cachedEvents);
 				void this.loadAndRenderUnlinkedSection();
 			},
-			onStatusUpdate: () => this.rerenderCardById(event.id),
+			onStatusUpdate: () => this.callbacks.onCardStatusChanged(event.id),
 			isMergeSelected: () => this.mergeSelection.has(event.id),
 			onToggleMergeSelect: (selected: boolean) => {
 				if (selected) this.mergeSelection.add(event.id);
@@ -857,7 +877,7 @@ export class CalendarView extends ItemView {
 	}
 
 	/** Update only the dynamic parts of a single card (pills, status, gutter highlight). */
-	private rerenderCardById(eventId: string): void {
+	rerenderCardById(eventId: string): void {
 		const card = this.cards.get(eventId);
 		if (!card) return;
 		updateMeetingCard(card.el, card.opts);
@@ -972,29 +992,15 @@ export class CalendarView extends ItemView {
 			if (isMerged) strippedBasename = strippedBasename.replace(/_merged$/, "");
 			const displaySubject = strippedBasename || meetingSubject || child.basename;
 
-			results.push({
-				// Merged/split notes key on their own synthetic id so findNote
-				// resolves them deterministically (calendar_event_id === event.id).
-				id: hasSyntheticId ? eventId : `unscheduled-${child.path}`,
-				subject: displaySubject,
-				body: "",
-				isAllDay: false,
-				isOnlineMeeting: false,
-				onlineMeetingUrl: "",
+			// Merged/split notes key on their own synthetic id so findNote
+			// resolves them deterministically (calendar_event_id === event.id).
+			results.push(syntheticEvent(
+				hasSyntheticId ? eventId : `unscheduled-${child.path}`,
+				displaySubject,
 				startTime,
 				endTime,
-				location: "",
-				attendeeCount: 0,
-				attendees: [],
-				organizerName: "",
-				organizerEmail: "",
-				isOrganizer: false,
-				isRecurring: false,
-				seriesId: "",
-				responseStatus: "organizer",
-				categories: [],
-				isMerged,
-			});
+				{isMerged},
+			));
 		}
 		return {localNotes: results, suppressedEventIds};
 	}
@@ -1226,6 +1232,10 @@ export class CalendarView extends ItemView {
 			const unlinkedProvider = this.callbacks.getUnlinkedProvider();
 			for (const rec of unlinked) {
 				if (this.autoLinkAttempted.has(rec.id)) continue;
+				// Tome writes the live transcript into the folder at session start, so
+				// a still-recording session's file shows up here half-written. Leave
+				// it to that session's own link tail; it is retried once that's done.
+				if (rec.sessionGuid && this.isSessionRecording(rec.sessionGuid)) continue;
 				this.autoLinkAttempted.add(rec.id);
 
 				// Definitive id match first (SESSION_GUID_DESIGN.md §8): the note was
@@ -1272,6 +1282,13 @@ export class CalendarView extends ItemView {
 		return linked;
 	}
 
+	/** True while the capture for `sessionGuid` is still in flight (live or persisted). */
+	private isSessionRecording(sessionGuid: string): boolean {
+		if (this.settings.activeApiRecordings.some(e => e.sessionGuid === sessionGuid)) return true;
+		const note = findNoteBySessionGuid(this.app, sessionGuid, this.settings.transcriptFolderPath);
+		return note !== null && this.callbacks.cardUi.hasRecording(note.path);
+	}
+
 	/**
 	 * Link an unlinked transcript to the meeting note carrying the same session_guid.
 	 * Returns true when linked. The guid was stamped on the note at record-start and
@@ -1288,14 +1305,13 @@ export class CalendarView extends ItemView {
 		const fm = (this.app.metadataCache.getFileCache(note)?.frontmatter ?? {}) as Record<string, unknown>;
 		if (unlinkedProvider.isNoteLinked(fm, note.path)) return false;
 		// Meeting context comes off the note's own frontmatter (NoteCreator wrote
-		// it at creation) so a guid-recovered transcript gets the same
-		// self-contained enrichment as one linked by the live tail. Subject falls
-		// back to the basename minus the filename template's date prefix.
-		// (Invitees need no passing: linkToNote reads the note's meeting_invitees.)
-		const str = (v: unknown): string | undefined =>
-			typeof v === "string" && v.trim() ? v.trim() : undefined;
-		const subject = str(fm["meeting_subject"])
-			?? note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
+		// it at creation). Subject falls back to the basename minus the filename
+		// template's date prefix. (Invitees need no passing: linkToNote reads the
+		// note's meeting_invitees.)
+		const fmSubject = fm["meeting_subject"];
+		const subject = (typeof fmSubject === "string" && fmSubject.trim())
+			? fmSubject.trim()
+			: note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
 		try {
 			const ok = await unlinkedProvider.linkToNote({
 				app: this.app,
@@ -1304,12 +1320,7 @@ export class CalendarView extends ItemView {
 				subject,
 				timezone: this.settings.timezone,
 				transcriptFolderPath: this.settings.transcriptFolderPath,
-				isRecurring: fm["is_recurring"] === true,
-				meetingDate: coerceFmDate(fm["meeting_date"]),
-				meetingStart: coerceFmTime(fm["meeting_start"]),
-				meetingEnd: coerceFmTime(fm["meeting_end"]),
-				organizer: str(fm["meeting_organizer"]),
-				location: str(fm["meeting_location"]),
+				...linkContextFromNoteFm(fm),
 			});
 			if (ok) console.debug(`[WhisperCal] Auto-linked transcript "${rec.title}" → "${note.basename}" via session_guid`);
 			return ok;
@@ -1394,7 +1405,7 @@ export class CalendarView extends ItemView {
 		const linkBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
 		linkBtn.addEventListener("click", () => {
 			linkBtn.disabled = true;
-			void this.handleLinkUnlinked(recording, card).finally(() => {
+			void this.handleLinkUnlinked(recording).finally(() => {
 				linkBtn.disabled = false;
 			});
 		});
@@ -1471,7 +1482,7 @@ export class CalendarView extends ItemView {
 		return out.slice(0, 50).map(({path, subject, date}) => ({path, subject, date}));
 	}
 
-	private async handleLinkUnlinked(recording: UnlinkedRecording, card: HTMLElement): Promise<void> {
+	private async handleLinkUnlinked(recording: UnlinkedRecording): Promise<void> {
 		try {
 			// Try to find matching calendar events from cache
 			const recordingDate = recording.recordingStart;
@@ -1523,18 +1534,7 @@ export class CalendarView extends ItemView {
 					subject: choice.note.subject,
 					timezone: this.settings.timezone,
 					transcriptFolderPath: this.settings.transcriptFolderPath,
-					isRecurring: noteFm?.["is_recurring"] === true,
-					// Coerced, not typeof-guarded: this is a hand-authored ad hoc note,
-					// so unquoted `meeting_date: 2026-08-05` re-reads as a Date and
-					// `meeting_start: 16:39` as the number 999. A typeof guard silently
-					// passes undefined and the transcript loses the meeting context that
-					// makes it self-contained for LLM runs. (organizer/location below are
-					// genuinely strings.)
-					meetingDate: coerceFmDate(noteFm?.["meeting_date"]),
-					meetingStart: coerceFmTime(noteFm?.["meeting_start"]),
-					meetingEnd: coerceFmTime(noteFm?.["meeting_end"]),
-					organizer: typeof noteFm?.["meeting_organizer"] === "string" ? noteFm["meeting_organizer"] : undefined,
-					location: typeof noteFm?.["meeting_location"] === "string" ? noteFm["meeting_location"] : undefined,
+					...linkContextFromNoteFm(noteFm ?? {}),
 				});
 			} else if (choice.type === "event") {
 				// Link to existing calendar event. Resolve via findNote first — the
@@ -1580,26 +1580,12 @@ export class CalendarView extends ItemView {
 				}).prompt();
 				if (!name) return;
 				const subject = name;
-				const event: CalendarEvent = {
-					id: "unscheduled",
+				const event = syntheticEvent(
+					"unscheduled",
 					subject,
-					body: "",
-					isAllDay: false,
-					isOnlineMeeting: false,
-					onlineMeetingUrl: "",
-					startTime: recording.recordingStart,
-					endTime: new Date(recording.recordingStart.getTime() + recording.durationSeconds * 1000),
-					location: "",
-					attendeeCount: 0,
-					attendees: [],
-					organizerName: "",
-					organizerEmail: "",
-					isOrganizer: false,
-					isRecurring: false,
-					seriesId: "",
-					responseStatus: "organizer",
-					categories: [],
-				};
+					recording.recordingStart,
+					new Date(recording.recordingStart.getTime() + recording.durationSeconds * 1000),
+				);
 				// Same guard as the event branch: no note, no link.
 				const created = await this.noteCreator.createNote(event, {preserveTimestamps: true, filenameOverride: name});
 				if (!created) return;

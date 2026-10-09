@@ -46,7 +46,7 @@ export function meetingAppForUrl(url: string): MeetingApp | null {
 	return null;
 }
 
-export function toMeetingDeepLink(url: string): string {
+function toMeetingDeepLink(url: string): string {
 	try {
 		const parsed = new URL(url);
 		// Teams: msteams: scheme opens the meeting directly in the app. The

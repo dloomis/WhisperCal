@@ -73,7 +73,7 @@ async function performLink(opts: {
 				onStatus?.("Waiting for transcription\u2026", undefined, undefined, undefined, "Waiting");
 				for (let i = 0; i < TRANSCRIPTION_MAX_ATTEMPTS && !ready; i++) {
 					await sleep(TRANSCRIPTION_POLL_INTERVAL_MS);
-					if (linkWatchersStopped) return;
+					if (linkWatchersStopped) { await releaseClaim(); return; }
 					ready = await hasTranscriptLines(sessionId);
 				}
 				if (!ready) {
@@ -82,7 +82,7 @@ async function performLink(opts: {
 					return;
 				}
 			}
-			if (linkWatchersStopped) return;
+			if (linkWatchersStopped) { await releaseClaim(); return; }
 
 			onStatus?.("Creating transcript\u2026", undefined, undefined, undefined, "Transcribing");
 			const transcriptPath = await createTranscriptFile({

@@ -1,12 +1,3 @@
-/**
- * Get midnight in a given timezone as a UTC Date.
- * Computes the UTC offset at actual midnight (not at the guess time)
- * to handle DST transitions correctly.
- */
-/**
- * Midnight (00:00 local) of a `YYYY-MM-DD` calendar date in `timezone`, as a UTC Date.
- * Computes the UTC offset at actual midnight (not at the guess time) to handle DST.
- */
 /** UTC offset (ms) of `timezone` at the given instant: local wall-clock minus UTC. */
 function tzOffsetMs(instant: Date, timezone: string): number {
 	const parts = new Intl.DateTimeFormat("en-US", {
@@ -90,9 +81,6 @@ export function getDayEndUTC(date: Date, timezone: string): string {
 	return midnightInTimezone(wellIntoNextDay, timezone).toISOString();
 }
 
-/**
- * Format a Date as a time string (e.g. "9:00 AM") in the given timezone.
- */
 /** Configured time format — call setTimeFormat() from plugin onload. */
 let configuredHour12: boolean | undefined;
 
@@ -219,11 +207,10 @@ export function isSameDay(a: Date, b: Date, timezone: string): boolean {
  * Returns null if either part is missing or unparseable.
  *
  * `timezone` interprets the wall-clock value in that zone (frontmatter times are
- * written in the configured zone). Omit it only for legacy callers that want
- * system-local parsing — a traveling user with a configured zone would otherwise
- * get a Date offset by hours and "No matching recording found".
+ * written in the configured zone) — a traveling user with a configured zone
+ * would otherwise get a Date offset by hours and "No matching recording found".
  */
-export function parseDateTime(dateStr: string, timeStr: string, timezone?: string): Date | null {
+export function parseDateTime(dateStr: string, timeStr: string, timezone: string): Date | null {
 	const dateParts = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 	if (!dateParts) return null;
 
@@ -244,18 +231,8 @@ export function parseDateTime(dateStr: string, timeStr: string, timezone?: strin
 		minute = parseInt(timeMatch24![2]!, 10);
 	}
 
-	if (timezone) {
-		const pad = (n: number) => String(n).padStart(2, "0");
-		const d = zonedWallTime(`${dateParts[1]}-${dateParts[2]}-${dateParts[3]}T${pad(hour)}:${pad(minute)}:00`, timezone);
-		return isNaN(d.getTime()) ? null : d;
-	}
-	const d = new Date(
-		parseInt(dateParts[1]!, 10),
-		parseInt(dateParts[2]!, 10) - 1,
-		parseInt(dateParts[3]!, 10),
-		hour,
-		minute,
-	);
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const d = zonedWallTime(`${dateParts[1]}-${dateParts[2]}-${dateParts[3]}T${pad(hour)}:${pad(minute)}:00`, timezone);
 	return isNaN(d.getTime()) ? null : d;
 }
 
@@ -266,10 +243,6 @@ export function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Format a duration in seconds as a human-readable string (e.g. "45 min", "1h 30m").
- * Returns empty string for non-positive values.
- */
 /** Format elapsed seconds as a live counter: "0:05", "1:23", "1:05:23". */
 export function formatElapsed(seconds: number): string {
 	const s = Math.max(0, Math.floor(seconds));
@@ -292,6 +265,10 @@ export function parseDurationSeconds(raw: unknown): number {
 	return 0;
 }
 
+/**
+ * Format a duration in seconds as a human-readable string (e.g. "45 min", "1h 30m").
+ * Returns empty string for non-positive values.
+ */
 export function formatRecordingDuration(seconds: number): string {
 	if (seconds <= 0) return "";
 	const minutes = Math.floor(seconds / 60);
@@ -322,13 +299,7 @@ export function formatDateTimeWithOffset(date: Date, timezone: string): string {
 	const minute = get("minute");
 	const second = get("second");
 
-	// Compute UTC offset: build a Date from the local parts in UTC, compare
-	const localMs = Date.UTC(
-		Number(year), Number(month) - 1, Number(day),
-		Number(hour), Number(minute), Number(second),
-	);
-	const offsetMs = localMs - date.getTime();
-	const offsetMin = Math.round(offsetMs / 60_000);
+	const offsetMin = Math.round(tzOffsetMs(date, timezone) / 60_000);
 	const sign = offsetMin >= 0 ? "+" : "-";
 	const absMin = Math.abs(offsetMin);
 	const offH = String(Math.floor(absMin / 60)).padStart(2, "0");

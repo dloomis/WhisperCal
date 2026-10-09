@@ -154,7 +154,7 @@ export class CardUiState {
 		}
 	}
 
-	stopAllDurationTimers(): void {
+	private stopAllDurationTimers(): void {
 		for (const id of this.durationTimers.values()) clearInterval(id);
 		this.durationTimers.clear();
 	}

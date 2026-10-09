@@ -52,6 +52,9 @@ interface PeopleIndex {
 export class PeopleMatchService {
 	private app: App;
 	private peopleFolderPath: string;
+	/** Built on first lookup. Instances are short-lived (one per operation or
+	 *  render pass), so the index never outlives the People folder it reflects. */
+	private index: PeopleIndex | null = null;
 
 	constructor(app: App, peopleFolderPath: string) {
 		this.app = app;
@@ -63,7 +66,7 @@ export class PeopleMatchService {
 			return {matched: [], unmatched: [...attendees]};
 		}
 
-		const index = this.buildIndex();
+		const index = this.getIndex();
 		const matched: MatchedAttendee[] = [];
 		const unmatched: EventAttendee[] = [];
 
@@ -81,12 +84,12 @@ export class PeopleMatchService {
 
 	matchOne(name: string, email: string): string | null {
 		if (!this.peopleFolderPath) return null;
-		return this.lookupOne(this.buildIndex(), email, name)?.notePath ?? null;
+		return this.lookupOne(this.getIndex(), email, name)?.notePath ?? null;
 	}
 
 	matchOneInfo(name: string, email: string): PersonInfo | null {
 		if (!this.peopleFolderPath) return null;
-		return this.lookupOne(this.buildIndex(), email, name);
+		return this.lookupOne(this.getIndex(), email, name);
 	}
 
 	/**
@@ -97,7 +100,7 @@ export class PeopleMatchService {
 	 */
 	canonicalName(name: string): string | null {
 		if (!this.peopleFolderPath || !name.trim()) return null;
-		const info = this.lookupOne(this.buildIndex(), "", name);
+		const info = this.lookupOne(this.getIndex(), "", name);
 		if (!info) return null;
 		return info.notePath.split("/").pop() ?? null;
 	}
@@ -110,7 +113,7 @@ export class PeopleMatchService {
 	buildRoster(microphoneUser: string, inviteeNames: string[], maxEnriched: number): string {
 		if (!this.peopleFolderPath && !microphoneUser && inviteeNames.length === 0) return "";
 
-		const index = this.buildIndex();
+		const index = this.getIndex();
 		const rows: {fullName: string; nickname: string; context: string; noteFilename: string; source: string}[] = [];
 		const seen = new Set<string>();
 
@@ -156,6 +159,10 @@ export class PeopleMatchService {
 			?? (normalized !== nameLower ? index.byName.get(normalized) : undefined)
 			?? (stripped !== normalized ? index.byName.get(stripped) : undefined)
 			?? null;
+	}
+
+	private getIndex(): PeopleIndex {
+		return this.index ??= this.buildIndex();
 	}
 
 	private buildIndex(): PeopleIndex {

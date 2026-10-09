@@ -3,7 +3,7 @@ import type {CalendarEvent} from "../types";
 import {PeopleMatchService} from "./PeopleMatchService";
 import {getMarkdownFilesRecursive, ensureFolder} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
-import {sanitizeFilename} from "../utils/sanitize";
+import {sanitizeFilename, yamlEscape} from "../utils/sanitize";
 import {applyTemplate} from "./TemplateEngine";
 
 /** Keywords in organizer name that indicate a team, resource, or system account. */
@@ -223,7 +223,7 @@ export async function createPeopleNotesForNames(
 		try {
 			let content = template
 				? applyTemplate(template, buildPeopleVariableMap(name, ""))
-				: `---\nfull_name: "${name}"\n---\n`;
+				: `---\nfull_name: "${yamlEscape(name)}"\n---\n`;
 			if (contextLabel) content += `\n\n> [!info] Auto-created\n> Speaker in **${contextLabel}**\n`;
 			await app.vault.create(path, content);
 			created.push(name);

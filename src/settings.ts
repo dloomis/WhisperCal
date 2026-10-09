@@ -8,13 +8,14 @@ import type {AuthState} from "./services/CalendarAuth";
 import {listAnthropicModels, resolveAnthropicKey} from "./services/AnthropicModels";
 import type {AnthropicModel} from "./services/AnthropicModels";
 import {MACWHISPER_DB_PATH} from "./constants";
+import {DEFAULT_MATCH_FLOOR} from "./services/VoiceprintMatcher";
 import {addActivateOnKey} from "./utils/a11y";
 import {recordingStatus, resolveRecordingApiBaseUrl} from "./services/RecordingApi";
 import type {PersistedApiRecording} from "./services/ApiRecording";
 import {FileSuggest} from "./ui/FileSuggest";
 import type {PeopleSearchResult} from "./services/PeopleSearchProvider";
 
-export interface ImportantOrganizer {
+interface ImportantOrganizer {
 	name: string;
 	email: string;
 }
@@ -200,7 +201,7 @@ export const DEFAULT_SETTINGS: WhisperCalSettings = {
 	pullMeetingChat: true,
 	skipWordReplacementConfirm: false,
 	voiceprintFolderPath: "Caches/Voiceprints",
-	voiceprintMatchFloor: 0.50, // mirrors DEFAULT_MATCH_FLOOR in VoiceprintMatcher.ts
+	voiceprintMatchFloor: DEFAULT_MATCH_FLOOR,
 	voiceprintAutoTagSkipModal: false,
 	voiceprintAutoTagFloor: 0.80,
 	voiceprintAutoTagMinorMaxShare: 0.05,
@@ -398,13 +399,13 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	/** Whole number, `min <= value` (default min=1). */
-	private intRow(key: KeysOfType<number>, o: RowOpts & {placeholder?: string; min?: number}): Row {
+	private intRow(key: KeysOfType<number>, o: RowOpts & {min?: number}): Row {
 		const min = o.min ?? 1;
 		return {
 			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
 			control: {
 				type: "number", key, min, step: 1,
-				placeholder: o.placeholder ?? String(min),
+				placeholder: String(DEFAULT_SETTINGS[key]),
 				defaultValue: DEFAULT_SETTINGS[key],
 				validate: v => Number.isInteger(v) ? undefined : "Enter a whole number",
 			},
@@ -412,12 +413,12 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	}
 
 	/** Fraction bounded to [0, 1]. */
-	private ratioRow(key: KeysOfType<number>, o: RowOpts & {placeholder?: string}): Row {
+	private ratioRow(key: KeysOfType<number>, o: RowOpts): Row {
 		return {
 			name: o.name, desc: o.desc, aliases: o.aliases, visible: o.visible,
 			control: {
 				type: "number", key, min: 0, max: 1, step: "any",
-				placeholder: o.placeholder,
+				placeholder: String(DEFAULT_SETTINGS[key]),
 				defaultValue: DEFAULT_SETTINGS[key],
 			},
 		};
@@ -458,7 +459,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					text.setPlaceholder(o.placeholder)
 						.setValue(this.plugin.settings[key])
 						.onChange((value) => {
-							this.store(key, value);
+							this.store(key, value.trim());
 							this.debouncedSave();
 						});
 					new FileSuggest(this.app, text.inputEl);
@@ -632,18 +633,15 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.intRow("refreshIntervalMinutes", {
 						name: "Refresh interval (minutes)",
 						desc: "How often to refresh the calendar view",
-						placeholder: "5",
 					}),
 					this.intRow("cacheFutureDays", {
 						name: "Cache future days",
 						desc: "Number of upcoming days to pre-fetch for offline access",
-						placeholder: "5",
 						min: 0,
 					}),
 					this.intRow("cacheRetentionDays", {
 						name: "Cache retention (days)",
 						desc: "How many days of past calendar data to keep in the local cache",
-						placeholder: "30",
 					}),
 				],
 			},
@@ -743,12 +741,21 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					}, (setting) => { setting.addButton(button => button
 						.setButtonText("Open")
 						.onClick(async () => {
-							const filePath = this.plugin.settings.replacementFilePath;
+							const filePath = normalizePath(this.plugin.settings.replacementFilePath);
 							if (!filePath) {
 								return;
 							}
-							if (!this.app.vault.getAbstractFileByPath(filePath)) {
-								await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
+							try {
+								if (!this.app.vault.getAbstractFileByPath(filePath)) {
+									const dir = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
+									if (dir && !this.app.vault.getAbstractFileByPath(dir)) {
+										await this.app.vault.createFolder(dir);
+									}
+									await this.app.vault.create(filePath, "# Word replacements (one per line: search,replace)\n");
+								}
+							} catch (e) {
+								new Notice(`Could not create ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+								return;
 							}
 							void this.app.workspace.openLinkText(filePath, "", false);
 						})); }),
@@ -805,13 +812,11 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.intRow("recordingWindowMinutes", {
 						name: "Recording match window (minutes)",
 						desc: "How close a recording start must be to the scheduled meeting time to be matched automatically (manual linking offers the whole day)",
-						placeholder: "10",
 						visible: isMacWhisper,
 					}),
 					this.intRow("unlinkedLookbackDays", {
 						name: "Unlinked lookback (days)",
 						desc: "How far back to check for unlinked recordings",
-						placeholder: "30",
 						visible: isMacWhisper,
 					}),
 				],
@@ -826,7 +831,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						name: "Base URL",
 						desc: "REST API base URL (e.g. http://127.0.0.1:8080/api/v1). Expects /health, /start, /stop, /status endpoints.",
 						placeholder: "http://127.0.0.1:8080/api/v1",
-						normalize: v => v.replace(/\/+$/, ""),
+						normalize: v => v.trim().replace(/\/+$/, ""),
 						visible: isApi,
 					}),
 					{
@@ -893,7 +898,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						desc: "Minimum cosine similarity (0–1) required to accept an acoustic speaker match. " +
 							"Higher is stricter: fewer false matches, but more speakers left for you to confirm by ear. " +
 							"Default 0.50. Solo-library matches always use at least 0.55.",
-						placeholder: "0.50",
 					}),
 					// Auto-tag (skip the modal) — silently apply tags when every speaker is a
 					// confident voiceprint match. Drift guard: silent auto-tags never enroll or
@@ -908,7 +912,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 						name: "Auto-tag confidence floor",
 						desc: "Minimum cosine similarity (0–1) every speaker must reach for the modal to be skipped. " +
 							"Keep it high so unattended tagging stays strict. Default 0.80.",
-						placeholder: "0.80",
 						visible: autoTagOn,
 					}),
 					this.ratioRow("voiceprintAutoTagMinorMaxShare", {
@@ -917,7 +920,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 							"voiceprint-matches and would block auto-tagging. An unmatched speaker with at most this " +
 							"share of transcript lines (0–1) no longer blocks — it is left untagged, as you would in " +
 							"the modal. Default 0.05 (5%). Set 0 to require every speaker to match.",
-						placeholder: "0.05",
 						visible: autoTagOn,
 					}),
 				],
@@ -925,7 +927,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			this.promptGroup(
 				"Transcript post-processing",
 				"Path to the prompt that fixes transcription and diarization errors in the transcript and proposes names for speakers voiceprints didn't match (e.g. Prompts/Transcript Post-Processing Prompt.md). Leave empty to skip the LLM step — known people are still matched by voiceprint and unknowns confirmed by ear in the modal.",
-				"Prompts/Transcript Post-Processing Prompt.md",
 				"speakerTaggingPromptPath",
 				"speakerTagModel",
 				"speakerTagFlags",
@@ -942,7 +943,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.intRow("speakerTagClipSeconds", {
 						name: "Speaker clip length (seconds)",
 						desc: "When you click a timestamp in the speaker tagging modal, how many seconds of audio to play before stopping. 0 falls back to 5.",
-						placeholder: "5",
 						min: 0,
 					}),
 				],
@@ -955,16 +955,14 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		return [
 			this.promptGroup(
 				"Summarizer",
-				"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Summarizer.md)",
-				"Prompts/Meeting Summarizer.md",
+				"Vault-relative or absolute path to the Claude Code prompt file for summarizing transcripts (e.g. Prompts/Meeting Transcript Summarizer Prompt.md)",
 				"summarizerPromptPath",
 				"summarizerModel",
 				"summarizerFlags",
 			),
 			this.promptGroup(
 				"Research",
-				"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research.md)",
-				"Prompts/Meeting Research.md",
+				"Vault-relative or absolute path to the Claude Code prompt file for meeting research (e.g. Prompts/Meeting Research Prompt.md)",
 				"researchPromptPath",
 				"researchModel",
 				"researchFlags",
@@ -1038,7 +1036,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.intRow("autoTagLookbackHours", {
 						name: "Auto-tag catch-up window (hours)",
 						desc: "On startup, also auto-tag eligible transcripts created within this many hours. 0 disables the startup scan.",
-						placeholder: "48",
 						min: 0,
 						visible: () => this.plugin.settings.autoSummarizeAfterTagging,
 					}),
@@ -1050,11 +1047,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				heading: "LLM engine",
 				cls: "whisper-cal-settings",
 				items: [
-					this.folderRow("llmPromptDir", {
-						name: "Prompt directory",
-						desc: "Vault folder holding your LLM prompt files",
-						placeholder: "Prompts",
-					}),
 					this.textRow("llmCli", {
 						name: "CLI command",
 						desc: "Command used to invoke the LLM (default: claude)",
@@ -1115,7 +1107,6 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 	private promptGroup(
 		name: string,
 		promptDesc: string,
-		placeholder: string,
 		pathKey: "speakerTaggingPromptPath" | "summarizerPromptPath" | "researchPromptPath",
 		modelKey: ModelKey,
 		flagsKey: "speakerTagFlags" | "summarizerFlags" | "researchFlags",
@@ -1130,7 +1121,7 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 				this.pathRow(pathKey, {
 					name: "Prompt",
 					desc: promptDesc,
-					placeholder,
+					placeholder: DEFAULT_SETTINGS[pathKey],
 					aliases: [`${name} prompt`],
 				}),
 				{
@@ -1194,9 +1185,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 		const result = apiKey ? await listAnthropicModels(apiKey) : null;
 		// A newer fetch started while this one was in flight — let it win.
 		if (seq !== this.modelRefreshSeq) return;
-		this.models = result?.ok ? result.models : [];
+		this.models = result ?? [];
 		// Let a failed fetch be retried the next time a dropdown renders.
-		if (apiKey && !result?.ok) this.modelsFetchedFor = null;
+		if (apiKey && !result) this.modelsFetchedFor = null;
 		for (const {sel, key} of this.modelSelects) {
 			this.fillModelSelect(sel, key);
 		}
@@ -1289,7 +1280,9 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 			input.focus();
 		};
 
+		let searchSeq = 0;
 		const searchPeople = async (query: string) => {
+			const seq = ++searchSeq;
 			if (query.length < 2) {
 				suggestions = [];
 				selectedIndex = -1;
@@ -1301,6 +1294,8 @@ export class WhisperCalSettingTab extends PluginSettingTab {
 					this.plugin.settings.importantOrganizers.map(o => o.email),
 				);
 				const results = await this.plugin.peopleSearch.search(query);
+				// A newer query was issued while this one was in flight — let it win.
+				if (seq !== searchSeq) return;
 				suggestions = results.filter(s => !alreadyAdded.has(s.email));
 				selectedIndex = -1;
 				renderSuggestions();

@@ -1,6 +1,6 @@
 # Fold WhisperCore back into WhisperCal
 
-**Written:** 2026-10-03 · **Status:** Phases 1–4 implemented (uncommitted), except the version bump, changelog, and the WhisperCore repo notice, which wait for the release; Phase 5 pending · **Baseline:** WhisperCal 0.8.7 (`bd13e5c`), WhisperCore 0.1.0 (`1af6526`)
+**Written:** 2026-10-03 · **Status:** Phases 1–4 shipped in 0.9.0; Phase 5 (WhisperOrg consumes WhisperCal's API) pending · **Baseline:** WhisperCal 0.8.7 (`bd13e5c`), WhisperCore 0.1.0 (`1af6526`)
 
 ## Why
 

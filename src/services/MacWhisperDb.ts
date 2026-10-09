@@ -44,7 +44,7 @@ interface SessionMetadataRow {
 	appName: string | null;
 }
 
-export interface SpeakerInfo {
+interface SpeakerInfo {
 	name: string;
 	id: string;
 	isStub: boolean;
@@ -75,11 +75,6 @@ const RECENT_SESSION_LIMIT = 200;
 function isValidHexId(id: string): boolean {
 	return /^[0-9A-Fa-f]+$/.test(id) && id.length > 0;
 }
-
-/**
- * Query the MacWhisper SQLite database to find and link recordings.
- * Uses `sqlite3` CLI — no npm dependencies needed.
- */
 
 /**
  * A real failure reading the MacWhisper DB (locked file, missing `sqlite3`, bad
@@ -241,14 +236,7 @@ export async function findRecordingsNear(
 		if (diff <= windowMs) {
 			debug("MacWhisperDb", "MATCH: session=%s title=%s start=%s diff=%.1f min",
 				row.sessionId, row.title, startTime.toISOString(), diffMin);
-			results.push({
-				sessionId: row.sessionId,
-				title: row.title || null,
-				recordingStart: startTime,
-				dateCreated: parseDateCreated(row.dateCreated),
-				durationSeconds: row.duration ? Math.round(row.duration) : 0,
-				speakerCount: row.speakerCount,
-			});
+			results.push(toRecording(row, startTime));
 		} else if (diffMin < 120) {
 			debug("MacWhisperDb", "NEAR-MISS: session=%s title=%s start=%s diff=%.1f min",
 				row.sessionId, row.title, startTime.toISOString(), diffMin);
@@ -259,11 +247,18 @@ export async function findRecordingsNear(
 	return results;
 }
 
-/**
- * Fetch all recent MacWhisper sessions within a time window,
- * filtered by track-0 birthtime. Returns sessions older than
- * `gracePeriodHours` but newer than `lookbackDays`.
- */
+function toRecording(row: SessionRow, startTime: Date): MacWhisperRecording {
+	return {
+		sessionId: row.sessionId,
+		title: row.title || null,
+		recordingStart: startTime,
+		dateCreated: parseDateCreated(row.dateCreated),
+		durationSeconds: row.duration ? Math.round(row.duration) : 0,
+		speakerCount: row.speakerCount,
+	};
+}
+
+/** All MacWhisper sessions that started within the last `lookbackDays`. */
 export async function findRecentSessions(
 	lookbackDays: number,
 ): Promise<MacWhisperRecording[]> {
@@ -278,16 +273,7 @@ export async function findRecentSessions(
 		if (!startTime) continue;
 
 		const age = now - startTime.getTime();
-		if (age <= lookbackMs) {
-			results.push({
-				sessionId: row.sessionId,
-				title: row.title || null,
-				recordingStart: startTime,
-				dateCreated: parseDateCreated(row.dateCreated),
-				durationSeconds: row.duration ? Math.round(row.duration) : 0,
-				speakerCount: row.speakerCount,
-			});
-		}
+		if (age <= lookbackMs) results.push(toRecording(row, startTime));
 	}
 
 	return results;

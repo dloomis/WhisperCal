@@ -5,6 +5,7 @@ import type {FrontmatterSpeaker} from "./SpeakerTagParser";
 import {transcriptStartOffset} from "../utils/transcript";
 import {PeopleMatchService} from "./PeopleMatchService";
 import {FM} from "../constants";
+import {processFrontmatterQueued} from "../utils/frontmatter";
 
 /**
  * Apply approved speaker tag decisions to the transcript file:
@@ -57,7 +58,7 @@ export async function applySpeakerTags(
 	const retractions: Array<{from: string; to: string}> = [];
 
 	// 1. Update frontmatter
-	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, file, (frontmatter: Record<string, unknown>) => {
 		const attendees = frontmatter["attendees"] ?? frontmatter["speakers"];
 		if (Array.isArray(attendees)) {
 			for (const speaker of attendees as FrontmatterSpeaker[]) {

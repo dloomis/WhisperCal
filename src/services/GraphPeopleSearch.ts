@@ -3,7 +3,7 @@ import type {CalendarAuth} from "./CalendarAuth";
 import type {PeopleSearchProvider, PeopleSearchResult} from "./PeopleSearchProvider";
 
 /**
- * Microsoft Graph people search — extracted from settings.ts.
+ * Microsoft Graph people search.
  * Tries /me/people first (People.Read), falls back to /users (User.ReadBasic.All).
  */
 export class GraphPeopleSearch implements PeopleSearchProvider {
@@ -11,10 +11,6 @@ export class GraphPeopleSearch implements PeopleSearchProvider {
 
 	constructor(auth: CalendarAuth) {
 		this.auth = auth;
-	}
-
-	isAvailable(): boolean {
-		return this.auth.isSignedIn();
 	}
 
 	async search(query: string): Promise<PeopleSearchResult[]> {

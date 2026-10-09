@@ -2,7 +2,7 @@ import {App, Notice, TFile} from "obsidian";
 import {FM} from "../constants";
 import {resolveWikiLink, resolveTranscriptAudio, resolveVoiceprintSidecar} from "../utils/vault";
 
-export type RelatedFileKind = "transcript" | "audio" | "voiceprints";
+type RelatedFileKind = "transcript" | "audio" | "voiceprints";
 
 export interface RelatedFile {
 	file: TFile;

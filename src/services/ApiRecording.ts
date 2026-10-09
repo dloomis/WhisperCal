@@ -1,11 +1,11 @@
 import {App, Notice, TFile, TFolder, normalizePath} from "obsidian";
 import {recordingHealth, recordingStart, recordingStop, recordingStatus, recordingSessionStatus} from "./RecordingApi";
 import type {SessionGuidStatus} from "./RecordingApi";
-import {batchUpdateFrontmatter, removeFrontmatterKeys} from "../utils/frontmatter";
+import {batchUpdateFrontmatter, removeFrontmatterKeys, processFrontmatterQueued} from "../utils/frontmatter";
 import type {CardUiState, RecordingInfo} from "./CardUiState";
-import {formatDate, formatTime, sleep} from "../utils/time";
+import {formatDate, formatTime, sleep, coerceFmDate, coerceFmTime} from "../utils/time";
 import type {CalendarEvent} from "../types";
-import {resolveWikiLink} from "../utils/vault";
+import {resolveWikiLink, noteBasename, transcriptBasenameFor, transcriptPathFor} from "../utils/vault";
 import {parseDisplayName} from "../utils/nameParser";
 import type {OnStatus} from "./LinkRecording";
 import {FM} from "../constants";
@@ -78,15 +78,6 @@ function isAlreadyRecordingError(err: unknown): boolean {
 	return m.includes("already recording") || m.includes("409");
 }
 
-function getTranscriptFilename(notePath: string): string {
-	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
-	return `${basename} - Transcript`;
-}
-
-function getTranscriptPath(notePath: string, transcriptFolderPath: string): string {
-	return normalizePath(`${transcriptFolderPath}/${getTranscriptFilename(notePath)}.md`);
-}
-
 export async function startApiRecording(opts: {
 	app: App;
 	notePath: string;
@@ -106,7 +97,7 @@ export async function startApiRecording(opts: {
 	// while another is active is the service's call, and the UI already consulted
 	// /status and got the user's confirmation before reaching this point.
 
-	const suggestedFilename = getTranscriptFilename(notePath);
+	const suggestedFilename = transcriptBasenameFor(noteBasename(notePath) || "Transcript");
 	// Correlation guid for this session (SESSION_GUID_DESIGN.md): WhisperCal is
 	// the initiator, so it owns identity. Sent to the service, stamped on the
 	// note, and used from here on to match status and transcript by id instead
@@ -434,11 +425,11 @@ async function enrichTranscriptFrontmatter(
 	notePath: string,
 	info: RecordingInfo | null,
 ): Promise<void> {
-	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-	if (!noteBasename) {
+	const noteBase = noteBasename(notePath);
+	if (!noteBase) {
 		// Writing `[[]]` here would produce a broken backlink that's hard to
 		// notice later; log and skip so the absence is explicit in the logs.
-		console.error(`[WhisperCal] enrichTranscriptFrontmatter: empty noteBasename from "${notePath}" — meeting_note will NOT be set on ${transcriptFile.path}`);
+		console.error(`[WhisperCal] enrichTranscriptFrontmatter: empty noteBase from "${notePath}" — meeting_note will NOT be set on ${transcriptFile.path}`);
 	}
 
 	// Read meeting note for wiki-link invitees (PeopleMatchService already ran there)
@@ -450,14 +441,14 @@ async function enrichTranscriptFrontmatter(
 		? noteFm[FM.MEETING_INVITEES] as string[]
 		: null;
 
-	await app.fileManager.processFrontMatter(transcriptFile, (fm: Record<string, unknown>) => {
+	await processFrontmatterQueued(app, transcriptFile, (fm: Record<string, unknown>) => {
 		// Add tags — preserve existing, ensure "transcript" is present
 		const existing = Array.isArray(fm["tags"]) ? fm["tags"] as string[] : [];
 		if (!existing.includes("transcript")) {
 			fm["tags"] = [...existing, "transcript"];
 		}
 
-		if (noteBasename) fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
+		if (noteBase) fm[FM.MEETING_NOTE] = `[[${noteBase}]]`;
 		fm[FM.PIPELINE_STATE] = "titled";
 
 		// Session guid: preserve the service's stamp when present (it is the
@@ -625,7 +616,7 @@ async function waitAndLink(app: App, notePath: string, transcriptFolderPath: str
 			const namePrefix = info?.suggestedFilename;
 			const expectedPath = namePrefix
 				? normalizePath(`${transcriptFolderPath}/${namePrefix}.md`)
-				: getTranscriptPath(notePath, transcriptFolderPath);
+				: transcriptPathFor(notePath, transcriptFolderPath);
 
 			// Poll ONLY the expected path for the full window. With concurrent
 			// recordings, an immediate newest-file fallback could adopt another
@@ -834,7 +825,7 @@ async function reconcileOne(app: App, entry: PersistedApiRecording, baseUrl: str
 		return;
 	}
 
-	const info = rebuildRecordingInfo(entry, noteFile, timezone);
+	const info = rebuildRecordingInfo(app, entry, noteFile, timezone);
 
 	if (!entry.guidAcknowledged) {
 		// Legacy service: no per-guid lookup exists. If a capture is live, re-attach
@@ -880,20 +871,27 @@ async function reconcileOne(app: App, entry: PersistedApiRecording, baseUrl: str
 	}
 }
 
-/** Minimal RecordingInfo for a reconciled session. Meeting-context fields are
- *  left blank — enrichment tolerates their absence and prefers the note's own
- *  frontmatter for invitees anyway. */
-function rebuildRecordingInfo(entry: PersistedApiRecording, noteFile: TFile, timezone: string): RecordingInfo {
+/** RecordingInfo for a reconciled session. Meeting context comes off the note's
+ *  own frontmatter (NoteCreator wrote it at creation) so the transcript gets the
+ *  same enrichment as a live link; invitees are read from the note at link time. */
+function rebuildRecordingInfo(app: App, entry: PersistedApiRecording, noteFile: TFile, timezone: string): RecordingInfo {
+	const fm = (app.metadataCache.getFileCache(noteFile)?.frontmatter ?? {}) as Record<string, unknown>;
+	const str = (v: unknown): string | undefined => typeof v === "string" && v.trim() ? v.trim() : undefined;
 	return {
 		noteFile,
 		sessionGuid: entry.sessionGuid,
 		guidAcknowledged: entry.guidAcknowledged,
 		suggestedFilename: entry.suggestedFilename,
-		subject: noteFile.basename,
+		subject: str(fm["meeting_subject"]) ?? noteFile.basename,
 		attendees: [],
-		isRecurring: false,
+		isRecurring: fm["is_recurring"] === true,
 		timezone,
 		transcriptFolderPath: entry.transcriptFolderPath,
+		meetingDate: coerceFmDate(fm["meeting_date"]),
+		meetingStart: coerceFmTime(fm["meeting_start"]),
+		meetingEnd: coerceFmTime(fm["meeting_end"]),
+		organizer: str(fm["meeting_organizer"]),
+		location: str(fm["meeting_location"]),
 	};
 }
 

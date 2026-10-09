@@ -42,7 +42,7 @@ export class DeleteTranscriptModal extends Modal {
 		this.setTitle("Delete transcript");
 
 		contentEl.createEl("p", {
-			text: `Are you sure you want to delete "${this.ctx.title}"? The transcript file will be moved to the system trash.`,
+			text: `Delete "${this.ctx.title}"? The transcript file will be moved to trash — you can recover it from there.`,
 			cls: "whisper-cal-delete-warning",
 		});
 

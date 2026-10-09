@@ -609,8 +609,13 @@ export class SpeakerTagModal extends Modal {
 			})
 			: null;
 
-		// Stop playback before tearing down the modal DOM.
-		this.audioEl?.pause();
+		// Stop playback and release the decoder before tearing down the modal DOM;
+		// a detached <audio> with src still set keeps its buffers until GC.
+		if (this.audioEl) {
+			this.audioEl.pause();
+			this.audioEl.removeAttribute("src");
+			this.audioEl.load();
+		}
 		this.audioEl = null;
 
 		this.contentEl.empty();

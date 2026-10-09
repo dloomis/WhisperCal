@@ -1,9 +1,9 @@
 import type {App} from "obsidian";
-import {TFile, Notice, normalizePath} from "obsidian";
+import {TFile, Notice} from "obsidian";
 import {getTranscript} from "./MacWhisperDb";
 import type {TranscriptData} from "./MacWhisperDb";
-import {batchUpdateFrontmatter} from "../utils/frontmatter";
-import {ensureFolder} from "../utils/vault";
+import {batchUpdateFrontmatter, processFrontmatterQueued} from "../utils/frontmatter";
+import {ensureFolder, noteBasename, transcriptPathFor} from "../utils/vault";
 import {yamlEscape} from "../utils/sanitize";
 import {coerceFmDate, coerceFmTime, formatDateTimeWithOffset} from "../utils/time";
 import {FM} from "../constants";
@@ -14,22 +14,11 @@ interface SpeakerBlock {
 	lines: string[];
 }
 
-function getTranscriptPath(notePath: string, transcriptFolderPath: string): string {
-	// Extract basename without extension from the meeting note path
-	const basename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "Transcript";
-	return normalizePath(`${transcriptFolderPath}/${basename} - Transcript.md`);
-}
-
 function formatDuration(seconds: number): string {
 	const h = Math.floor(seconds / 3600);
 	const m = Math.floor((seconds % 3600) / 60);
 	const s = Math.floor(seconds % 60);
 	return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-function formatTimestamp(ms: number): string {
-	const totalSec = Math.floor(ms / 1000);
-	return formatDuration(totalSec);
 }
 
 function groupBySpeaker(lines: TranscriptData["lines"]): SpeakerBlock[] {
@@ -70,11 +59,11 @@ function buildFrontmatter(opts: {
 }): string {
 	const {notePath, sessionId, metadata, speakers, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
-	const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-	if (!noteBasename) {
+	const noteBase = noteBasename(notePath);
+	if (!noteBase) {
 		// Writing `[[]]` produces a broken backlink the user won't notice until
 		// the speaker/summary stage fails; make the absence explicit.
-		console.error(`[WhisperCal] TranscriptWriter.buildFrontmatter: empty noteBasename from "${notePath}" — meeting_note will NOT be written`);
+		console.error(`[WhisperCal] TranscriptWriter.buildFrontmatter: empty noteBase from "${notePath}" — meeting_note will NOT be written`);
 	}
 	const dateStr = formatDateTimeWithOffset(recordingStart, timezone);
 	const duration = metadata.durationSec ? Math.round(metadata.durationSec) : 0;
@@ -86,8 +75,8 @@ function buildFrontmatter(opts: {
 		`macwhisper_session_id: "${yamlEscape(sessionId)}"`,
 		`duration: ${duration}`,
 	];
-	if (noteBasename) {
-		lines.push(`meeting_note: "[[${yamlEscape(noteBasename)}]]"`);
+	if (noteBase) {
+		lines.push(`meeting_note: "[[${yamlEscape(noteBase)}]]"`);
 	}
 	lines.push(`speaker_count: ${speakers.length}`);
 
@@ -158,7 +147,7 @@ function buildTranscriptBody(data: TranscriptData): string {
 	if (isDiarized) {
 		const blocks = groupBySpeaker(data.lines);
 		for (const block of blocks) {
-			const timestamp = formatTimestamp(block.startMs);
+			const timestamp = formatDuration(block.startMs / 1000);
 			if (block.speaker) {
 				sections.push(`**${block.speaker}** [${timestamp}]`);
 			} else {
@@ -170,7 +159,7 @@ function buildTranscriptBody(data: TranscriptData): string {
 	} else {
 		// Not diarized — just timestamped lines
 		for (const line of data.lines) {
-			const timestamp = formatTimestamp(line.startMs);
+			const timestamp = formatDuration(line.startMs / 1000);
 			sections.push(`[${timestamp}] ${line.text}`);
 		}
 		sections.push("");
@@ -196,13 +185,13 @@ export async function createTranscriptFile(opts: {
 }): Promise<string | null> {
 	const {app, notePath, sessionId, transcriptFolderPath, recordingStart, timezone, calendarEvent, calendarAttendees, isRecurring} = opts;
 
-	const transcriptPath = getTranscriptPath(notePath, transcriptFolderPath);
+	const transcriptPath = transcriptPathFor(notePath, transcriptFolderPath);
 
 	// If transcript file already exists, ensure backlinks are set and return
 	const existingTranscript = app.vault.getAbstractFileByPath(transcriptPath);
 	if (existingTranscript instanceof TFile) {
-		const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-		const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+		const transcriptBasename = existingTranscript.basename;
+		const noteBase = noteBasename(notePath);
 
 		const existingFm = app.metadataCache.getFileCache(existingTranscript)?.frontmatter;
 
@@ -223,12 +212,12 @@ export async function createTranscriptFile(opts: {
 		// meeting_note → note direction even though the note → transcript
 		// link got written.
 		if (!existingFm?.[FM.MEETING_NOTE]) {
-			if (!noteBasename) {
-				console.error(`[WhisperCal] Cannot repair missing meeting_note on ${transcriptPath}: empty noteBasename from "${notePath}"`);
+			if (!noteBase) {
+				console.error(`[WhisperCal] Cannot repair missing meeting_note on ${transcriptPath}: empty noteBase from "${notePath}"`);
 			} else {
 				console.error(`[WhisperCal] Existing transcript missing meeting_note — repairing: ${transcriptPath}`);
-				await app.fileManager.processFrontMatter(existingTranscript, (fm: Record<string, unknown>) => {
-					fm[FM.MEETING_NOTE] = `[[${noteBasename}]]`;
+				await processFrontmatterQueued(app, existingTranscript, (fm: Record<string, unknown>) => {
+					fm[FM.MEETING_NOTE] = `[[${noteBase}]]`;
 				});
 			}
 		}
@@ -293,7 +282,7 @@ export async function createTranscriptFile(opts: {
 	// Update meeting note frontmatter with link to transcript and pipeline state.
 	// Batch into a single processFrontMatter call to avoid a race with the
 	// pipeline_state mirror handler that fires when the transcript file is created.
-	const transcriptBasename = transcriptPath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+	const transcriptBasename = noteBasename(transcriptPath);
 	const allSpeakersNamed = data.speakers.length > 0 && data.speakers.every(sp => !sp.isStub);
 	await batchUpdateFrontmatter(app, notePath, {
 		[FM.TRANSCRIPT]: `[[${transcriptBasename}]]`,

@@ -683,7 +683,7 @@ Use `{{variableName}}` placeholders in your template body. All available variabl
 | `{{startTime}}` | Start time | `10:00 AM` |
 | `{{endTime}}` | End time | `10:30 AM` |
 | `{{location}}` | Location or "N/A" | `Conference Room B` |
-| `{{organizer}}` | Organizer as wiki link (if matched) or plain name | `[[Jane Smith]]` |
+| `{{organizer}}` | Organizer as a wiki link | `[[Jane Smith]]` |
 | `{{organizerName}}` | Organizer display name | `Jane Smith` |
 | `{{organizerEmail}}` | Organizer email address | `jane@example.com` |
 | `{{attendeeCount}}` | Number of attendees | `5` |
@@ -715,7 +715,6 @@ The following keys are **auto-injected** by the plugin when creating a note. Do 
 | `tags` | Used to distinguish meeting notes from transcript files |
 | `calendar_event_id` | Identifies this file as a WhisperCal meeting note |
 | `meeting_join_url` | Online meetings only; carries the Teams chat thread id (see [Teams Meeting Chat](#teams-meeting-chat)) |
-| `note_created` | Fallback timestamp for unscheduled notes |
 | `is_recurring` | Passed to transcript creation |
 | `macwhisper_session_id` | Links a MacWhisper recording to the note |
 | `macwhisper_session_ids` | All source session IDs on a merged note (see [Merging Meetings](#merging-meetings)) |
@@ -999,11 +998,9 @@ The optional **transcript post-processing** LLM pass runs whenever LLM features 
 2. Set the **"Transcript post-processing"** prompt path in WhisperCal settings (leave it empty to disable the LLM pass).
 3. Set the **"Microphone user"** field to your full name as it appears in meetings.
 
-> **Upgrading?** If your speaker-tagging prompt was still set to the previous default (`Prompts/Speaker Auto-Tag Prompt.md`), WhisperCal repoints it to the new `Prompts/Transcript Post-Processing Prompt.md` automatically on load. A custom prompt path is left untouched.
-
 **Usage:**
 
-1. Click the **Tag speakers…** smart button (or choose it from the card's ⋯ menu), or run the **"Tag speakers in transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts.
+1. Click the **Tag speakers…** smart button (or choose it from the card's ⋯ menu). An instructions dialog opens — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "the unidentified speaker with an accent is probably Priya") before the LLM starts. The **"Tag speakers in transcript"** command runs immediately with no dialog.
 2. The activity badge reads *Processing* and the Speakers rail segment pulses while the LLM runs in the background.
 3. When the LLM finishes, a **speaker confirmation modal** appears inside Obsidian.
 4. Review the proposed mappings, edit any names, and click **Apply**.
@@ -1027,7 +1024,7 @@ When the transcript has a linked recording, the confirmation modal becomes a lis
 
 - A compact **audio player** appears at the top of the modal, loaded with the meeting recording.
 - Every timestamp in a speaker's excerpt panel is a **click-to-play** control: click it to play just that snippet — playback starts at the line and stops automatically at the next speaker's timestamp. Click a later line for the same speaker to hear a clearer sample. Pause and scrub freely with the player's own controls.
-- The **"Speaker clip length (seconds)"** setting caps how long each snippet plays. The default is `5`, a fixed five-second clip (never bleeding past the next speaker); set it to `0` to play the whole snippet.
+- The **"Speaker clip length (seconds)"** setting caps how long each snippet plays. The default is `5`, a fixed five-second clip (never bleeding past the next speaker); `0` also falls back to the five-second clip.
 
 The recording is discovered automatically from the transcript's `recording` frontmatter key (a wiki link to the audio file, e.g. `recording: "[[My Meeting.m4a]]"`). The [Recording API](#recording-api) source writes this link when it saves the meeting audio into the vault. Timestamps are read straight from the transcript body, so no conversion or extra setup is needed. If a transcript has no linked recording, the modal behaves exactly as before — excerpts with plain-text timestamps and no player.
 
@@ -1075,8 +1072,7 @@ The plugin injects the expected output format into the LLM's trigger string at i
 
 **Important notes:**
 - The parser extracts the first fenced `` ```json `` block from the LLM's stdout. Everything outside the block is ignored, so the LLM can include reasoning or other output around it.
-- If no JSON block is found, the parser falls back to the legacy `Proposed Mapping:` text format for backward compatibility.
-- If parsing fails entirely or the LLM returns empty output, WhisperCal falls back to showing the transcript's frontmatter speakers without AI suggestions. The user can still manually type names in the modal.
+- If no JSON block is found, parsing fails, or the LLM returns empty output, WhisperCal shows the transcript's frontmatter speakers without AI suggestions (with a notice saying why). The user can still manually type names in the modal.
 
 #### What Happens When You Apply
 
@@ -1133,7 +1129,7 @@ Shine Mountain,Cheyenne Mountain
 
 **Usage:**
 
-1. Choose **"Summarize meeting…"** from the meeting card's ⋯ menu, or run the **"Summarize meeting transcript"** command. Either opens an instructions dialog — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the item reads **"Regenerate summary…"** and regenerates the same way.
+1. Choose **"Summarize meeting…"** from the meeting card's ⋯ menu. An instructions dialog opens — leave it empty and hit **Run** for a normal run, or enter one-off custom instructions (e.g., "focus on the budget discussion"). On an already-summarized meeting, the item reads **"Regenerate summary…"** and regenerates the same way. The **"Summarize meeting transcript"** command runs immediately with no dialog.
 2. A "Summarizing…" banner appears at the top of the meeting note while the LLM runs.
 3. When complete, the LLM should write its summary into the meeting note and set `pipeline_state: summarized`.
 4. The banner disappears and the Summary rail segment turns green.
@@ -1288,8 +1284,7 @@ Settings are organized into six pages, grouped by pipeline stage: **Calendar · 
 | **Auto-tag catch-up window** | `48` h | Startup scan window for auto-tagging recent transcripts (0 = off). |
 | **CLI command** | `claude` | LLM CLI executable name or path. |
 | **Additional flags (all prompts)** | `--dangerously-skip-permissions` | Extra CLI flags appended to every LLM invocation. The default lets Claude Code read and write files without interactive prompts, which a headless run needs; most CLIs need a similar non-interactive flag. See the trust-boundary note in [Disclosures](#disclosures). |
-| **Prompt directory** | *(empty)* | Vault folder holding your LLM prompt files (the field shows `Prompts` as a placeholder). |
-| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. |
+| **Anthropic API key** | *(empty)* | Used only to populate the model dropdowns — never sent to the CLI. When empty, the `ANTHROPIC_API_KEY` environment variable is used instead. |
 | **LLM timeout** | `10` min | Kill the LLM process after this duration (0 = no timeout). |
 | **Max concurrent** | `2` | Maximum simultaneous LLM processes. |
 | **Debug mode** | Off | Open LLM commands in a terminal window instead of running them in the background. |
@@ -1306,7 +1301,7 @@ Settings are organized into six pages, grouped by pipeline stage: **Calendar · 
 | **Transcripts folder** | `Transcripts` | Where transcript files are created. |
 | **Word replacement file** | `Prompts/Word Replacements.md` | Path to a file of search/replace pairs applied to transcripts during post-processing (one per line: `search,replace`). Click **Open** to create and edit. |
 | **People folder** | *(empty)* | Vault folder containing people notes. Matched attendees render as `[[wiki links]]`. |
-| **Auto-create people notes** | Off | Automatically create people notes for meeting organizers and newly tagged speakers without one. |
+| **Auto-create people notes** | Off | Automatically create people notes for meeting organizers without one (requires both a People folder and a People template). Newly confirmed speakers get a note regardless of this toggle. |
 | **People template** | *(empty)* | Template for auto-created people notes. Available: `{{full_name}}`, `{{nickname}}`, `{{email}}`, `{{organization}}`. |
 
 ### Recording

@@ -1,4 +1,4 @@
-import {App, Menu, Notice, TFile, normalizePath, setIcon, setTooltip} from "obsidian";
+import {App, Menu, Notice, TFile, setIcon, setTooltip} from "obsidian";
 import type {CalendarEvent, EventAttendee, ResponseStatus} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
@@ -6,7 +6,7 @@ import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOf
 import {debug} from "../utils/debug";
 import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
 import {closeMeetingApp} from "../services/MeetingAppCloser";
-import {resolveWikiLink} from "../utils/vault";
+import {resolveWikiLink, noteBasename, transcriptPathFor} from "../utils/vault";
 import {addActivateOnKey} from "../utils/a11y";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
@@ -228,7 +228,7 @@ function renderRailSeg(
 
 /**
  * Build a smart action button: an icon + a full text label (+ an optional count
- * chip). The pipeline's single "next verb" button that replaces the old pill row.
+ * chip). The pipeline's single "next verb" button.
  */
 function renderSmartBtn(
 	container: HTMLElement,
@@ -521,8 +521,7 @@ async function healMissingSessionId(
 /**
  * Open the meeting note, creating it first if it doesn't exist yet (unscheduled
  * events prompt for a name). Shared by the card title link, the rail's note/
- * summary segments, and the ⋯ menu's "Open note" item — the note-pill click
- * handler from the old pill row.
+ * summary segments, and the ⋯ menu's "Open note" item.
  */
 async function openOrCreateNote(opts: MeetingCardOpts): Promise<void> {
 	const {app, noteCreator, event, onNoteCreated} = opts;
@@ -793,10 +792,10 @@ function attemptAutoRecord(opts: MeetingCardOpts, event: CalendarEvent, joinUrl:
 
 /**
  * Start (or restart) an API recording for a card. Shared by the gutter's
- * Record/Re-record button and auto-record-on-launch. Confirms with
- * the user if the service is mid-recording, ensures the note exists, starts
- * capture, optionally resets stale transcript frontmatter, then watches for the
- * service to finish. Returns true if capture started.
+ * Record/Re-record button and auto-record-on-launch. Bails out (after an
+ * informational modal) if the service is already mid-recording, ensures the
+ * note exists, starts capture, optionally resets stale transcript frontmatter,
+ * then watches for the service to finish. Returns true if capture started.
  */
 async function startCardApiRecording(
 	opts: MeetingCardOpts,
@@ -805,8 +804,8 @@ async function startCardApiRecording(
 	resetFrontmatter: boolean,
 ): Promise<boolean> {
 	const {app, event, timezone, noteCreator, cardUi, transcriptFolderPath = "Transcripts"} = opts;
-	// Defer to the recording service on whether the mic is free; confirm with
-	// the user if it's mid-recording. Abort cleanly on cancel.
+	// Defer to the recording service on whether the mic is free; if it's
+	// mid-recording, tell the user and abort.
 	if (!(await confirmIfServiceRecording(app, baseUrl))) return false;
 	await noteCreator.ensureNote(event);
 	await startApiRecording({app, notePath, event, transcriptFolderPath, timezone, baseUrl, cardUi});
@@ -1240,7 +1239,7 @@ function renderCardDynamic(
 	// Celebrate completions with the relay vocabulary: a stage that just
 	// flipped to done plays the one-shot fill on its own segment, and the
 	// pipeline finishing end to end (Summary flipping) plays the full-rail
-	// wave + shimmer — the finale the per-stage beats foreshadow. Flips are
+	// wave — the finale the per-stage beats foreshadow. Flips are
 	// detected against the previous render's flags; the first sighting of a
 	// card only seeds the map. A summary regenerated after re-tagging resets
 	// pipeline_state first, so it flips again and earns another pulse.
@@ -1300,8 +1299,8 @@ function renderCardDynamic(
 	// non-empty, so the wrapper's hide-when-empty rule leaves the card expanded
 	// for a badge that arrives with no button beside it.
 	if (badgeStatus?.badge) {
-		// The variant class colors the light: progress = blinking red,
-		// done = green, warning = orange (see styles.css).
+		// Only the progress variant pulses (see styles.css); result variants
+		// (done/warning) hold steady.
 		const badgeVariant = badgeStatus.variant ?? "progress";
 		const badge = actions.createDiv({
 			cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${badgeVariant}`,
@@ -1376,7 +1375,10 @@ function renderCardDynamic(
 		// is icon-only, so its aria-label is the only name the user ever sees.
 		const hasTranscript = states.transcript === "complete";
 		const recordLabel = hasTranscript ? "Re-record" : "Record";
-		const recordBtn = renderSmartBtn(recordSlot, "mic", recordLabel, {ariaLabel: recordLabel});
+		const recordBtn = renderSmartBtn(recordSlot, "mic", recordLabel, {
+			cls: "whisper-cal-smart-record",
+			ariaLabel: recordLabel,
+		});
 		// Start capture, disabling the button while it runs. A success re-renders
 		// the card (this button is rebuilt); any non-start path re-enables it.
 		// resetFrontmatter clears the linked transcript and pipeline state — only
@@ -1415,12 +1417,8 @@ function renderCardDynamic(
 					// frontmatter doesn't link to (e.g. a prior recording where the
 					// link write silently dropped). Without this, re-recording would
 					// overwrite the file with no warning.
-					const noteBasename = notePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
-					const expectedTranscriptPath = normalizePath(
-						`${transcriptFolderPath}/${noteBasename} - Transcript.md`,
-					);
-					const orphanedTranscript = noteBasename
-						? app.vault.getAbstractFileByPath(expectedTranscriptPath)
+					const orphanedTranscript = noteBasename(notePath)
+						? app.vault.getAbstractFileByPath(transcriptPathFor(notePath, transcriptFolderPath))
 						: null;
 					if (orphanedTranscript instanceof TFile) {
 						const choice = await new ReRecordConfirmModal(app, {
@@ -1556,26 +1554,9 @@ function renderCardDynamic(
 		buildCardMenu().showAtMouseEvent(e);
 	};
 
-	// Unified card status — renders from CardUiState. The recording variant is
-	// skipped: while recording, the live timer lives inside the Stop button, not
-	// a status line. Every other variant (transcribing progress, auto-tag
-	// notices, done/warning) still renders here. Lives inside the expand group so
-	// the group's fill-to-bottom growth adds trailing space below it, never a gap
-	// between it and the action row above.
-	const cs = opts.cardUi.getStatus(notePath);
-	// Badge-carrying statuses (LLM jobs, voiceprint auto-tag) render as the
-	// gutter badge above instead of a status line — the pulsing rail segment
-	// already says what's running.
-	if (cs && cs.variant !== "recording" && !cs.badge) {
-		const variant = cs.variant ?? "progress";
-		const statusEl = expandGroup.createDiv({cls: `whisper-cal-card-status whisper-cal-card-status-${variant}`});
-		if (cs.icon) {
-			const ico = statusEl.createSpan({cls: "whisper-cal-card-status-icon"});
-			setIcon(ico, cs.icon);
-		}
-		statusEl.createSpan({text: cs.message});
-	}
-
+	// Card statuses render as the gutter badge above (every writer passes a
+	// badge label) or, while recording, as the live timer inside the Stop
+	// button — there is no separate status line.
 }
 
 /** Update only the dynamic parts of an existing meeting card in-place. */

@@ -19,7 +19,7 @@ function stripWikilink(text: string | undefined): string {
  * duration is computed by parsing them back in that same zone (parsing a
  * DST-transition meeting system-local would misreport its length by an hour).
  */
-export function buildMeetingSubtitle(fm: Record<string, unknown>, timezone?: string): string {
+export function buildMeetingSubtitle(fm: Record<string, unknown>, timezone: string): string {
 	const meetingDate = coerceFmDate(fm["meeting_date"]);
 	const meetingStart = coerceFmTime(fm["meeting_start"]);
 	const meetingEnd = coerceFmTime(fm["meeting_end"]);

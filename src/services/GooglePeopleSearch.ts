@@ -15,10 +15,6 @@ export class GooglePeopleSearch implements PeopleSearchProvider {
 		this.auth = auth;
 	}
 
-	isAvailable(): boolean {
-		return this.auth.isSignedIn();
-	}
-
 	async search(query: string): Promise<PeopleSearchResult[]> {
 		if (query.length < 2 || !this.auth.isSignedIn()) return [];
 

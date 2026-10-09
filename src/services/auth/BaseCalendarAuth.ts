@@ -1,4 +1,5 @@
 import {requestUrl} from "obsidian";
+import {shell} from "electron";
 import {createHash, randomBytes} from "crypto";
 import type {TokenCache, TokenResponse, AuthState} from "./AuthTypes";
 import type {CalendarAuth} from "../CalendarAuth";
@@ -44,11 +45,11 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 	protected readonly loopback = new LoopbackOAuthServer();
 	private refreshPromise: Promise<string> | null = null;
 	/** In-flight sign-in, if any — a second startSignIn returns this instead of
-	 *  racing a second loopback server (finding 3). */
+	 *  racing a second loopback server. */
 	private signInPromise: Promise<void> | null = null;
 	/** Fingerprint of the identity config in effect when `tokenCache` was minted.
 	 *  A mismatch at refresh time means the config was edited since sign-in, so a
-	 *  refresh failure is attributable to the edit, not a dead grant (finding 1). */
+	 *  refresh failure is attributable to the edit, not a dead grant. */
 	private tokenConfigFingerprint: string | null = null;
 	/** Set once a refresh has failed under an edited identity config: the held
 	 *  token is kept (the edit may be half-typed) but the state reads as an error
@@ -149,7 +150,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 
 	/** The state implied by the current cache: signed-in if a token is held, else
 	 *  signed-out. Used to restore a live session after a cancelled/failed re-auth
-	 *  so `isSignedIn()` (cache-based) and `getState()` never disagree (finding 8). */
+	 *  so `isSignedIn()` (cache-based) and `getState()` never disagree. */
 	protected stateFromCache(): AuthState {
 		if (!this.tokenCache) return {status: "signed-out"};
 		if (this.configMismatch) {
@@ -184,7 +185,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 	/**
 	 * Run the interactive loopback sign-in. Never rejects — the outcome is reported
 	 * via AuthState (see `runSignInFlow`). Re-entrant: a call while one is in flight
-	 * returns the in-flight promise (finding 3).
+	 * returns the in-flight promise.
 	 */
 	startSignIn(): Promise<void> {
 		if (this.signInPromise) return this.signInPromise;
@@ -215,16 +216,14 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 
 			this.setState({status: "signing-in", message: "Complete sign-in in your browser…"});
 
-			// Open the browser using Electron shell.
+			// Open the browser; openExternal rejects when no handler is registered.
 			try {
-				// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef
-				const electron = require("electron") as {shell: {openExternal(url: string): Promise<void>}};
-				void electron.shell.openExternal(authUrl);
+				await shell.openExternal(authUrl);
 			} catch {
-				// No browser to complete in: keep a live session (finding 8), else error.
+				// No browser to complete in: keep a live session, else error.
 				this.setState(this.tokenCache
 					? this.stateFromCache()
-					: {status: "error", message: "Failed to open browser — Electron not available"});
+					: {status: "error", message: "Failed to open browser"});
 				return;
 			}
 
@@ -232,7 +231,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 			const authCode = await codePromise;
 			if (!authCode) {
 				// A cancelled/timed-out re-auth must not clobber a live session: if a
-				// token is still cached, restore signed-in (finding 8). Only surface a
+				// token is still cached, restore signed-in. Only surface a
 				// terminal error/signed-out state when there is no session to preserve.
 				if (this.tokenCache) {
 					this.setState(this.stateFromCache());
@@ -276,7 +275,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 
 	/**
 	 * Shared OAuth token endpoint call for both the code exchange and the refresh.
-	 * Owns requestUrl + NETWORK/AUTH_FAILED classification (C1): only an explicit
+	 * Owns requestUrl + NETWORK/AUTH_FAILED classification: only an explicit
 	 * OAuth error body is AUTH_FAILED (grant bad). A transport rejection, 5xx,
 	 * throttling (408/429), or a 4xx with no OAuth error (proxy / captive-portal
 	 * HTML) is NETWORK (transient — keep the grant). Returns a response
@@ -311,7 +310,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 		// Any other error status, missing access token, or missing expiry —
 		// transient, not a credential failure. Guarding expires_in here keeps
 		// expiresAt from becoming NaN, which would force a refresh on every
-		// subsequent getAccessToken (C1).
+		// subsequent getAccessToken.
 		if (response.status >= 400 || !token?.access_token || token.expires_in === undefined) {
 			throw new AuthError(`Token request returned no usable token (HTTP ${response.status})`, "NETWORK");
 		}
@@ -364,7 +363,7 @@ export abstract class BaseCalendarAuth<C> implements CalendarAuth {
 				// AUTH_FAILED normally means the grant is dead (signed out below). But if
 				// the identity config was edited since this token was minted, the 4xx is
 				// far more likely the half-typed config than a revoked grant — reclassify
-				// as transient so the valid refresh token survives the edit (finding 1),
+				// as transient so the valid refresh token survives the edit,
 				// and surface an error state so the user is prompted to re-authenticate.
 				if (e.code === "AUTH_FAILED" && this.configChangedSinceMint()) {
 					if (!this.configMismatch) {

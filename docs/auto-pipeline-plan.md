@@ -2,7 +2,7 @@
 
 Status: planned, not implemented (2026-06-06)
 
-> **Update 2026-06-07:** Stage B's trigger/queue/catch-up machinery now exists as `src/services/AutoSpeakerTagger.ts` in a cache-only/never-apply form (see `docs/auto-speaker-tagging-plan.md`): it auto-runs speaker tagging when a transcript reaches `titled`, then stops after caching proposals — no auto-apply, no state advance. Future auto-apply Stage B work should extend that service (e.g. add a confidence-gated apply step after `handleSpeakerTagSuccess`) rather than duplicate the trigger plumbing.
+> **Update 2026-06-07:** Stage B's trigger/queue/catch-up machinery now exists as `src/services/AutoSpeakerTagger.ts` in a cache-only/never-apply form (see the service's own doc comments): it auto-runs speaker tagging when a transcript reaches `titled`, then stops after caching proposals — no auto-apply, no state advance. Future auto-apply Stage B work should extend that service (e.g. add a confidence-gated apply step after `handleSpeakerTagSuccess`) rather than duplicate the trigger plumbing.
 
 ## Context
 

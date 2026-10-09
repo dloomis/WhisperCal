@@ -20,7 +20,7 @@ import {listVaultJsonFiles} from "../utils/vault";
  * stands in for the margin; centroids backed by very little speech are skipped entirely.
  */
 // Default min cosine similarity to the best library to accept. User-overridable via the
-// `voiceprintMatchFloor` setting (keep DEFAULT_SETTINGS.voiceprintMatchFloor in sync).
+// `voiceprintMatchFloor` setting, whose default is this constant.
 export const DEFAULT_MATCH_FLOOR = 0.50;
 const MATCH_MARGIN = 0.08;    // best must beat the runner-up by at least this much
 // With only one enrolled library the margin guard is inert (no runner-up to clear), so

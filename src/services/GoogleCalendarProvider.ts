@@ -89,6 +89,12 @@ export class GoogleCalendarProvider implements CalendarProvider {
 		if (this.userEmail === null) {
 			await this.fetchUserEmail(token);
 		}
+		// Without the user's email every event would parse (and cache) with
+		// isOrganizer:false and the user's own meetings could get a People note
+		// — fail the fetch so the cached provider falls back and retries later.
+		if (this.userEmail === null) {
+			throw new Error("Could not determine user email — deferring event fetch");
+		}
 
 		const timeMin = getDayStartUTC(date, timezone);
 		const timeMax = getDayEndUTC(date, timezone);
@@ -118,7 +124,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
 			pageToken = data.nextPageToken ?? null;
 		} while (pageToken);
 
-		const email = this.userEmail ?? "";
+		const email = this.userEmail;
 		// Same window-overlap trim as the Graph provider: whenever the calendar's
 		// own zone differs from the configured one, the day query returns the
 		// neighboring day's all-day events too.
