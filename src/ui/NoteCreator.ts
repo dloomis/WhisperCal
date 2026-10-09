@@ -324,9 +324,12 @@ export class NoteCreator {
 			: "";
 		const reserved = [
 			`meeting_subject: "${yamlEscape(event.subject)}"`,
-			`meeting_date: "${yamlEscape(variables["date"] ?? "")}"`,
-			`meeting_start: "${yamlEscape(variables["startTime"] ?? "")}"`,
-			`meeting_end: "${yamlEscape(variables["endTime"] ?? "")}"`,
+			// Date and times are written bare, matching what processFrontMatter
+			// re-emits on every later write (and what Bases expects of a date
+			// property). Readers coerce either way — see coerceFmDate/coerceFmTime.
+			`meeting_date: ${variables["date"] ?? ""}`,
+			`meeting_start: ${variables["startTime"] ?? ""}`,
+			`meeting_end: ${variables["endTime"] ?? ""}`,
 			`meeting_location: "${yamlEscape(variables["location"] ?? "")}"`,
 			`meeting_invitees:${inviteeLines}`,
 			`meeting_organizer: "${yamlEscape(variables["organizer"] ?? "")}"`,

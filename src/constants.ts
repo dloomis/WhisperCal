@@ -11,6 +11,7 @@ export const COMMAND_RESEARCH = "research-meeting";
 export const COMMAND_WORD_REPLACE = "run-word-replacements";
 export const COMMAND_OPEN_SERIES_NOTE = "open-meeting-series-note";
 export const COMMAND_PULL_MEETING_CHAT = "pull-meeting-chat";
+export const COMMAND_OPEN_MEETINGS_BASE = "open-meetings-base";
 
 /**
  * Tome writes its dynamic API port to a file in its per-user data dir. The

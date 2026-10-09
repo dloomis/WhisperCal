@@ -2,7 +2,8 @@ import {FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, normal
 import {execFile} from "child_process";
 import {createHash} from "crypto";
 import {DEFAULT_SETTINGS, WhisperCalSettings, WhisperCalSettingTab} from "./settings";
-import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, COMMAND_PULL_MEETING_CHAT, FM, SPLIT_MARKER} from "./constants";
+import {VIEW_TYPE_CALENDAR, COMMAND_OPEN_CALENDAR, COMMAND_LINK_RECORDING, COMMAND_TAG_SPEAKERS, COMMAND_SUMMARIZE, COMMAND_RESEARCH, COMMAND_WORD_REPLACE, COMMAND_OPEN_SERIES_NOTE, COMMAND_PULL_MEETING_CHAT, COMMAND_OPEN_MEETINGS_BASE, FM, SPLIT_MARKER} from "./constants";
+import {openMeetingsBase} from "./services/MeetingsBase";
 import {CalendarView, type CalendarViewCallbacks} from "./ui/CalendarView";
 import {linkRecording, stopLinkRecordingWatchers, resetLinkRecordingWatchers} from "./services/LinkRecording";
 import {spawnLlmPrompt, validateLlmCli, resolvePromptPath, activeProcesses, killProcessTree, cleanLlmStderr, activeLlmCount, claimLlmSlot, releaseLlmSlot} from "./services/LlmInvoker";
@@ -466,6 +467,14 @@ export default class WhisperCalPlugin extends Plugin {
 				if (ctx.file) {
 					void this.doWordReplacements(ctx.file);
 				}
+			},
+		});
+
+		this.addCommand({
+			id: COMMAND_OPEN_MEETINGS_BASE,
+			name: "Open meetings base",
+			callback: () => {
+				void openMeetingsBase(this.app, this.settings);
 			},
 		});
 

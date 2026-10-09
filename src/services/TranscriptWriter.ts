@@ -112,9 +112,10 @@ function buildFrontmatter(opts: {
 		}
 	}
 	// Calendar context from meeting note — makes transcript self-contained for LLM use
-	if (opts.meetingDate) lines.push(`meeting_date: "${yamlEscape(opts.meetingDate)}"`);
-	if (opts.meetingStart) lines.push(`meeting_start: "${yamlEscape(opts.meetingStart)}"`);
-	if (opts.meetingEnd) lines.push(`meeting_end: "${yamlEscape(opts.meetingEnd)}"`);
+	// Bare, like the meeting note (see NoteCreator.injectReservedFrontmatter).
+	if (opts.meetingDate) lines.push(`meeting_date: ${opts.meetingDate}`);
+	if (opts.meetingStart) lines.push(`meeting_start: ${opts.meetingStart}`);
+	if (opts.meetingEnd) lines.push(`meeting_end: ${opts.meetingEnd}`);
 	if (opts.organizer) lines.push(`meeting_organizer: "${yamlEscape(opts.organizer)}"`);
 	if (opts.location) lines.push(`meeting_location: "${yamlEscape(opts.location)}"`);
 	// If all speakers are non-stub (real names, not generic "Speaker N"),

@@ -82,6 +82,9 @@ WhisperCal is built and used daily by a single developer, so some integrations a
   - [Template Variables](#template-variables)
   - [Reserved Frontmatter Keys](#reserved-frontmatter-keys)
     - [RSVP Tracking](#rsvp-tracking)
+- [Browsing Meetings with Bases](#browsing-meetings-with-bases)
+  - [Related Meetings in People Notes](#related-meetings-in-people-notes)
+  - [Ad Hoc Queries](#ad-hoc-queries)
 - [Recording Sources](#recording-sources)
   - [MacWhisper](#macwhisper)
   - [Recording API](#recording-api)
@@ -178,9 +181,8 @@ WhisperCal uses only Obsidian's native APIs, so **no community plugin is require
 | [BRAT](https://github.com/TfTHacker/obsidian42-brat) | One-click install and automatic updates (see [Installation](#installation)) | Recommended for installing — skip it if you install manually |
 | [Media Extended](https://github.com/aidenlx/media-extended) | Waveform, scrubbing, and speed controls when a meeting recording is embedded in a note body | Optional — Obsidian's native player already plays `.m4a`, and WhisperCal's own speaker-tag clip player is native, so nothing breaks without it |
 | JSON Viewer | Pretty-prints `.json` files opened in the vault | Optional — only for eyeballing WhisperCal's data files: voiceprint libraries in `Caches/Voiceprints/*.json` and Tome's `*.voiceprints.json` sidecars |
-| [Dataview](https://github.com/blacksmithgu/obsidian-dataview) | Renders a "related meetings" query inside People notes | Optional — needed **only if** your People-note template includes such a query; WhisperCal emits no Dataview itself |
 
-None of these touch the core pipeline. MacWhisper (macOS only) and the Recording API app (Tome) are *external apps*, not Obsidian plugins — see [Recording Sources](#recording-sources).
+None of these touch the core pipeline. Cross-meeting views (pipeline board, meetings per person, who declined) use Obsidian's built-in **Bases** core plugin rather than Dataview — see [Browsing Meetings with Bases](#browsing-meetings-with-bases). MacWhisper (macOS only) and the Recording API app (Tome) are *external apps*, not Obsidian plugins — see [Recording Sources](#recording-sources).
 
 ---
 
@@ -745,13 +747,81 @@ meeting_no_response:
 
 The lists are written when the note is created and kept up to date whenever the calendar view refreshes a day that has the meeting (a note is only rewritten when a response actually changed). Notes created before this existed pick the lists up the first time their day is viewed. The organizer is recorded in `meeting_organizer`, and appears in `meeting_accepted` only when the calendar lists them as an attendee.
 
-For example, a Dataview table of every meeting someone declined:
+Because each list holds wiki-links, a person can be matched directly in a Bases filter — see [Ad Hoc Queries](#ad-hoc-queries) for "every meeting Bob declined".
 
-```dataview
-TABLE meeting_date
-WHERE contains(meeting_declined, [[Bob Jones]])
-SORT meeting_date DESC
+---
+
+## Browsing Meetings with Bases
+
+The calendar sidebar shows one day at a time. For everything across days — what is stuck in the pipeline, who you met with last month, which meetings someone declined — WhisperCal generates an Obsidian [Bases](https://help.obsidian.md/bases) file over your meeting notes. Bases is a core plugin, so no community plugin is needed; make sure it is enabled under **Settings → Core plugins**.
+
+Run **Open meetings base** from the command palette. The first run creates `WhisperCal Meetings.base` in your **Notes folder** and opens it; later runs just open it. WhisperCal never rewrites the file, so edit the views, add your own, or move it. Delete it and run the command again to regenerate.
+
+The generated views:
+
+| View | Shows |
+|------|-------|
+| **Recent** | Meetings from the last 14 days through today, newest first |
+| **Upcoming** | Today onward — notes created ahead of the meeting, for example by [series prep](#recurring-meetings--series-prep) |
+| **Needs attention** | Past meetings whose `pipeline_state` is not `summarized` |
+| **Pipeline** | Kanban board with one column per pipeline state (Obsidian 1.14+; omitted when the file is generated on an older app) |
+| **By organizer** | Every meeting, grouped by `meeting_organizer` |
+| **Linked to this note** | Meetings that link to the note active in the main pane. Open the base in a sidebar and it follows whichever People or project note you are reading |
+| **All** | Everything |
+
+Every view is limited to files in your Notes folder that carry a `meeting_date`, minus notes that were [merged](#merging-meetings) into another. The date filters go through a `when` formula (`date(meeting_date)`), so they work on the bare `meeting_date: 2026-10-08` the plugin writes. Add `meeting_date` as a **Date** property type in Obsidian's property settings to get date pickers in the table.
+
+### Related Meetings in People Notes
+
+Embed the **Linked to this note** view in your People-note template and every person's note lists their meetings. Inside an embed, `this` is the embedding note:
+
+```markdown
+## Meetings
+![[WhisperCal Meetings.base#Linked to this note]]
 ```
+
+Or, with no dependency on the generated file, an inline base block:
+
+````markdown
+```base
+filters:
+  and:
+    - file.hasProperty("meeting_date")
+    - file.hasLink(this.file)
+views:
+  - type: table
+    name: Meetings
+    order:
+      - file.name
+      - note.meeting_date
+      - note.meeting_organizer
+      - note.pipeline_state
+    sort:
+      - property: note.meeting_date
+        direction: DESC
+```
+````
+
+A template change only reaches People notes created afterwards. For existing notes, the sidebar form of **Linked to this note** does the same job without editing anything.
+
+### Ad Hoc Queries
+
+The [RSVP lists](#rsvp-tracking) hold wiki-links, so a person is matched with `contains`. Every meeting Bob declined, as a view filter:
+
+```yaml
+filters:
+  and:
+    - meeting_declined.contains(link("Bob Jones"))
+```
+
+Other handy filters, all usable in the base's filter editor or in an inline block:
+
+| Question | Filter |
+|----------|--------|
+| Meetings I organized | `meeting_organizer == link("Your Name")` |
+| Recurring meetings only | `is_recurring == true` |
+| Researched but not yet held | `research_state == "research-done" && formula.when >= today()` |
+| Had a transcript but never summarized | `file.hasProperty("transcript") && pipeline_state != "summarized"` |
 
 ---
 
@@ -866,7 +936,7 @@ The field is case-insensitive. If `personnel_type` is not present in the frontma
 
 WhisperCal can automatically create People notes for meeting organizers who don't have a matching note in your vault. When the calendar view refreshes, it scans organizers and silently creates notes for ones that look like real people (filtering out team calendars, room resources, and system accounts).
 
-Auto-created notes include frontmatter with `full_name`, `nickname`, organization (derived from email domain), and personnel type. The body comes from your People-note template — so if that template contains a Dataview "related meetings" query, the new note will too (which needs the [Dataview](#obsidian-plugins) plugin to render).
+Auto-created notes include frontmatter with `full_name`, `nickname`, organization (derived from email domain), and personnel type. The body comes from your People-note template — so if that template embeds the meetings base (see [Related Meetings in People Notes](#related-meetings-in-people-notes)), the new note lists that person's meetings from day one.
 
 ### Example People Note
 
@@ -880,6 +950,9 @@ personnel_type: Civilian
 # Jane Smith
 
 Role: Engineering Manager
+
+## Meetings
+![[WhisperCal Meetings.base#Linked to this note]]
 ```
 
 ---
@@ -1162,6 +1235,7 @@ All commands are available from the command palette (`Cmd+P` on macOS, `Ctrl+P` 
 | **Open meeting series note** | Opens (creating if needed) the [series note](#recurring-meetings--series-prep) for the active meeting note (available when a **Meeting series notes folder** is set) |
 | **Pull Teams meeting chat** | Re-reads the meeting's Teams chat into the active meeting note (Microsoft calendars only; see [Teams Meeting Chat](#teams-meeting-chat)) |
 | **Run word replacements** | Applies word replacement rules to the active note (available on any open note; also accessible via the ⇄ toolbar icon) |
+| **Open meetings base** | Opens `WhisperCal Meetings.base`, generating it in the Notes folder on first use (see [Browsing Meetings with Bases](#browsing-meetings-with-bases)) |
 
 **Link MacWhisper recording** is also available in the file context menu (right-click) for meeting notes.
 
