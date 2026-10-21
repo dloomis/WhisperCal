@@ -318,6 +318,28 @@ export class SpeakerTagModal extends Modal {
 				this.attachAutocomplete(wrapper, input);
 			}
 
+			// Clear button. Kept out of the Tab order so Tab still walks name to name.
+			const clearBtn = right.createEl("button", {
+				cls: "clickable-icon whisper-cal-speaker-tag-clear",
+				attr: {"aria-label": "Clear name", tabindex: "-1"},
+			});
+			setIcon(clearBtn, "x");
+			clearBtn.addEventListener("click", () => {
+				if (!input.value.trim()) return;
+				const clear = () => {
+					input.value = "";
+					input.focus();
+				};
+				// Still showing the voiceprint match: confirm before throwing it away.
+				if (mapping.source === "cache" && input.value.trim() === mapping.proposedName) {
+					void new ClearMatchConfirmModal(this.app, mapping.proposedName, mapping.matchCosine)
+						.prompt()
+						.then(ok => { if (ok) clear(); });
+				} else {
+					clear();
+				}
+			});
+
 			// Confidence + evidence below input
 			const detail = row.createDiv({cls: "whisper-cal-speaker-tag-detail"});
 			if (mapping.source) {
@@ -625,5 +647,45 @@ export class SpeakerTagModal extends Modal {
 				this.resolve = null;
 			}
 		}, 0);
+	}
+}
+
+/** "Are you sure?" before clearing a name that came from a voiceprint match. */
+class ClearMatchConfirmModal extends Modal {
+	private resolve: ((ok: boolean) => void) | null = null;
+	private confirmed = false;
+
+	constructor(app: App, private name: string, private cosine: number | undefined) {
+		super(app);
+	}
+
+	prompt(): Promise<boolean> {
+		return new Promise((resolve) => {
+			this.resolve = resolve;
+			this.open();
+		});
+	}
+
+	onOpen(): void {
+		const {contentEl} = this;
+		this.setTitle("Clear voiceprint match?");
+		const score = this.cosine !== undefined ? ` (cosine ${this.cosine.toFixed(3)})` : "";
+		contentEl.createEl("p", {
+			text: `"${this.name}" was matched by voiceprint${score}. Clear it anyway?`,
+		});
+		const btnRow = contentEl.createDiv({cls: "modal-button-container"});
+		btnRow.createEl("button", {text: "Cancel"}).addEventListener("click", () => this.close());
+		const clearBtn = btnRow.createEl("button", {text: "Clear", cls: "mod-warning"});
+		clearBtn.addEventListener("click", () => {
+			this.confirmed = true;
+			this.close();
+		});
+		setTimeout(() => clearBtn.focus(), 0);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		this.resolve?.(this.confirmed);
+		this.resolve = null;
 	}
 }

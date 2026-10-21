@@ -1012,7 +1012,7 @@ The optional **transcript post-processing** LLM pass runs whenever LLM features 
 - A **confidence badge** (CERTAIN, HIGH, or LOW) and the LLM's evidence for its guess.
 - Speakers appear in the order they first speak in the transcript.
 
-You can clear a name field to leave that speaker untagged. Click **Cancel** to discard all changes.
+Click the **×** button to the right of a name field to clear it and leave that speaker untagged. If the name came from a voiceprint match, you're asked to confirm before it's cleared. Click **Cancel** to discard all changes.
 
 #### Per-Speaker Transcript Excerpts
 

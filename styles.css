@@ -1764,6 +1764,17 @@
 	font-size: var(--font-ui-small);
 }
 
+.whisper-cal-speaker-tag-clear {
+	flex: none;
+	padding: 4px;
+	color: var(--text-muted);
+}
+
+.whisper-cal-speaker-tag-clear svg {
+	width: 14px;
+	height: 14px;
+}
+
 .whisper-cal-autocomplete-caret {
 	position: absolute;
 	top: 0;
