@@ -53,3 +53,20 @@ export function findSpeakerLabels(body: string): SpeakerLabelMatch[] {
 	}
 	return out;
 }
+
+/**
+ * True when `body` still carries Tome's live-call-leg placeholder label ("Them") on a
+ * speaker line. Tome writes the transcript to the vault from session start using this
+ * placeholder (alongside "You") and only replaces it with real diarized "Speaker N"
+ * labels once its finalizer runs — a step that can take 1-3 minutes after the meeting
+ * note is linked. Any consumer that reads speaker labels off the body (auto-tagging,
+ * proposal writers) must treat a "Them" hit as "Tome isn't done yet" rather than as a
+ * real, stable speaker name — writing proposals against it freezes wrong groups that
+ * Tome's own finalizer will never retroactively fix (it only patches its own inline
+ * `attendees: […]` form, not an already-expanded object list).
+ *
+ * Pass the same string you'd pass to findSpeakerLabels — typically transcriptBody(content).
+ */
+export function hasLiveLegLabels(body: string): boolean {
+	return findSpeakerLabels(body).some(({name}) => name === "Them");
+}
