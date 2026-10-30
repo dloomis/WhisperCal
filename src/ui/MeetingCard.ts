@@ -1,4 +1,4 @@
-import {App, Menu, Notice, TFile, setIcon, setTooltip} from "obsidian";
+import {App, Menu, Notice, Platform, TFile, setIcon, setTooltip} from "obsidian";
 import type {CalendarEvent, EventAttendee, ResponseStatus} from "../types";
 import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
@@ -543,6 +543,27 @@ async function openOrCreateNote(opts: MeetingCardOpts): Promise<void> {
 	}
 }
 
+/**
+ * Copy the meeting note's vault path (no ".md", e.g. "Meetings/2026-10-29 1700 -
+ * Standup") to the clipboard, confirming with a Notice. Does nothing but say so
+ * when the note hasn't been created yet.
+ */
+async function copyNotePath(opts: MeetingCardOpts): Promise<void> {
+	const file = opts.noteCreator.findNote(opts.event);
+	if (!file) {
+		new Notice("No meeting note yet — click the title to create it");
+		return;
+	}
+	const path = file.path.slice(0, -(file.extension.length + 1));
+	try {
+		await navigator.clipboard.writeText(path);
+		new Notice(`Copied to clipboard: ${path}`);
+	} catch (err) {
+		console.error("[WhisperCal] Clipboard write failed", err);
+		new Notice("Couldn't copy the note path to the clipboard");
+	}
+}
+
 /** Compact, read-only card for all-day calendar events. */
 export function renderAllDayCard(
 	container: HTMLElement,
@@ -604,15 +625,21 @@ export function renderMeetingCard(
 	renderGutter(card, event, timezone, opts);
 	const content = card.createDiv({cls: "whisper-cal-card-content"});
 
-	// Subject — the title itself opens (or creates) the meeting note. Static
-	// zone, so the label can't track note state; use a state-neutral phrasing.
+	// Subject — the title itself opens (or creates) the meeting note; Option/
+	// Alt-click copies the note's vault path instead. Static zone, so the label
+	// can't track note state; use a state-neutral phrasing.
 	const subjectRow = content.createDiv({cls: "whisper-cal-card-subject-row"});
+	const altKeyName = Platform.isMacOS ? "Option" : "Alt";
 	const subjectEl = subjectRow.createDiv({
 		cls: "whisper-cal-card-subject whisper-cal-card-subject-link",
 		text: event.subject,
-		attr: {"aria-label": "Open or create meeting note"},
+		attr: {"aria-label": `Open or create meeting note\n${altKeyName}-click to copy its path`},
 	});
-	subjectEl.addEventListener("click", () => {
+	subjectEl.addEventListener("click", (e) => {
+		if (e.altKey) {
+			void copyNotePath(opts);
+			return;
+		}
 		void openOrCreateNote(opts);
 	});
 	addActivateOnKey(subjectEl);
