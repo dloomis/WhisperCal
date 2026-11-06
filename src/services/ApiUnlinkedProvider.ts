@@ -5,7 +5,7 @@ import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink, noteBasename, transcriptBasenameFor} from "../utils/vault";
 import {batchUpdateFrontmatter, removeFrontmatterKeys, processFrontmatterQueued, readFmString} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
-import {parseDurationSeconds, sleep} from "../utils/time";
+import {coerceFmDate, coerceFmTime, parseDateTime, parseDurationSeconds, sleep} from "../utils/time";
 import {FM} from "../constants";
 
 interface ApiTranscriptData {
@@ -175,6 +175,16 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 				// Best-effort: a missing or unrenameable companion never fails the link.
 				await this.renameAudio(audioFile, targetBasename);
 				await this.renameSidecar(transcriptFile, sidecarPath, targetBasename);
+
+				// Re-assert the backlink. When the new note shares the transcript's
+				// original basename (a note named after the recording), [[noteBase]]
+				// resolved to the transcript itself just now, so the rename's link
+				// updater rewrote it to the transcript's new name — a self-link that
+				// hides the real note. With the transcript renamed away, it now
+				// resolves to the note.
+				await processFrontmatterQueued(this.app, transcriptFile, (fm: Record<string, unknown>) => {
+					fm[FM.MEETING_NOTE] = `[[${noteBase}]]`;
+				});
 			} catch (err) {
 				console.error(`[WhisperCal] Failed to rename ${freshFile.path} -> ${targetPath} (linking under original name):`, err);
 			}
@@ -308,23 +318,49 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		}
 	}
 
+	/**
+	 * When the recording started — this dates the card, drives auto-link's time
+	 * matching, and becomes the meeting_date/start of a note created from it, so
+	 * it must be the recording's own time, not the file's. Sources, in order:
+	 *  1. a full timestamp in `date` / `Date` (older transcripts);
+	 *  2. Tome's `created` (YYYY-MM-DD) + `time` (HH:MM), wall time in the
+	 *     configured timezone;
+	 *  3. Tome's filename prefix, "YYYY-MM-DD HH-MM-SS ..." (before any rename);
+	 *  4. the file's creation time — last, because Tome re-writing or the vault
+	 *     syncing a transcript makes that "today", not the day of the meeting.
+	 */
+	private recordingStartOf(file: TFile, fm: Record<string, unknown>): Date {
+		for (const key of ["date", "Date"]) {
+			const v = fm[key];
+			if (v instanceof Date && !isNaN(v.getTime())) return v;
+			// Date-only strings carry no time of day — fall through to created+time.
+			if (typeof v === "string" && /\d{1,2}:\d{2}/.test(v)) {
+				const parsed = new Date(v);
+				if (!isNaN(parsed.getTime())) return parsed;
+			}
+		}
+		const tz = this.settings.timezone;
+		const day = coerceFmDate(fm["created"]);
+		const time = coerceFmTime(fm["time"]);
+		if (day && time) {
+			const parsed = parseDateTime(day, time, tz);
+			if (parsed) return parsed;
+		}
+		const m = file.basename.match(/^(\d{4}-\d{2}-\d{2}) (\d{2})-(\d{2})(?:-(\d{2}))?\b/);
+		if (m) {
+			const parsed = parseDateTime(m[1]!, `${m[2]}:${m[3]}`, tz);
+			if (parsed) return new Date(parsed.getTime() + Number(m[4] ?? 0) * 1000);
+		}
+		return new Date(file.stat.ctime);
+	}
+
 	private toUnlinked(file: TFile, fm: Record<string, unknown>): UnlinkedRecording {
 		let title = file.basename;
 		if (title.endsWith(" - Transcript")) {
 			title = title.slice(0, -" - Transcript".length);
 		}
 
-		let recordingStart: Date;
-		const fmDate = fm["date"];
-		if (fmDate instanceof Date) {
-			recordingStart = fmDate;
-		} else if (typeof fmDate === "string") {
-			const parsed = new Date(fmDate);
-			recordingStart = isNaN(parsed.getTime())
-				? new Date(file.stat.ctime) : parsed;
-		} else {
-			recordingStart = new Date(file.stat.ctime);
-		}
+		const recordingStart = this.recordingStartOf(file, fm);
 
 		const durationSeconds = parseDurationSeconds(fm["duration"]);
 

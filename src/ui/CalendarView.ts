@@ -1599,6 +1599,11 @@ export class CalendarView extends ItemView {
 					subject,
 					timezone: this.settings.timezone,
 					transcriptFolderPath: this.settings.transcriptFolderPath,
+					// Same meeting context a scheduled meeting's transcript gets, from the
+					// recording's own start and length (the note was dated the same way).
+					meetingDate: formatDate(event.startTime, this.settings.timezone),
+					meetingStart: formatTimeForFrontmatter(event.startTime, this.settings.timezone),
+					meetingEnd: formatTimeForFrontmatter(event.endTime, this.settings.timezone),
 				});
 
 			}
