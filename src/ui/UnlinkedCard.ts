@@ -13,9 +13,9 @@ import {renderRailSeg, renderSmartBtn, renderActivityBadge, type RailSegState} f
 /**
  * Card for a transcript in the calendar view's "Unlinked transcripts" section.
  * The meeting card's layout cut down to what applies without a meeting note:
- * a time gutter (recording start and length) whose control slot holds Link
- * and the ⋯ menu, a title that opens the transcript, a two-segment rail
- * (Transcript · Speakers), and one smart button for the speaker-tagging step.
+ * a time gutter (recording start and length) whose control slot holds the ⋯
+ * menu, a title that opens the transcript, a three-segment rail (Link ·
+ * Transcript · Speakers), and one smart button for the speaker-tagging step.
  *
  * Statuses, badges, and jobs are keyed by the transcript's own path — with no
  * meeting note, it stands in as the "note path" of the tagging pipeline.
@@ -65,7 +65,7 @@ export function renderUnlinkedCard(container: HTMLElement, opts: UnlinkedCardOpt
 	if (recording.transcriptPath) card.dataset.transcriptPath = recording.transcriptPath;
 
 	// Gutter — recording start time and length, like a meeting card's. The control
-	// slot (Link + ⋯) is a child of the rail, positioned into the gutter.
+	// slot (the ⋯ menu) is a child of the rail, positioned into the gutter.
 	const gutter = card.createDiv({cls: "whisper-cal-card-gutter"});
 	const timeDiv = gutter.createDiv({cls: "whisper-cal-card-gutter-time"});
 	const timeStr = formatTime(recording.recordingStart, timezone);
@@ -148,9 +148,12 @@ function renderUnlinkedDynamic(zone: HTMLElement, cardEl: HTMLElement, opts: Unl
 		})();
 	};
 	const review = () => { if (tf) opts.onReviewSpeakerCandidates?.(tf.path); };
-	const link = (btn?: HTMLButtonElement) => {
-		if (btn) btn.disabled = true;
-		void opts.onLink().finally(() => { if (btn) btn.disabled = false; });
+	// One link flow at a time per card — the flag lives on the card element so it
+	// survives the re-renders that happen while the picker is open.
+	const link = () => {
+		if (cardEl.dataset.linking === "1") return;
+		cardEl.dataset.linking = "1";
+		void opts.onLink().finally(() => { delete cardEl.dataset.linking; });
 	};
 
 	const buildMenu = (): Menu => {
@@ -183,7 +186,7 @@ function renderUnlinkedDynamic(zone: HTMLElement, cardEl: HTMLElement, opts: Unl
 			.setTitle("Link to meeting…")
 			.setIcon("link")
 			.setDisabled(tagging)
-			.onClick(() => link()));
+			.onClick(link));
 		if (opts.onDelete && !tagging) {
 			const onDelete = opts.onDelete;
 			menu.addSeparator();
@@ -199,13 +202,8 @@ function renderUnlinkedDynamic(zone: HTMLElement, cardEl: HTMLElement, opts: Unl
 	const expandGroup = zone.createDiv({cls: "whisper-cal-card-expand"});
 	const rail = expandGroup.createDiv({cls: "whisper-cal-rail"});
 
-	// Gutter control slot — Link takes the place of the meeting card's Record button.
+	// Gutter control slot — just the ⋯ menu (Link lives on the rail).
 	const slot = rail.createDiv({cls: "whisper-cal-card-gutter-record"});
-	// While tagging runs, aria-disabled rather than `disabled` so the hover
-	// tooltip (the aria-label) still explains why — same trick as renderRailSeg.
-	const linkBtn = renderSmartBtn(slot, "link", "Link", {ariaLabel: tagging ? "Link after speaker tagging finishes" : "Link to a meeting"});
-	if (tagging) linkBtn.setAttr("aria-disabled", "true");
-	else linkBtn.addEventListener("click", () => link(linkBtn));
 	const moreMini = slot.createEl("button", {cls: "whisper-cal-mini", attr: {"aria-label": "More actions"}});
 	setIcon(moreMini.createSpan({cls: "whisper-cal-mini-icon"}), "ellipsis");
 	moreMini.addEventListener("click", () => {
@@ -213,6 +211,13 @@ function renderUnlinkedDynamic(zone: HTMLElement, cardEl: HTMLElement, opts: Unl
 		buildMenu().showAtPosition({x: rect.left, y: rect.bottom + 4});
 	});
 
+	// Link — the first segment, standing where a meeting card's Note is (linking is
+	// what gives the transcript its note). Flagged once it's the only step left:
+	// speakers tagged, or nothing to tag (MacWhisper entry, LLM features off).
+	// Disabled while tagging runs, with a tooltip saying why.
+	const linkIsNext = states.speakers === "complete" || !tf || !llmOn;
+	renderRailSeg(rail, "Link", linkIsNext ? "attention" : "pending",
+		tagging ? undefined : link, "Link after speaker tagging finishes");
 	renderRailSeg(rail, "Transcript", tf ? "done" : "pending", openTranscript, "Link to create the transcript");
 
 	let speakersSeg: RailSegState;

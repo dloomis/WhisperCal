@@ -1224,17 +1224,6 @@
 	cursor: default;
 }
 
-/* Held-back button that still explains itself on hover (aria-disabled keeps the
-   tooltip; see the unlinked card's Link while speaker tagging runs). */
-.whisper-cal-smart[aria-disabled="true"],
-.whisper-cal-smart[aria-disabled="true"]:hover {
-	opacity: 0.5;
-	cursor: default;
-	background: var(--interactive-normal);
-	color: var(--text-normal);
-	box-shadow: var(--input-shadow);
-}
-
 .whisper-cal-smart-icon {
 	display: inline-flex;
 	align-items: center;
@@ -1518,6 +1507,13 @@
    edge and the gutter wash both mark the card as unlinked. */
 .whisper-cal-card.whisper-cal-unlinked-card {
 	--wc-cat-color: var(--text-warning);
+}
+
+/* Three rail segments sized exactly like a meeting card's four: each takes a
+   quarter of the rail (less the three 4px gaps), under the same 200px cap, and
+   they sit left-aligned with the fourth slot left empty. */
+.whisper-cal-unlinked-card .whisper-cal-rail .whisper-cal-rail-seg {
+	flex: 0 1 calc((100% - 3 * 4px) / 4);
 }
 
 /* "· 2 need review" on the collapsed section header. */

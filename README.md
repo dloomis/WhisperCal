@@ -520,9 +520,9 @@ A collapsible **"Unlinked transcripts"** section appears at the bottom of the ca
 
 **The unlinked card** uses the meeting card's layout, limited to what applies without a meeting note:
 
-- **Gutter:** the recording's start time and length. **Link** sits where a meeting card's Record button would, beside the **⋯** menu. While a job runs, the usual activity badge (*Tagging*, the model name, or the LLM-limit countdown) appears below them.
+- **Gutter:** the recording's start time and length, with the **⋯** menu. While a job runs, the usual activity badge (*Tagging*, the model name, or the LLM-limit countdown) appears below it.
 - **Title:** opens the transcript. The meta row shows the recording date and speaker count.
-- **Rail:** two segments, **Transcript** (opens the file) and **Speakers** (same states as a meeting card: needs attention, running, review, done).
+- **Rail:** three segments. **Link** starts the linking flow and is flagged once it's the only step left. **Transcript** opens the file. **Speakers** has the same states as on a meeting card: needs attention, running, review, done.
 - **Smart button:** **Tag speakers…**, or **Review speakers · N** when candidates are waiting. Both run the same tagging flow and confirmation modal as a meeting card. No button while tagging runs or once speakers are tagged.
 - **⋯ menu** (also right-click): Open transcript, Tag speakers… / Review speaker candidates / Edit speaker tags, Link to meeting…, and Delete transcript….
 
@@ -531,7 +531,7 @@ There is no summary step: the summary is written into the meeting note, so it wa
 **Tagging before linking:** Speaker tagging works the same as on a meeting card, except there is no invitee list to help the LLM name people, so expect more speakers to confirm by ear. With **Automatic mode** on, unlinked transcripts are auto-tagged in the background under the usual rules (see [Stage 3 — Speakers](#stage-3--speakers)): if every speaker clears the voiceprint floor the tags are applied silently, otherwise the card shows **Review speakers** for the confirmation modal. Only transcripts created within the auto-tag lookback window are picked up, and only after the section's auto-link pass has left them for you. Because the section starts collapsed, its header shows how many cards need review.
 
 **Linking an unlinked recording:**
-1. Click **Link** in the card's gutter (or **Link to meeting…** in the ⋯ menu).
+1. Click the card's **Link** segment (or **Link to meeting…** in the ⋯ menu).
 2. WhisperCal checks the calendar cache for events near the recording's start time (using the same recording match window).
 3. If matching calendar events are found, a picker shows them along with a **"Create unscheduled note"** fallback. Events whose notes already have a recording linked are filtered out.
 4. If no matches are found, an unscheduled note is created directly, dated to the recording's actual start time.
