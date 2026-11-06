@@ -49,8 +49,9 @@ type EligibilityResult =
 
 /**
  * Watches the transcript folder and automatically runs the existing
- * speaker-tagging LLM job in the background when a transcript becomes ready
- * (pipeline_state "titled", linked to a meeting note). The run stops after
+ * speaker-tagging LLM job in the background when a transcript becomes ready:
+ * linked to a meeting note with pipeline_state "titled", or an untagged
+ * transcript the calendar view lists in its unlinked section (offerUnlinked). The run stops after
  * caching proposals to frontmatter — tags are never applied without the user
  * reviewing them via the Speakers pill.
  */
@@ -64,6 +65,11 @@ export class AutoSpeakerTagger {
 	/** Session-scoped loop guard for runs that wrote nothing (failures, zero
 	 * mappings). Successful runs are blocked durably by their cached proposals. */
 	private readonly attempted = new Set<string>();
+	/** Unlinked transcripts the calendar view's auto-link pass has looked at and
+	 * left for the user (see offerUnlinked). Only these may auto-tag unlinked:
+	 * a fresh capture's transcript sits unlinked for a few seconds before its
+	 * own link tail claims it, and tagging it then would race that rename. */
+	private readonly unlinkedReady = new Set<string>();
 	private pumping = false;
 	private stopped = false;
 	private catchupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -88,12 +94,14 @@ export class AutoSpeakerTagger {
 		this.deps.registerEvent(
 			this.deps.app.vault.on("delete", (file) => {
 				this.attempted.delete(file.path);
+				this.unlinkedReady.delete(file.path);
 				this.queue = this.queue.filter(q => q.file !== file);
 			}),
 		);
 		this.deps.registerEvent(
 			this.deps.app.vault.on("rename", (_file, oldPath) => {
 				this.attempted.delete(oldPath);
+				this.unlinkedReady.delete(oldPath);
 			}),
 		);
 		this.catchupTimer = setTimeout(() => {
@@ -115,6 +123,20 @@ export class AutoSpeakerTagger {
 	}
 
 	/**
+	 * The calendar view listed these unlinked transcripts after its auto-link
+	 * pass left them for the user: clear them for auto-tagging and enqueue the
+	 * eligible ones. Called on every rebuild of the unlinked section.
+	 */
+	offerUnlinked(paths: string[]): void {
+		if (this.stopped) return;
+		for (const path of paths) {
+			this.unlinkedReady.add(path);
+			const file = this.deps.app.vault.getAbstractFileByPath(path);
+			if (file instanceof TFile) this.maybeEnqueue(file);
+		}
+	}
+
+	/**
 	 * Single eligibility predicate shared by the change listener, the catch-up
 	 * scan, and the dequeue re-check.
 	 */
@@ -133,9 +155,31 @@ export class AutoSpeakerTagger {
 			return skip("not a transcript file");
 		}
 		const fm = this.deps.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-		if (!fm || readFmString(fm, FM.PIPELINE_STATE) !== "titled") return skip("pipeline_state not titled");
+		if (!fm) return skip("no frontmatter");
+		const state = readFmString(fm, FM.PIPELINE_STATE);
 		const noteFile = resolveWikiLink(this.deps.app, fm, FM.MEETING_NOTE, file.path);
-		if (!noteFile) return skip("meeting_note link unresolved");
+		// The card path statuses are filed under: the meeting note, or for an
+		// unlinked transcript the transcript itself (its card in the unlinked section).
+		let notePath: string;
+		if (noteFile) {
+			if (state !== "titled") return skip("pipeline_state not titled");
+			notePath = noteFile.path;
+		} else {
+			// Unlinked: never stamped "titled" (that happens at link time), so an
+			// absent state is the untagged one.
+			if (state && state !== "titled") return skip("unlinked transcript already tagged");
+			if (!this.unlinkedReady.has(file.path)) return skip("unlinked, not yet listed by the calendar view");
+			const guid = fm[FM.SESSION_GUID];
+			if (typeof guid === "string" && s.activeApiRecordings.some(e => e.sessionGuid === guid)) {
+				return skip("unlinked, capture still in flight");
+			}
+			// Same window as the startup catch-up, so first enabling Automatic mode
+			// doesn't run the whole unlinked lookback through the LLM.
+			if (s.autoTagLookbackHours <= 0 || file.stat.ctime < Date.now() - s.autoTagLookbackHours * 3_600_000) {
+				return skip("unlinked, outside the auto-tag lookback");
+			}
+			notePath = file.path;
+		}
 		// A single-source recording the diarizer collapsed to ≤1 speaker needs a manual hint
 		// (how many people / who's who) that only the instructions modal carries — voiceprint
 		// matching can't recover speakers diarization never separated, so leave those for a
@@ -147,7 +191,7 @@ export class AutoSpeakerTagger {
 		if (hasCachedProposals(this.deps.app, file.path)) return skip("proposals already cached");
 		if (this.deps.jobs.has("speakerTag", file.path)) return skip("tagging already running");
 		if (this.attempted.has(file.path)) return skip("already attempted this session");
-		return {ok: true, fm, notePath: noteFile.path};
+		return {ok: true, fm, notePath};
 	}
 
 	private maybeEnqueue(file: TFile): void {
@@ -246,20 +290,20 @@ export class AutoSpeakerTagger {
 		}
 	}
 
-	/** Point the slot-wait countdown badge at the head's meeting card. Called
-	 * once per poll; re-firing just restarts the countdown. Skipped when the
-	 * meeting-note link doesn't resolve (nowhere to show it). */
+	/** Point the slot-wait countdown badge at the head's card. Called once per
+	 * poll; re-firing just restarts the countdown. */
 	private beginSlotWait(file: TFile): void {
 		const fm = this.deps.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
 		const noteFile = fm ? resolveWikiLink(this.deps.app, fm, FM.MEETING_NOTE, file.path) : null;
-		if (!noteFile) return;
+		// An unlinked transcript's card is keyed by the transcript itself.
+		const cardPath = noteFile?.path ?? file.path;
 		// The waiting head changed (e.g. the old one was deleted mid-wait) —
 		// clear the stale card's badge before pointing at the new one.
-		if (this.slotWaitNotePath && this.slotWaitNotePath !== noteFile.path) {
+		if (this.slotWaitNotePath && this.slotWaitNotePath !== cardPath) {
 			this.endSlotWait("cancelled");
 		}
-		this.slotWaitNotePath = noteFile.path;
-		this.deps.onSlotWait?.(noteFile.path, Date.now() + LLM_SLOT_POLL_MS);
+		this.slotWaitNotePath = cardPath;
+		this.deps.onSlotWait?.(cardPath, Date.now() + LLM_SLOT_POLL_MS);
 	}
 
 	/** Clear the countdown badge if one is showing. Safe to call when not waiting. */

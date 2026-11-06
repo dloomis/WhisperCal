@@ -511,19 +511,33 @@ The same highlight applies to transcripts: opening a transcript file highlights 
 
 ### Unlinked Recordings
 
-A collapsible **"Unlinked recordings"** section appears at the bottom of the calendar view when there are recordings that haven't been linked to any note in your vault. This helps you catch recordings you forgot to process. The source depends on your recording setting — MacWhisper sessions or Recording API transcript files.
+A collapsible **"Unlinked transcripts"** section appears at the bottom of the calendar view when there are recordings that haven't been linked to any note in your vault. This helps you catch recordings you forgot to process. The source depends on your recording setting — MacWhisper sessions or Recording API transcript files.
 
 **How it works:**
 - **MacWhisper:** Scans the MacWhisper database for sessions within a configurable lookback window (default: 30 days). Skips recent recordings within a grace period (default: 48 hours).
 - **Recording API:** Scans the transcripts folder for transcript files not linked to any meeting note.
 - Cross-references against vault notes. Any recording not found linked to a note is shown as unlinked.
 
+**The unlinked card** uses the meeting card's layout, limited to what applies without a meeting note:
+
+- **Gutter:** the recording's start time and length. **Link** sits where a meeting card's Record button would, beside the **⋯** menu. While a job runs, the usual activity badge (*Tagging*, the model name, or the LLM-limit countdown) appears below them.
+- **Title:** opens the transcript. The meta row shows the recording date and speaker count.
+- **Rail:** two segments, **Transcript** (opens the file) and **Speakers** (same states as a meeting card: needs attention, running, review, done).
+- **Smart button:** **Tag speakers…**, or **Review speakers · N** when candidates are waiting. Both run the same tagging flow and confirmation modal as a meeting card. No button while tagging runs or once speakers are tagged.
+- **⋯ menu** (also right-click): Open transcript, Tag speakers… / Review speaker candidates / Edit speaker tags, Link to meeting…, and Delete transcript….
+
+There is no summary step: the summary is written into the meeting note, so it waits until the transcript is linked. Link is held back while speaker tagging runs, because linking renames the transcript. MacWhisper entries have no transcript in the vault until they are linked, so their Speakers segment stays grey.
+
+**Tagging before linking:** Speaker tagging works the same as on a meeting card, except there is no invitee list to help the LLM name people, so expect more speakers to confirm by ear. With **Automatic mode** on, unlinked transcripts are auto-tagged in the background under the usual rules (see [Stage 3 — Speakers](#stage-3--speakers)): if every speaker clears the voiceprint floor the tags are applied silently, otherwise the card shows **Review speakers** for the confirmation modal. Only transcripts created within the auto-tag lookback window are picked up, and only after the section's auto-link pass has left them for you. Because the section starts collapsed, its header shows how many cards need review.
+
 **Linking an unlinked recording:**
-1. Use the buttons on an unlinked recording card — **View** (first, since reviewing before linking is the common flow) opens the transcript directly, and **Link** starts the linking flow.
+1. Click **Link** in the card's gutter (or **Link to meeting…** in the ⋯ menu).
 2. WhisperCal checks the calendar cache for events near the recording's start time (using the same recording match window).
 3. If matching calendar events are found, a picker shows them along with a **"Create unscheduled note"** fallback. Events whose notes already have a recording linked are filtered out.
 4. If no matches are found, an unscheduled note is created directly, dated to the recording's actual start time.
 5. The recording is linked and a transcript is generated, just like the normal flow.
+
+Tagging progress carries over when you link: an already-tagged transcript lands on the meeting card with Speakers done, and with **Automatic mode** on the summary starts straight away. Unreviewed candidates carry over as the meeting card's **Review speakers** button.
 
 The section is collapsed by default and only appears when the count is greater than zero.
 
@@ -577,7 +591,7 @@ Once a transcript exists, the smart action button becomes **Tag speakers…** �
 
 While the LLM is running there is no smart button: the gutter's activity badge names the job and its model, the Speakers rail segment pulses, and the transcript stays openable from the rail. If you dismiss the confirmation modal without applying, the proposals stay cached and the button **becomes an accent-tinted "Review speakers · N"** (N = speakers awaiting confirmation) with the Speakers segment turning warning-colored — clicking it resumes the review directly. Once tags are applied, the button advances to Summarize and the ⋯ menu offers **Edit speaker tags**.
 
-**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no clicks needed. The run stops after caching the proposals: **tags are not applied without your review** (unless you also enable auto-tagging for confident matches — see below). The smart button becomes **Review speakers · N** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
+**Automatic mode:** When the **"Automatic mode"** setting is on, WhisperCal runs this LLM step automatically in the background as soon as a transcript is linked to its meeting note — no clicks needed. Transcripts waiting in the [unlinked section](#unlinked-recordings) are auto-tagged too. The run stops after caching the proposals: **tags are not applied without your review** (unless you also enable auto-tagging for confident matches — see below). The smart button becomes **Review speakers · N** when candidates are ready; click it to review and apply as usual, after which summarization starts automatically. Single-mic recordings (voice memos, single-speaker diarization) are skipped since they benefit from per-run hints. On startup, a catch-up scan also auto-tags eligible transcripts created within a configurable window (default 48 hours).
 
 **Skip the modal for confident matches:** Turn on **"Auto-tag when all speakers match"** to let WhisperCal apply tags without the confirmation modal — but only when *every* speaker in a recording is a voiceprint match at or above the **"Auto-tag confidence floor"** (default `0.80`, deliberately high). A single unmatched or below-floor speaker falls through to the normal review — with one exception: diarizers often emit a junk speaker for crosstalk or stray utterances that never matches anything and you'd always leave blank anyway. The **"Ignore minor speakers"** setting (default `0.05`) lets an unmatched speaker holding at most that share of the transcript's lines pass the gate *untagged* instead of blocking it; set it to `0` to require every speaker to match. **Crucially, a silent auto-tag never enrolls or corrects any voiceprint library** — only confirming a recording in the modal updates your libraries. This is the drift guard: it stops an unattended run from gradually teaching a person's voiceprint a misattributed or noisy centroid (cross-talk, stray utterances). The toggle works together with **Automatic mode** to decide the trigger:
 

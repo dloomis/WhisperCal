@@ -3,7 +3,7 @@ import {TFile, TFolder, normalizePath} from "obsidian";
 import type {UnlinkedRecording, UnlinkedRecordingProvider, LinkUnlinkedOpts} from "./UnlinkedRecordingProvider";
 import type {WhisperCalSettings} from "../settings";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink, noteBasename, transcriptBasenameFor} from "../utils/vault";
-import {batchUpdateFrontmatter, removeFrontmatterKeys, processFrontmatterQueued} from "../utils/frontmatter";
+import {batchUpdateFrontmatter, removeFrontmatterKeys, processFrontmatterQueued, readFmString} from "../utils/frontmatter";
 import {parseDisplayName} from "../utils/nameParser";
 import {parseDurationSeconds, sleep} from "../utils/time";
 import {FM} from "../constants";
@@ -90,6 +90,13 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		// The `recording:`/`voiceprints:` pointers Tome wrote here name the sibling audio
 		// and sidecar after the original recording; we need them to follow the rename below.
 		const originalFm = (this.app.metadataCache.getFileCache(freshFile)?.frontmatter ?? {}) as Record<string, unknown>;
+		// Speakers may have been tagged from the unlinked card before linking — keep
+		// that progress (on both sides) rather than resetting to "titled", which would
+		// re-offer tagging and re-arm the auto-tagger. A "summarized" state is left
+		// over from a deleted note; the new note has no summary, so it resumes at
+		// "tagged".
+		const priorState = readFmString(originalFm, FM.PIPELINE_STATE);
+		const pipelineState = priorState === "tagged" || priorState === "summarized" ? "tagged" : "titled";
 
 		// Read meeting note frontmatter for wiki-link invitees + calendar context
 		const noteFile = opts.app.vault.getAbstractFileByPath(opts.notePath);
@@ -107,7 +114,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 						fm["tags"] = [...existing, "transcript"];
 					}
 					fm[FM.MEETING_NOTE] = `[[${noteBase}]]`;
-					fm[FM.PIPELINE_STATE] = "titled";
+					fm[FM.PIPELINE_STATE] = pipelineState;
 					fm["meeting_subject"] = opts.subject;
 					fm["is_recurring"] = opts.isRecurring ?? false;
 					// Prefer wiki-link invitees from meeting note, fall back to plain names
@@ -186,7 +193,7 @@ export class ApiUnlinkedProvider implements UnlinkedRecordingProvider {
 		try {
 			await batchUpdateFrontmatter(opts.app, opts.notePath, {
 				[FM.TRANSCRIPT]: `[[${transcriptFile.basename}]]`,
-				[FM.PIPELINE_STATE]: "titled",
+				[FM.PIPELINE_STATE]: pipelineState,
 				...(typeof transcriptGuid === "string" && transcriptGuid && !noteGuidInFlight
 					? {[FM.SESSION_GUID]: transcriptGuid}
 					: {}),

@@ -15,7 +15,8 @@ import {NoteCreator} from "./NoteCreator";
 import {pruneCelebrations, renderAllDayCard, renderMeetingCard, updateMeetingCard, type MeetingCardOpts} from "./MeetingCard";
 import type {JobTracker} from "../services/JobTracker";
 import type {CardUiState} from "../services/CardUiState";
-import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, formatTimeForFrontmatter, getHour12, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
+import {computeUnlinkedStates, renderUnlinkedCard, updateUnlinkedCard, type UnlinkedCardOpts} from "./UnlinkedCard";
+import {addDaysInTimezone, coerceFmDate, coerceFmTime, formatDate, formatDisplayDate, formatRecordingDuration, formatTime, formatTimeForFrontmatter, getTodayString, isSameDay, midnightFromDateKey, parseDateTime} from "../utils/time";
 import {addActivateOnKey} from "../utils/a11y";
 import {AuthError} from "../services/CalendarAuth";
 import type {AuthState} from "../services/CalendarAuth";
@@ -96,6 +97,12 @@ export interface CalendarViewCallbacks {
 	onOpenSettings: () => void;
 	subscribeAuthState: (listener: (state: AuthState) => void) => () => void;
 	getUnlinkedProvider: () => UnlinkedRecordingProvider;
+	/** Unlinked transcripts the auto-link pass has looked at and left for the user —
+	 *  cleared for background auto-tagging (see AutoSpeakerTagger.offerUnlinked). */
+	onUnlinkedListed?: (transcriptPaths: string[]) => void;
+	/** A transcript was just linked to `notePath` from the unlinked section (manually or
+	 *  by auto-link). Lets Automatic mode summarize a transcript tagged before linking. */
+	onTranscriptLinked?: (notePath: string) => void;
 }
 
 /**
@@ -133,6 +140,8 @@ export class CalendarView extends ItemView {
 	private noteOpenPath: string | null = null;
 	private stickyHeaderEl: HTMLElement | null = null;
 	private unlinkedEl: HTMLElement | null = null;
+	/** Unlinked cards on screen, keyed by transcript path, for in-place status re-renders. */
+	private unlinkedCards = new Map<string, {el: HTMLElement; opts: UnlinkedCardOpts}>();
 	private unlinkedCollapsed = true;
 	private unlinkedGeneration = 0;
 	private autoLinkInFlight = false;
@@ -562,6 +571,7 @@ export class CalendarView extends ItemView {
 		for (const eventId of this.cards.keys()) {
 			this.rerenderCardById(eventId);
 		}
+		for (const {el, opts} of this.unlinkedCards.values()) updateUnlinkedCard(el, opts);
 		this.updateNowMarker();
 	}
 
@@ -907,6 +917,8 @@ export class CalendarView extends ItemView {
 				return;
 			}
 		}
+		const unlinked = this.unlinkedCards.get(filePath);
+		if (unlinked) updateUnlinkedCard(unlinked.el, unlinked.opts);
 	}
 
 	/**
@@ -1162,6 +1174,7 @@ export class CalendarView extends ItemView {
 	private async loadAndRenderUnlinkedSection(): Promise<void> {
 		if (!this.unlinkedEl) return;
 		this.unlinkedEl.empty();
+		this.unlinkedCards.clear();
 
 		if (this.settings.unlinkedLookbackDays <= 0) return;
 
@@ -1185,6 +1198,13 @@ export class CalendarView extends ItemView {
 			new Notice(`Auto-linked ${autoLinked.size} transcript${autoLinked.size === 1 ? "" : "s"} to ${autoLinked.size === 1 ? "its meeting" : "their meetings"}`);
 		}
 
+		// Clear what the auto-link pass looked at and left behind for background
+		// auto-tagging. A recording it skipped (its capture still in flight) isn't
+		// offered: that session's own link tail will claim the transcript.
+		this.callbacks.onUnlinkedListed?.(pending
+			.filter(r => r.transcriptPath && this.autoLinkAttempted.has(r.id))
+			.map(r => r.transcriptPath!));
+
 		if (pending.length === 0) {
 			this.unlinkedEl.createDiv({
 				cls: "whisper-cal-unlinked-empty",
@@ -1197,6 +1217,12 @@ export class CalendarView extends ItemView {
 		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
 		const arrow = header.createSpan({cls: "whisper-cal-unlinked-arrow", text: this.unlinkedCollapsed ? "\u25B8" : "\u25BE"});
 		header.createSpan({text: `Unlinked transcripts (${pending.length})`});
+		// The section starts collapsed, so surface candidates waiting on the user.
+		const needReview = pending.filter(r =>
+			computeUnlinkedStates(this.app, this.callbacks.jobs, r).candidatesReady).length;
+		if (needReview > 0) {
+			header.createSpan({cls: "whisper-cal-unlinked-review-count", text: `· ${needReview} need${needReview === 1 ? "s" : ""} review`});
+		}
 
 		const body = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-body"});
 		body.toggleClass("whisper-cal-hidden", this.unlinkedCollapsed);
@@ -1236,6 +1262,9 @@ export class CalendarView extends ItemView {
 				// a still-recording session's file shows up here half-written. Leave
 				// it to that session's own link tail; it is retried once that's done.
 				if (rec.sessionGuid && this.isSessionRecording(rec.sessionGuid)) continue;
+				// Linking renames the transcript, which would strand a speaker-tagging
+				// run's writes under the old path. Retried once the run finishes.
+				if (rec.transcriptPath && this.callbacks.jobs.has("speakerTag", rec.transcriptPath)) continue;
 				this.autoLinkAttempted.add(rec.id);
 
 				// Definitive id match first (SESSION_GUID_DESIGN.md §8): the note was
@@ -1253,7 +1282,7 @@ export class CalendarView extends ItemView {
 				const noteFile = this.noteCreator.findNote(event);
 				if (!noteFile) continue; // note vanished between match and link
 				try {
-					const ok = await unlinkedProvider.linkToNote({
+					const ok = await this.linkUnlinked(unlinkedProvider, {
 						app: this.app,
 						recording: rec,
 						notePath: noteFile.path,
@@ -1313,7 +1342,7 @@ export class CalendarView extends ItemView {
 			? fmSubject.trim()
 			: note.basename.replace(/^\d{4}-\d{2}-\d{2}(?: \d{4})? - /, "");
 		try {
-			const ok = await unlinkedProvider.linkToNote({
+			const ok = await this.linkUnlinked(unlinkedProvider, {
 				app: this.app,
 				recording: rec,
 				notePath: note.path,
@@ -1375,52 +1404,25 @@ export class CalendarView extends ItemView {
 	}
 
 	private renderUnlinkedCard(container: HTMLElement, recording: UnlinkedRecording): void {
-		const card = container.createDiv({cls: "whisper-cal-unlinked-card"});
-		if (recording.transcriptPath) {
-			card.dataset.transcriptPath = recording.transcriptPath;
-		}
-
-		const title = recording.title || "Untitled recording";
-		card.createDiv({cls: "whisper-cal-unlinked-title", text: title});
-
-		const meta = card.createDiv({cls: "whisper-cal-unlinked-meta"});
-		const dateStr = this.formatRecordingDate(recording.recordingStart);
-		const durStr = formatRecordingDuration(recording.durationSeconds);
-		const parts = [dateStr];
-		if (durStr) parts.push(durStr);
-		if (recording.speakerCount > 0) parts.push(`${recording.speakerCount} speaker${recording.speakerCount === 1 ? "" : "s"}`);
-		meta.createSpan({text: parts.join(" \u00B7 ")});
-
-		const btns = meta.createSpan({cls: "whisper-cal-unlinked-btns"});
-
-		// View first — reviewing a recording before linking it is the common flow
-		if (recording.transcriptPath) {
-			const viewBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "View"});
-			viewBtn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.app.workspace.openLinkText(recording.transcriptPath!, "", false);
-			});
-		}
-
-		const linkBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small", text: "Link"});
-		linkBtn.addEventListener("click", () => {
-			linkBtn.disabled = true;
-			void this.handleLinkUnlinked(recording).finally(() => {
-				linkBtn.disabled = false;
-			});
-		});
-
-		// Delete only when there is a vault file to delete. A MacWhisper-source
-		// entry is a row in MacWhisper's own database with no transcript here, so
-		// the button would confirm a destructive action and trash nothing, leaving
-		// the same recording listed forever.
-		if (recording.transcriptPath) {
-			const deleteBtn = btns.createEl("button", {cls: "whisper-cal-btn whisper-cal-btn-small whisper-cal-btn-danger", text: "Delete"});
-			deleteBtn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.handleDeleteUnlinked(recording);
-			});
-		}
+		const opts: UnlinkedCardOpts = {
+			app: this.app,
+			recording,
+			timezone: this.settings.timezone,
+			jobs: this.callbacks.jobs,
+			cardUi: this.callbacks.cardUi,
+			llmEnabled: this.settings.llmEnabled,
+			formatDate: (d) => this.formatRecordingDay(d),
+			onLink: () => this.handleLinkUnlinked(recording),
+			// Delete only when there is a vault file to delete. A MacWhisper-source
+			// entry is a row in MacWhisper's own database with no transcript here, so
+			// the item would confirm a destructive action and trash nothing, leaving
+			// the same recording listed forever.
+			onDelete: recording.transcriptPath ? () => { void this.handleDeleteUnlinked(recording); } : undefined,
+			onTagSpeakers: this.callbacks.onTagSpeakers,
+			onReviewSpeakerCandidates: this.callbacks.onReviewSpeakerCandidates,
+		};
+		const el = renderUnlinkedCard(container, opts);
+		if (recording.transcriptPath) this.unlinkedCards.set(recording.transcriptPath, {el, opts});
 	}
 
 	/**
@@ -1527,7 +1529,7 @@ export class CalendarView extends ItemView {
 				const noteFm = (noteFile instanceof TFile
 					? this.app.metadataCache.getFileCache(noteFile)?.frontmatter
 					: undefined) as Record<string, unknown> | undefined;
-				await unlinkedProvider.linkToNote({
+				await this.linkUnlinked(unlinkedProvider, {
 					app: this.app,
 					recording,
 					notePath: choice.note.path,
@@ -1553,7 +1555,7 @@ export class CalendarView extends ItemView {
 					if (!created) return;
 					notePath = created.path;
 				}
-				await unlinkedProvider.linkToNote({
+				await this.linkUnlinked(unlinkedProvider, {
 					app: this.app,
 					recording,
 					notePath,
@@ -1590,7 +1592,7 @@ export class CalendarView extends ItemView {
 				const created = await this.noteCreator.createNote(event, {preserveTimestamps: true, filenameOverride: name});
 				if (!created) return;
 				const notePath = created.path;
-				await unlinkedProvider.linkToNote({
+				await this.linkUnlinked(unlinkedProvider, {
 					app: this.app,
 					recording,
 					notePath,
@@ -1612,6 +1614,14 @@ export class CalendarView extends ItemView {
 			console.error("[WhisperCal] Link unlinked recording error:", e);
 			new Notice(`Failed to link recording: ${e instanceof Error ? e.message : String(e)}`);
 		}
+	}
+
+	/** Link through the provider and, on success, tell the plugin (Automatic mode may
+	 *  summarize a transcript whose speakers were tagged before it was linked). */
+	private async linkUnlinked(provider: UnlinkedRecordingProvider, opts: LinkUnlinkedOpts): Promise<boolean> {
+		const ok = await provider.linkToNote(opts);
+		if (ok) this.callbacks.onTranscriptLinked?.(opts.notePath);
+		return ok;
 	}
 
 	private async handleDeleteUnlinked(recording: UnlinkedRecording): Promise<void> {
@@ -1686,18 +1696,15 @@ export class CalendarView extends ItemView {
 		}
 	}
 
-	private formatRecordingDate(date: Date): string {
+	/** "Nov 5" for the unlinked card's gutter, with the year when it isn't this year's. */
+	private formatRecordingDay(date: Date): string {
 		const tz = this.settings.timezone;
-		// Compare years IN the configured zone so the date and time parts agree
-		// (the time part below already formats in `tz`).
+		// Compare years IN the configured zone so the date agrees with the gutter
+		// time, which also formats in `tz`.
 		const sameYear = formatDate(date, tz).slice(0, 4) === formatDate(new Date(), tz).slice(0, 4);
 		const dateOpts: Intl.DateTimeFormatOptions = {month: "short", day: "numeric", timeZone: tz};
 		if (!sameYear) dateOpts.year = "numeric";
-		const datePart = date.toLocaleDateString(undefined, dateOpts);
-		const timePart = date.toLocaleTimeString(undefined, {
-			hour: "numeric", minute: "2-digit", timeZone: tz, hour12: getHour12(),
-		});
-		return `${datePart}, ${timePart}`;
+		return date.toLocaleDateString(undefined, dateOpts);
 	}
 
 

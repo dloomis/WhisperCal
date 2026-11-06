@@ -1224,6 +1224,17 @@
 	cursor: default;
 }
 
+/* Held-back button that still explains itself on hover (aria-disabled keeps the
+   tooltip; see the unlinked card's Link while speaker tagging runs). */
+.whisper-cal-smart[aria-disabled="true"],
+.whisper-cal-smart[aria-disabled="true"]:hover {
+	opacity: 0.5;
+	cursor: default;
+	background: var(--interactive-normal);
+	color: var(--text-normal);
+	box-shadow: var(--input-shadow);
+}
+
 .whisper-cal-smart-icon {
 	display: inline-flex;
 	align-items: center;
@@ -1502,60 +1513,22 @@
 	margin-top: 4px;
 }
 
-.whisper-cal-unlinked-card {
-	/* Match the card style of scheduled meeting cards (.whisper-cal-card):
-	   same background, border, corner radius, spacing, and left-edge width —
-	   only the left-edge color (warning) marks it as unlinked. */
-	background: var(--background-primary-alt);
-	border: 2px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	padding: 8px 12px;
-	margin-bottom: 8px;
-	border-left: 5px solid var(--text-warning);
+/* Unlinked transcript card — the meeting card's layout (.whisper-cal-card),
+   cut down. The warning hue stands in for a calendar category, so the left
+   edge and the gutter wash both mark the card as unlinked. */
+.whisper-cal-card.whisper-cal-unlinked-card {
+	--wc-cat-color: var(--text-warning);
 }
 
-.whisper-cal-unlinked-card.whisper-cal-card-note-open {
-	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-primary-alt));
-}
-
-.whisper-cal-unlinked-title {
-	font-size: var(--font-ui-small);
-	font-weight: var(--font-semibold);
-	color: var(--text-normal);
-	margin-bottom: 4px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.whisper-cal-unlinked-meta {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
+/* "· 2 need review" on the collapsed section header. */
+.whisper-cal-unlinked-review-count {
+	color: var(--interactive-accent);
+	font-weight: var(--font-normal);
 }
 
 .whisper-cal-btn-small {
 	padding: 2px 8px;
 	font-size: var(--font-ui-smaller);
-}
-
-.whisper-cal-btn-danger {
-	color: var(--text-error);
-	border-color: var(--background-modifier-error);
-}
-
-.whisper-cal-btn-danger:hover {
-	background-color: var(--background-modifier-error);
-	color: var(--text-on-accent);
-	border-color: var(--background-modifier-error);
-}
-
-.whisper-cal-unlinked-btns {
-	display: flex;
-	gap: 4px;
 }
 
 /* NameInputModal */

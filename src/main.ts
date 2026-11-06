@@ -19,7 +19,7 @@ import {resolveSeriesPrep, ensureSeriesNote} from "./services/SeriesPrep";
 import {applySpeakerTags} from "./services/SpeakerTagApplier";
 import {enrollVoiceprints, healVoiceprints} from "./services/VoiceprintEnroller";
 import {matchVoiceprints, type VoiceprintMatch} from "./services/VoiceprintMatcher";
-import {coerceFmDate, coerceFmTime, parseDateTime, setTimeFormat} from "./utils/time";
+import {coerceFmDate, coerceFmTime, parseDateTime, setTimeFormat, sleep} from "./utils/time";
 import {updateFrontmatter, readFmString, restoreFrontmatterFields, isSingleSourceTranscript} from "./utils/frontmatter";
 import {buildMeetingSubtitle} from "./ui/ModalHeader";
 import {resolveWikiLink, resolveTranscriptAudio, stripWikiLink} from "./utils/vault";
@@ -291,6 +291,8 @@ export default class WhisperCalPlugin extends Plugin {
 			},
 			subscribeAuthState: (listener) => this.onAuthStateChange(listener),
 			getUnlinkedProvider: () => this.unlinkedProvider,
+			onUnlinkedListed: (paths: string[]) => this.autoTagger.offerUnlinked(paths),
+			onTranscriptLinked: (notePath: string) => { void this.summarizeAfterLink(notePath); },
 		};
 
 		this.registerView(VIEW_TYPE_CALENDAR, (leaf) =>
@@ -1602,8 +1604,10 @@ export default class WhisperCalPlugin extends Plugin {
 				await updateFrontmatter(this.app, notePath, FM.PIPELINE_STATE, "tagged");
 				this.setCardStatus(notePath, "Speakers tagged", "check", 4000, "done", "Tagged");
 
-				// Auto-summarize if enabled
-				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
+				// Auto-summarize if enabled — not for an unlinked transcript (notePath is the
+				// transcript itself): with no note there is nowhere to write the summary.
+				// Linking it later picks the pipeline back up (summarizeAfterLink).
+				if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath && notePath !== transcriptPath) {
 					void this.doSummarize(notePath, true, undefined, {auto: true});
 				}
 
@@ -1760,8 +1764,9 @@ export default class WhisperCalPlugin extends Plugin {
 			this.setCardStatus(notePath, status, "users-round", 5000, "done", "Tagged");
 			debug("voiceprint", `autoApplyVoiceprintTags: applied ${tagged} tag(s) for ${transcriptPath} without enrollment (drift guard)${skipped > 0 ? `, ${skipped} minor speaker(s) left untagged` : ""}`);
 
-			// Auto-summarize if enabled, same as the modal apply path.
-			if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath) {
+			// Auto-summarize if enabled, same as the modal apply path (and, like it,
+			// not for an unlinked transcript).
+			if (this.settings.autoSummarizeAfterTagging && this.settings.summarizerPromptPath && notePath !== transcriptPath) {
 				void this.doSummarize(notePath, true, undefined, {auto: true});
 			}
 
@@ -1783,8 +1788,47 @@ export default class WhisperCalPlugin extends Plugin {
 	 * transcript (existing assignments, pre-filled). No LLM runs — the modal's Apply re-labels
 	 * the body and re-writes the tags.
 	 */
+	/** The file at `path` when it is a transcript (lives in the transcript folder) —
+	 *  how an unlinked transcript's card names itself as the tagging "note path". */
+	private standaloneTranscript(path: string): TFile | null {
+		const folder = this.settings.transcriptFolderPath;
+		if (!folder || !path.startsWith(folder + "/")) return null;
+		const file = this.app.vault.getAbstractFileByPath(path);
+		return file instanceof TFile ? file : null;
+	}
+
+	/**
+	 * A transcript was just linked from the unlinked section. If its speakers were
+	 * already tagged, Automatic mode resumes the pipeline it would have run had the
+	 * transcript been linked all along: summarize. Waits briefly for the metadata
+	 * cache to show the new link and state (linkToNote's writes land just before
+	 * this fires), and gives up quietly if it never does.
+	 */
+	private async summarizeAfterLink(notePath: string): Promise<void> {
+		const s = this.settings;
+		if (!s.autoSummarizeAfterTagging || !s.llmEnabled || !s.summarizerPromptPath) return;
+		for (let i = 0; i < 20; i++) {
+			if (this.unloading) return;
+			const transcript = getLinkedTranscriptFile(this.app, notePath);
+			const noteFile = this.app.vault.getAbstractFileByPath(notePath);
+			const noteFm = noteFile instanceof TFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter : undefined;
+			if (transcript && noteFm) {
+				const tFm = this.app.metadataCache.getFileCache(transcript)?.frontmatter;
+				if (readFmString(tFm, FM.PIPELINE_STATE) !== "tagged") return;
+				if (readFmString(noteFm, FM.PIPELINE_STATE) === "tagged") {
+					if (this.jobs.has("summarize", notePath)) return;
+					debug("autoTag", `summarizing ${notePath} — linked with speakers already tagged`);
+					void this.doSummarize(notePath, true, undefined, {auto: true});
+					return;
+				}
+			}
+			await sleep(250);
+		}
+	}
+
 	private reviewSpeakerCandidates(notePath: string): void {
-		const transcriptFile = getLinkedTranscriptFile(this.app, notePath);
+		// An unlinked transcript's card passes the transcript itself as notePath.
+		const transcriptFile = getLinkedTranscriptFile(this.app, notePath) ?? this.standaloneTranscript(notePath);
 		if (!transcriptFile) {
 			new Notice("No linked transcript found");
 			return;

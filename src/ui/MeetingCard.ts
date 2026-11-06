@@ -11,7 +11,7 @@ import {addActivateOnKey} from "../utils/a11y";
 import {linkRecording} from "../services/LinkRecording";
 import {updateFrontmatter, batchUpdateFrontmatter} from "../utils/frontmatter";
 import type {JobTracker} from "../services/JobTracker";
-import {type CardStatusVariant, type CardUiState} from "../services/CardUiState";
+import {type CardStatus, type CardStatusVariant, type CardUiState} from "../services/CardUiState";
 import {FM} from "../constants";
 import {ReRecordConfirmModal} from "./ReRecordConfirmModal";
 import {ActiveRecordingNoticeModal} from "./ActiveRecordingNoticeModal";
@@ -142,7 +142,7 @@ function startDurationTimer(cardUi: CardUiState, notePath: string, textEl: HTMLE
 	cardUi.startDurationTimer(notePath, tick, 1000);
 }
 
-type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
+export type RailSegState = "done" | "running" | "attention" | "rec" | "pending";
 
 /**
  * Completion-celebration bookkeeping, keyed by note path: each card's per-stage
@@ -202,7 +202,7 @@ export function pruneCelebrations(livePaths: Set<string>): void {
  * would never fire on hover. With no click listener attached, aria-disabled is
  * inert to activation while still receiving hover and announcing its state.
  */
-function renderRailSeg(
+export function renderRailSeg(
 	rail: HTMLElement,
 	label: string,
 	state: RailSegState,
@@ -227,10 +227,28 @@ function renderRailSeg(
 }
 
 /**
+ * Render a card status's gutter badge into the action row (a no-op for a status
+ * with no badge). Only the progress variant pulses (see styles.css); result
+ * variants (done/warning) hold steady.
+ */
+export function renderActivityBadge(actions: HTMLElement, status: CardStatus): void {
+	if (!status.badge) return;
+	const variant = status.variant ?? "progress";
+	const badge = actions.createDiv({
+		cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${variant}`,
+		attr: {"aria-label": status.message},
+	});
+	badge.createDiv({cls: "whisper-cal-rail-badge-label", text: status.badge.label});
+	if (status.badge.model) {
+		badge.createDiv({cls: "whisper-cal-rail-badge-model", text: status.badge.model});
+	}
+}
+
+/**
  * Build a smart action button: an icon + a full text label (+ an optional count
  * chip). The pipeline's single "next verb" button.
  */
-function renderSmartBtn(
+export function renderSmartBtn(
 	container: HTMLElement,
 	icon: string,
 	label: string,
@@ -1325,19 +1343,7 @@ function renderCardDynamic(
 	// row (Tag speakers…, Summarizing…). Being in the row also keeps the row
 	// non-empty, so the wrapper's hide-when-empty rule leaves the card expanded
 	// for a badge that arrives with no button beside it.
-	if (badgeStatus?.badge) {
-		// Only the progress variant pulses (see styles.css); result variants
-		// (done/warning) hold steady.
-		const badgeVariant = badgeStatus.variant ?? "progress";
-		const badge = actions.createDiv({
-			cls: `whisper-cal-rail-badge whisper-cal-rail-badge-${badgeVariant}`,
-			attr: {"aria-label": badgeStatus.message},
-		});
-		badge.createDiv({cls: "whisper-cal-rail-badge-label", text: badgeStatus.badge.label});
-		if (badgeStatus.badge.model) {
-			badge.createDiv({cls: "whisper-cal-rail-badge-model", text: badgeStatus.badge.model});
-		}
-	}
+	if (badgeStatus) renderActivityBadge(actions, badgeStatus);
 
 	// Capture control — Record/Stop lives in the gutter and sits deliberately
 	// outside the smart-button state machine below. Starting and stopping a
