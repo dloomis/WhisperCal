@@ -134,6 +134,20 @@
 	   action row's smart button, and the gutter's capture + ⋯ pair — so they all
 	   read as one family. */
 	--wc-card-btn-h: 26px;
+	/* Button edge for the card's tinted surfaces. Themes that flatten
+	   --input-shadow leave a button as a bare fill, which reads as a smudge on
+	   the category-colored gutter rather than as a control. So the card draws its
+	   own edge from theme colors instead: a hairline ring mixed from
+	   --text-normal (darker than any light wash, lighter than any dark one, so it
+	   holds on every category tint in both modes) plus a soft drop that lifts
+	   the button off the surface. The flat variant is the ring alone, for
+	   segments that aren't clickable yet. */
+	--wc-btn-ring: color-mix(in srgb, var(--text-normal) 18%, transparent);
+	--wc-btn-edge-flat: inset 0 0 0 1px var(--wc-btn-ring);
+	--wc-btn-edge: var(--wc-btn-edge-flat), 0 1px 2px rgba(0, 0, 0, 0.14);
+	--wc-btn-edge-hover:
+		inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 60%, transparent),
+		0 1px 3px rgba(0, 0, 0, 0.2);
 	display: flex;
 	flex-direction: row;
 	align-items: stretch;
@@ -1038,19 +1052,21 @@
 	border: 0;
 	border-radius: var(--button-radius);
 	background: var(--background-modifier-border);
-	/* The theme's button edge (Obsidian draws it as a shadow), so segments stand
-	   off the card's tinted surfaces the way the user's other buttons do. */
-	box-shadow: var(--input-shadow);
+	/* The card's own button edge (see --wc-btn-edge), so segments stand off the
+	   card's tinted surfaces whatever the theme does with --input-shadow. */
+	box-shadow: var(--wc-btn-edge);
 	cursor: pointer;
 	overflow: hidden;
-	transition: background 150ms ease;
+	transition: background 150ms ease, box-shadow 150ms ease;
 }
 
 /* Pending stages carry aria-disabled rather than the native `disabled`
    property so they still receive hover events and can show a "why" tooltip
-   (see renderRailSeg). */
+   (see renderRailSeg). They keep the ring but lose the lift, so a stage that
+   can't be clicked yet sits flat beside the ones that can. */
 .whisper-cal-rail .whisper-cal-rail-seg[aria-disabled="true"] {
 	cursor: default;
+	box-shadow: var(--wc-btn-edge-flat);
 }
 
 /* Solo rail (the ad-hoc placeholder's lone Note segment) — without siblings
@@ -1177,6 +1193,7 @@
 
 .whisper-cal-rail-seg:not([aria-disabled="true"]):hover {
 	background: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
+	box-shadow: var(--wc-btn-edge-hover);
 }
 
 .whisper-cal-rail-seg-done:not([aria-disabled="true"]):hover {
@@ -1203,7 +1220,7 @@
 	border: 0;
 	background: var(--interactive-normal);
 	color: var(--text-normal);
-	box-shadow: var(--input-shadow);
+	box-shadow: var(--wc-btn-edge);
 	cursor: pointer;
 	box-sizing: border-box;
 	font-size: var(--font-ui-smaller);
@@ -1216,7 +1233,7 @@
    (#fff → #fafafa light), which disappears entirely on the tinted gutter. */
 .whisper-cal-smart:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
-	box-shadow: var(--input-shadow-hover);
+	box-shadow: var(--wc-btn-edge-hover);
 	color: var(--interactive-accent);
 }
 
@@ -1345,7 +1362,7 @@
 	border: 0;
 	background: var(--interactive-normal);
 	color: var(--icon-color);
-	box-shadow: var(--input-shadow);
+	box-shadow: var(--wc-btn-edge);
 	cursor: pointer;
 	box-sizing: border-box;
 }
@@ -1357,7 +1374,7 @@
 
 .whisper-cal-mini:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--interactive-accent) 15%, var(--interactive-normal));
-	box-shadow: var(--input-shadow-hover);
+	box-shadow: var(--wc-btn-edge-hover);
 	color: var(--interactive-accent);
 }
 
