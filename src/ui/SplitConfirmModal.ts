@@ -11,18 +11,28 @@ import type {SplitPlan} from "../services/MeetingSplitter";
  * Mirrors MergeConfirmModal — same promise-based prompt(), same button row, same
  * "value read on close" pattern — so the two halves of the operation feel alike.
  */
+/**
+ * What happens to the summary when the meeting being split already has one:
+ * "none" — it isn't summarized, nothing to say; "auto" — both halves are
+ * re-summarized after the split; "manual" — the summarizer isn't available, so
+ * both halves go back to awaiting a summary.
+ */
+export type SplitResummarize = "none" | "auto" | "manual";
+
 export class SplitConfirmModal extends Modal {
 	private resolve: ((value: string | null) => void) | null = null;
 	private submitted = false;
 	private plan: SplitPlan;
 	private defaultName: string;
 	private timezone: string;
+	private resummarize: SplitResummarize;
 
-	constructor(app: App, opts: {plan: SplitPlan; defaultName: string; timezone: string}) {
+	constructor(app: App, opts: {plan: SplitPlan; defaultName: string; timezone: string; resummarize: SplitResummarize}) {
 		super(app);
 		this.plan = opts.plan;
 		this.defaultName = opts.defaultName;
 		this.timezone = opts.timezone;
+		this.resummarize = opts.resummarize;
 	}
 
 	prompt(): Promise<string | null> {
@@ -65,6 +75,15 @@ export class SplitConfirmModal extends Modal {
 			contentEl.createEl("p", {
 				cls: "whisper-cal-split-confirm-warning",
 				text: "The transcript has no per-line timestamps, so the split time is estimated from position in the text.",
+			});
+		}
+
+		if (this.resummarize !== "none") {
+			contentEl.createEl("p", {
+				cls: "whisper-cal-split-confirm-hint",
+				text: this.resummarize === "auto"
+					? "This meeting is already summarized. Its summary covers the whole recording, so both meetings are re-summarized after the split, replacing it."
+					: "This meeting is already summarized. Its summary covers the whole recording, so both meetings go back to awaiting a summary — the summarizer isn't set up to run now.",
 			});
 		}
 

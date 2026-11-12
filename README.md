@@ -340,7 +340,7 @@ The **⋯** button in the card's gutter — or right-clicking anywhere on the ca
 | **Edit speaker tags** | Speaker tags applied | Re-opens the confirmation modal pre-filled with the current assignments — no LLM re-run |
 | **Summarize meeting…** / **Regenerate summary…** | Speakers tagged / summary complete | Opens the instructions dialog, then runs summarization |
 | **Research meeting…** | Always (LLM on) | Opens the research modal — creates the meeting note first if needed; shows a disabled "Researching…" while a run is in progress |
-| **Split transcript…** | Transcript linked, meeting not yet summarized, nothing mid-run | Opens the transcript in split mode to divide it into two meetings (see [Splitting a Meeting](#splitting-a-meeting)) |
+| **Split transcript…** | Transcript linked, nothing mid-run | Opens the transcript in split mode to divide it into two meetings (see [Splitting a Meeting](#splitting-a-meeting)) |
 | **Pull Teams meeting chat** | Online meeting, note exists, Microsoft calendar | Re-reads the meeting's Teams chat into the note (see [Teams Meeting Chat](#teams-meeting-chat)) |
 | **Skip kanban processing** / **Unmark kanban reviewed** | A meeting note exists | Sets or clears the note's `kanban-reviewed` mark (see [The Kanban Review Mark](#the-kanban-review-mark)) |
 | **Export meeting bundle…** | A meeting note exists | Bundles the meeting's artifacts into a `.zip` outside the vault (see below) |
@@ -418,7 +418,7 @@ The inverse of merging: sometimes one recording covers two meetings — a schedu
 - The original meeting keeps its calendar link and is trimmed to end at the split time; the new meeting appears as its own card at the split time (a local card with a synthetic `split-` id, like a merged meeting). The two are cross-linked via `split_from` / `split_into` frontmatter.
 - The new files are fully created **before** the original transcript is touched, so an interrupted split never loses text.
 
-Splitting is offered only **before the meeting is summarized** — an existing summary would describe both halves — and while no recording or LLM job is running on the card.
+Splitting is offered while no recording or LLM job is running on the card — including **after the meeting is summarized**. An existing summary describes the whole recording, so splitting a summarized meeting sets both halves back to `tagged` and **re-summarizes each one**, replacing the original's summary and writing the new meeting its own (the confirmation modal says so before you commit). The two runs queue for an LLM slot rather than failing at the concurrency limit. If LLM features are off or no summarizer prompt is set, both halves are left awaiting a summary instead.
 
 ### Active Event Highlighting
 

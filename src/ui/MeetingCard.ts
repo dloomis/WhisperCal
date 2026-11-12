@@ -1104,10 +1104,9 @@ function renderCardDynamic(
 		// would be a second door onto the same destructive action.
 
 		// Split transcript… — for a recording that turned out to cover two
-		// back-to-back meetings. Offered only before the summary exists: once the
-		// meeting is summarized the summary describes both halves, and cutting the
-		// transcript underneath it would leave the note describing a meeting that
-		// no longer matches its transcript. Also held back while any stage is
+		// back-to-back meetings. Offered after the summary exists too: the split
+		// puts both halves back to "tagged" and re-summarizes each, since the old
+		// summary describes the whole recording. Held back while any stage is
 		// mid-flight, since all three write to the very files the split rewrites,
 		// and on MERGED transcripts, where each part keeps its own clock — the
 		// boundary line's stamp is part-relative, so every instant the split
@@ -1115,7 +1114,7 @@ function renderCardDynamic(
 		const isMerged = tf !== null
 			&& app.metadataCache.getFileCache(tf)?.frontmatter?.[FM.MERGED_FROM] !== undefined;
 		if (tf && !isMerged && opts.onSplitTranscript
-			&& states.summary !== "complete" && states.summary !== "running"
+			&& states.summary !== "running"
 			&& states.speakers !== "running" && states.record !== "running") {
 			menu.addItem((item) => item
 				.setTitle("Split transcript…")

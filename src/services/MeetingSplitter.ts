@@ -33,6 +33,9 @@ import type {FrontmatterSpeaker} from "./SpeakerTagParser";
 export interface SplitResult {
 	newNotePath: string;
 	newTranscriptPath: string;
+	/** The meeting was summarized before the split. Both halves have been put
+	 *  back to "tagged" (see splitMeeting) and each needs a fresh summary. */
+	wasSummarized: boolean;
 }
 
 /**
@@ -65,6 +68,9 @@ export interface SplitPlan {
 	transcriptFm: Record<string, unknown>;
 	/** Subject the transcript is currently filed under — the default title stem. */
 	subject: string;
+	/** The meeting already has a summary, which describes both halves and so
+	 *  goes stale the moment the transcript is cut. */
+	wasSummarized: boolean;
 }
 
 /**
@@ -296,6 +302,8 @@ export async function planSplit(
 		partBLineCount: after.length,
 		transcriptFm,
 		subject,
+		wasSummarized: (readFmString(transcriptFm, FM.PIPELINE_STATE)
+			?? readFmString(noteFm, FM.PIPELINE_STATE)) === "summarized",
 	};
 }
 
@@ -353,8 +361,15 @@ export async function splitMeeting(
 	const newTranscriptPath = uniquePath(app, transcriptFolder, `${stem} - Transcript`);
 	const newTranscriptBasename = noteBasename(newTranscriptPath);
 
-	const pipelineState = readFmString(transcriptFm, FM.PIPELINE_STATE)
-		?? readFmString(noteFm, FM.PIPELINE_STATE);
+	// A summarized meeting's summary covers the whole recording, so neither half
+	// is summarized any more once it is cut: the tail has no summary at all, and
+	// the original's describes a meeting twice as long as its transcript. Both go
+	// back to "tagged" — the state the Summary stage runs from — and the caller
+	// re-summarizes each. Any earlier state carries over to the tail unchanged.
+	const {wasSummarized} = plan;
+	const pipelineState = wasSummarized
+		? "tagged"
+		: readFmString(transcriptFm, FM.PIPELINE_STATE) ?? readFmString(noteFm, FM.PIPELINE_STATE);
 
 	// Timestamps stay ABSOLUTE (offsets into the shared audio), so the speaker-tag
 	// modal's click-to-play still lands on the right moment in the one recording.
@@ -494,13 +509,15 @@ export async function splitMeeting(
 		const confirmed = filterConfirmedSpeakers(fm[FM.CONFIRMED_SPEAKERS], partALabels, partBLabels);
 		if (confirmed) fm[FM.CONFIRMED_SPEAKERS] = confirmed;
 		fm[FM.SPLIT_INTO] = wikiLinkToPath(newTranscriptPath);
+		if (wasSummarized) fm[FM.PIPELINE_STATE] = "tagged";
 	});
 
 	// ---- 6. The original meeting now ends where the second one begins. ----
 	await processFrontmatterQueued(app, noteFile, (fm: Record<string, unknown>) => {
 		fm["meeting_end"] = formatTimeForFrontmatter(splitTime, tz);
 		fm[FM.SPLIT_INTO] = wikiLinkToPath(newNotePath);
+		if (wasSummarized) fm[FM.PIPELINE_STATE] = "tagged";
 	});
 
-	return {newNotePath, newTranscriptPath};
+	return {newNotePath, newTranscriptPath, wasSummarized};
 }

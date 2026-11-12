@@ -1873,7 +1873,15 @@ export default class WhisperCalPlugin extends Plugin {
 		await this.doSummarize(notePath, true, customInstructions);
 	}
 
-	private async doSummarize(notePath: string, skipPipelineCheck = false, customInstructions?: string, opts?: {auto?: boolean}): Promise<void> {
+	/**
+	 * `opts.auto` and `opts.queue` both wait for a free LLM slot instead of
+	 * dropping the run at the concurrency limit. `auto` (the automatic pipeline)
+	 * also abandons the wait if the note gets summarized meanwhile; `queue` (a
+	 * run the user explicitly asked for, e.g. re-summarizing after a split) does
+	 * not — it is started right after pipeline_state is reset to "tagged", when
+	 * the metadata cache can still report the old "summarized".
+	 */
+	private async doSummarize(notePath: string, skipPipelineCheck = false, customInstructions?: string, opts?: {auto?: boolean; queue?: boolean}): Promise<void> {
 		const noteFile = this.app.vault.getAbstractFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
 			new Notice("Meeting note not found");
@@ -1920,11 +1928,12 @@ export default class WhisperCalPlugin extends Plugin {
 		// summarize started) and resolves with the slot pre-claimed, handed straight
 		// to runLlmJob with no await in between so it can't be raced away.
 		let preClaimed = false;
-		if (opts?.auto) {
+		if (opts?.auto || opts?.queue) {
 			preClaimed = await this.waitForLlmSlot(notePath, () => {
 				if (this.jobs.has("summarize", notePath)) return false;
 				const f = this.app.vault.getAbstractFileByPath(notePath);
 				if (!(f instanceof TFile)) return false;
+				if (opts.queue) return true;
 				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
 				return readFmString(fm ?? {}, FM.PIPELINE_STATE) !== "summarized";
 			});
@@ -2582,6 +2591,14 @@ export default class WhisperCalPlugin extends Plugin {
 			return;
 		}
 		const originalTranscriptPath = files.transcript.path;
+		const originalNotePath = files.note.path;
+		// The ⋯ menu hides Split while a stage is running, but split mode can sit
+		// open long enough for a summary to be started (or regenerated) meanwhile —
+		// and that job is writing to the very note the split is about to change.
+		if (this.jobs.has("summarize", originalNotePath)) {
+			new Notice("A summary is being written for this meeting — split it when that finishes");
+			return;
+		}
 		await this.flushEditor(originalTranscriptPath);
 
 		let plan;
@@ -2596,6 +2613,7 @@ export default class WhisperCalPlugin extends Plugin {
 			plan,
 			defaultName: `${plan.subject} (split)`,
 			timezone: this.settings.timezone,
+			resummarize: !plan.wasSummarized ? "none" : this.canResummarize() ? "auto" : "manual",
 		}).prompt();
 		if (!title) return;
 
@@ -2606,14 +2624,33 @@ export default class WhisperCalPlugin extends Plugin {
 			// longer exists. Drop them; the next Speakers run re-proposes.
 			await clearSpeakerProposals(this.app, originalTranscriptPath);
 			this.exitSplitMode();
-			new Notice(`Split into a new meeting: ${result.newNotePath.split("/").pop()?.replace(/\.md$/, "")}`);
+			const newName = result.newNotePath.split("/").pop()?.replace(/\.md$/, "");
+			const resummarize = result.wasSummarized && this.canResummarize();
+			new Notice(!result.wasSummarized
+				? `Split into a new meeting: ${newName}`
+				: resummarize
+					? `Split into a new meeting: ${newName} — re-summarizing both`
+					: `Split into a new meeting: ${newName} — summarize each from its card`);
 			for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CALENDAR)) {
 				if (leaf.view instanceof CalendarView) leaf.view.rebuildCards();
+			}
+			// The old summary described the whole recording. splitMeeting already put
+			// both halves back to "tagged"; write each a summary of its own. Queued
+			// (not manual) runs, so with one LLM slot the second waits for the first
+			// instead of being turned away at the concurrency limit.
+			if (resummarize) {
+				void this.doSummarize(originalNotePath, true, undefined, {queue: true});
+				void this.doSummarize(result.newNotePath, true, undefined, {queue: true});
 			}
 		} catch (e) {
 			console.error("[WhisperCal] Split transcript error:", e);
 			new Notice(`Failed to split transcript: ${e instanceof Error ? e.message : String(e)}`);
 		}
+	}
+
+	/** Whether a summary can be started without the user configuring anything. */
+	private canResummarize(): boolean {
+		return this.settings.llmEnabled && !!this.settings.summarizerPromptPath;
 	}
 
 	/** Abandon split mode, taking the marker line back out of the transcript. */
