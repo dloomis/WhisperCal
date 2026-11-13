@@ -142,7 +142,7 @@ export class CalendarView extends ItemView {
 	private unlinkedEl: HTMLElement | null = null;
 	/** Unlinked cards on screen, keyed by transcript path, for in-place status re-renders. */
 	private unlinkedCards = new Map<string, {el: HTMLElement; opts: UnlinkedCardOpts}>();
-	private unlinkedCollapsed = true;
+	private unlinkedCollapsed = false;
 	private unlinkedGeneration = 0;
 	private autoLinkInFlight = false;
 	private autoLinkAttempted = new Set<string>();
@@ -1217,7 +1217,7 @@ export class CalendarView extends ItemView {
 		const header = this.unlinkedEl.createDiv({cls: "whisper-cal-unlinked-header"});
 		const arrow = header.createSpan({cls: "whisper-cal-unlinked-arrow", text: this.unlinkedCollapsed ? "\u25B8" : "\u25BE"});
 		header.createSpan({text: `Unlinked transcripts (${pending.length})`});
-		// The section starts collapsed, so surface candidates waiting on the user.
+		// Surface candidates waiting on the user, so a collapsed section still shows them.
 		const needReview = pending.filter(r =>
 			computeUnlinkedStates(this.app, this.callbacks.jobs, r).candidatesReady).length;
 		if (needReview > 0) {

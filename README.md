@@ -528,7 +528,7 @@ A collapsible **"Unlinked transcripts"** section appears at the bottom of the ca
 
 There is no summary step: the summary is written into the meeting note, so it waits until the transcript is linked. Link is held back while speaker tagging runs, because linking renames the transcript. MacWhisper entries have no transcript in the vault until they are linked, so their Speakers segment stays grey.
 
-**Tagging before linking:** Speaker tagging works the same as on a meeting card, except there is no invitee list to help the LLM name people, so expect more speakers to confirm by ear. With **Automatic mode** on, unlinked transcripts are auto-tagged in the background under the usual rules (see [Stage 3 — Speakers](#stage-3--speakers)): if every speaker clears the voiceprint floor the tags are applied silently, otherwise the card shows **Review speakers** for the confirmation modal. Only transcripts created within the auto-tag lookback window are picked up, and only after the section's auto-link pass has left them for you. Because the section starts collapsed, its header shows how many cards need review.
+**Tagging before linking:** Speaker tagging works the same as on a meeting card, except there is no invitee list to help the LLM name people, so expect more speakers to confirm by ear. With **Automatic mode** on, unlinked transcripts are auto-tagged in the background under the usual rules (see [Stage 3 — Speakers](#stage-3--speakers)): if every speaker clears the voiceprint floor the tags are applied silently, otherwise the card shows **Review speakers** for the confirmation modal. Only transcripts created within the auto-tag lookback window are picked up, and only after the section's auto-link pass has left them for you. Its header also shows how many cards need review, so you can see them even with the section collapsed.
 
 **Linking an unlinked recording:**
 1. Click the card's **Link** segment (or **Link to meeting…** in the ⋯ menu).
@@ -539,7 +539,7 @@ There is no summary step: the summary is written into the meeting note, so it wa
 
 Tagging progress carries over when you link: an already-tagged transcript lands on the meeting card with Speakers done, and with **Automatic mode** on the summary starts straight away. Unreviewed candidates carry over as the meeting card's **Review speakers** button.
 
-The section is collapsed by default and only appears when the count is greater than zero.
+The section is expanded by default (click the header to collapse it) and only appears when the count is greater than zero.
 
 ---
 

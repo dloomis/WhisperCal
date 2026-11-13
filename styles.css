@@ -1496,22 +1496,25 @@
 .whisper-cal-unlinked-header {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	cursor: pointer;
-	font-size: var(--font-ui-small);
+	font-size: var(--font-ui-medium);
 	font-weight: var(--font-semibold);
 	color: var(--text-muted);
-	padding: 4px 0;
+	padding: 8px 4px;
+	border-radius: var(--radius-s);
 	user-select: none;
 }
 
 .whisper-cal-unlinked-header:hover {
 	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
 }
 
 .whisper-cal-unlinked-arrow {
-	font-size: var(--font-ui-smaller);
-	width: 12px;
+	font-size: var(--font-ui-large);
+	line-height: 1;
+	width: 16px;
 	text-align: center;
 }
 
