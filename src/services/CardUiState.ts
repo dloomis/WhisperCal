@@ -97,13 +97,15 @@ export class CardUiState {
 	}
 	/**
 	 * Record which desktop app WhisperCal launched for an in-progress recording,
-	 * so stopping the recording from WhisperCal can close it. No-op (and no
-	 * re-render) if the recording is gone — the app-close is a side effect, not
-	 * render state.
+	 * so stopping the recording from WhisperCal can close it. Re-renders, because
+	 * the card's Stop button names the app it will close. No-op if the recording
+	 * is gone.
 	 */
 	setRecordingLaunchedApp(notePath: string, app: MeetingApp): void {
 		const info = this.recordings.get(this.resolveKey(notePath));
-		if (info) info.launchedApp = app;
+		if (!info || info.launchedApp === app) return;
+		info.launchedApp = app;
+		this.notifyRecordingsChange();
 	}
 	hasRecording(notePath: string): boolean {
 		return this.recordings.has(this.resolveKey(notePath));

@@ -888,7 +888,7 @@ An alternative source that records meetings directly via a REST API. The Record 
 Enable **Automate meeting recording** (Recording API source only) to tie the recording to the meeting's lifecycle so you don't have to touch the card:
 
 - **Join → record.** Clicking a meeting's join link on its calendar card launches the meeting app (Teams, Zoom, etc.) *and* automatically starts recording once the launch succeeds. If the recording service is already mid-recording, WhisperCal still confirms before starting a new one.
-- **Stop → leave.** When you then press **Stop** on that card, WhisperCal closes the meeting app it launched, disconnecting you from the call. It quits the whole app (there is no portable way to "leave the meeting" without it), so this only fires for calls WhisperCal launched for you — and only when *you* stop the recording from WhisperCal. If the call instead ends in the meeting app itself, nothing is force-closed.
+- **Stop → leave.** When you then press **Stop** on that card, WhisperCal closes the meeting app it launched, disconnecting you from the call. The Stop button's tooltip says so up front — it reads "Stop recording and leave the call (closes Teams)" instead of "Stop recording". It quits the whole app (there is no portable way to "leave the meeting" without it), so this only fires for calls WhisperCal launched for you — and only when *you* stop the recording from WhisperCal. If the call instead ends in the meeting app itself, nothing is force-closed.
 
 The app is terminated with the platform's own process tools (`killall` on macOS, `taskkill` on Windows) rather than app scripting, so the behavior is portable across platforms. Recordings you start manually with the Record button never auto-close anything.
 

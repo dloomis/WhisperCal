@@ -4,7 +4,7 @@ import type {NoteCreator} from "./NoteCreator";
 import {NameInputModal} from "./NameInputModal";
 import {formatTime, formatRecordingDuration, formatElapsed, formatDateTimeWithOffset, sleep} from "../utils/time";
 import {debug} from "../utils/debug";
-import {openMeetingUrl, meetingAppForUrl} from "../utils/meetingLink";
+import {openMeetingUrl, meetingAppForUrl, type MeetingApp} from "../utils/meetingLink";
 import {closeMeetingApp} from "../services/MeetingAppCloser";
 import {resolveWikiLink, noteBasename, transcriptPathFor} from "../utils/vault";
 import {addActivateOnKey} from "../utils/a11y";
@@ -808,6 +808,11 @@ function startCapture(
 	})();
 }
 
+/** Display name of a meeting app WhisperCal can launch and close. */
+function meetingAppLabel(app: MeetingApp): string {
+	return app === "teams" ? "Teams" : "Zoom";
+}
+
 /**
  * Auto-record: start capture right after the meeting app launches. Fires without
  * the user asking, so a failure must be surfaced (via startCapture's modal) or
@@ -1356,9 +1361,16 @@ function renderCardDynamic(
 	if (states.record === "running") {
 		// 1 — recording in progress: red Stop button with a live timer.
 		if (cardUi.getStartTime(notePath) === undefined) cardUi.setStartTime(notePath, Date.now());
+		// The button is icon-only, so its aria-label is the only place to say that
+		// this Stop will also quit the meeting app (auto-record launched it). The
+		// click handler re-reads launchedApp, so the label is advisory, not the gate.
+		const appToClose = cardUi.getRecording(notePath)?.launchedApp;
+		const stopLabel = appToClose
+			? `Stop recording and leave the call (closes ${meetingAppLabel(appToClose)})`
+			: "Stop recording";
 		const stopBtn = recordSlot.createEl("button", {
 			cls: "whisper-cal-smart whisper-cal-smart-stop",
-			attr: {"aria-label": "Stop recording"},
+			attr: {"aria-label": stopLabel},
 		});
 		const ico = stopBtn.createSpan({cls: "whisper-cal-smart-icon"});
 		setIcon(ico, "square");
@@ -1397,8 +1409,7 @@ function renderCardDynamic(
 			if (launchedApp) {
 				void closeMeetingApp(launchedApp);
 				// The app disappearing on its own reads as a crash — say why.
-				const appLabel = launchedApp === "teams" ? "Teams" : "Zoom";
-				new Notice(`Closing ${appLabel} to leave the meeting`);
+				new Notice(`Closing ${meetingAppLabel(launchedApp)} to leave the meeting`);
 			}
 		});
 	} else if (recordingApiBaseUrl) {
