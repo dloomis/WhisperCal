@@ -317,8 +317,9 @@
 	pointer-events: none;
 }
 
-/* The line itself: a flat accent rule spanning the card from its left edge. Kept translucent
-   so card text underneath stays readable where the line crosses it. */
+/* The line itself: a near-solid accent rule spanning the card from its left edge, with a soft
+   glow so it reads at a glance. Stops just short of opaque so card text underneath stays
+   legible where the line crosses it. */
 .whisper-cal-now-line::before {
 	content: "";
 	position: absolute;
@@ -326,21 +327,26 @@
 	right: 0;
 	top: -1px;
 	height: 2px;
-	background: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+	background: color-mix(in srgb, var(--interactive-accent) 85%, transparent);
+	box-shadow: 0 0 4px color-mix(in srgb, var(--interactive-accent) 60%, transparent);
 }
 
-/* "You are here" dot, parked in the thin margin just left of the card so it sits cleanly
-   between a conflict bracket (when present, its right edge is at -8px) and the card edge,
-   with a couple of pixels of breathing room before the card. */
+/* "You are here" dot, parked in the margin just left of the card and butting its edge. It
+   overlaps a conflict bracket (when present, its right edge is at -8px) by a couple of
+   pixels; the background-colored ring cuts it cleanly out of the bracket, and the outer
+   glow matches the line's. */
 .whisper-cal-now-line::after {
 	content: "";
 	position: absolute;
-	left: -8px;
-	top: -3px;
-	width: 6px;
-	height: 6px;
+	left: -10px;
+	top: -5px;
+	width: 10px;
+	height: 10px;
 	border-radius: 50%;
 	background: var(--interactive-accent);
+	box-shadow:
+		0 0 0 2px var(--background-primary),
+		0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 55%, transparent);
 }
 
 /* Between meetings: drop the line, keep just the dot so it doesn't cross the gap label. */
